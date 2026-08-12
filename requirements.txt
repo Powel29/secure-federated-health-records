@@ -1,8 +1,13 @@
-# Requirements
+# Runtime dependencies. Pinned -- this file is the single source of truth;
+# pyproject.toml reads it via [tool.setuptools.dynamic]. See README.md.
 
 cryptography==42.0.5
 fastapi==0.110.0
 uvicorn[standard]==0.29.0
 pandas==2.2.1
 matplotlib==3.8.3
+
+# pyshark is a wrapper around the `tshark` binary, which pip cannot install.
+# The traffic-analysis module (C17) needs Wireshark/tshark present on the
+# machine and on PATH -- see README.md "External tools".
 pyshark==0.6

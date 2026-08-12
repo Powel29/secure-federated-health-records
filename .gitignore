@@ -1,4 +1,48 @@
+# --- Python ---
 __pycache__/
 *.py[cod]
 .venv/
 venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# --- Key material: NEVER commit, including test keys ---
+# WORKFLOW.md §4. A test key that "doesn't matter" is still a viva finding,
+# and git history does not forget.
+*.pem
+*.key
+*.crt
+*.csr
+*.p12
+*.pfx
+deploy/pki/
+.env
+.env.*
+
+# --- Facility state (SQLite, one file per node) ---
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# --- Benchmark and capture output: regenerable, large ---
+# ARCHITECTURE.md §7: analysers are committed, raw captures are not.
+bench/results/raw/
+bench/captures/
+*.pcap
+*.pcapng
+
+# --- Local logs (CONVENTIONS.md §2 rule 3) ---
+*.log
+logs/
+
+# --- Editors / OS ---
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

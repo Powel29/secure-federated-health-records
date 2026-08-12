@@ -1,27 +1,25 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=64.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "secure-federated-health-records"
 version = "0.1.0"
-description = "Secure Federated Health Records (T01 Scaffold)"
+description = "Federated Break-Glass EHR with a Unified Key-Lifecycle State Machine"
 requires-python = ">=3.11"
-dependencies = [
-    "cryptography",
-    "fastapi",
-    "uvicorn[standard]",
-    "pandas",
-    "matplotlib",
-    "pyshark",
-]
 
-[project.optional-dependencies]
-dev = [
-    "pytest",
-    "black",
-    "ruff",
-]
+# Runtime dependencies are NOT listed here. `requirements.txt` is the single
+# pinned source of truth (T01: "pinned deps"); duplicating them here unpinned
+# would silently win whenever anyone runs `pip install -e .`.
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+# src-layout: packages are importable by their bare names after
+# `pip install -e .` -- `from contracts import Record`, not `from src.contracts`.
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.black]
 line-length = 88
@@ -31,9 +29,25 @@ target-version = ['py311']
 line-length = 88
 target-version = "py311"
 
+[tool.ruff.lint]
+# Ruff's default set is pyflakes + a few syntax errors, which does not cover the
+# rules in CONVENTIONS.md that are correctness requirements. In particular:
+#   S311 -- `random` instead of `secrets`   (§2 rule 2)
+#   S608 -- SQL built by string formatting  (§2 rule 7)
+#   ANN  -- type hints on public functions  (§1)
+select = ["E", "W", "F", "I", "B", "S", "ANN"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert (S101) and use hardcoded test-only vectors (S105/S106); both are
+# correct there. tests/vectors/ holds deliberately fixed material -- see
+# CONVENTIONS.md §2 rule 4.
+"tests/**" = ["S101", "S105", "S106", "ANN"]
+"bench/**" = ["S101", "ANN"]
+
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "-ra -q"
-testpaths = [
-    "tests",
-]
+testpaths = ["tests"]
+# Makes `pytest` work from a clean clone even before `pip install -e .`,
+# so CI (T05) is green on an empty suite without an install step.
+pythonpath = ["src"]

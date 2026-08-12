@@ -1,5 +1,11 @@
-# Dev requirements
+# Dev requirements. Install this one for development:
+#   pip install -r requirements-dev.txt
 -r requirements.txt
+
+# Editable install of this project, so `from contracts import ...` resolves
+# from anywhere (services, bench, demo) and not just under pytest.
+-e .
+
 pytest==8.1.1
 black==24.3.0
 ruff==0.3.4
