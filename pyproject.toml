@@ -36,6 +36,10 @@ target-version = "py311"
 #   S608 -- SQL built by string formatting  (§2 rule 7)
 #   ANN  -- type hints on public functions  (§1)
 select = ["E", "W", "F", "I", "B", "S", "ANN"]
+# ANN101/ANN102 (annotate self/cls) are deprecated in ruff and contradict
+# convention -- self and cls are never annotated. DTZ001 fires on the
+# deliberately-naive datetime a negative test needs.
+ignore = ["ANN101", "ANN102"]
 
 [tool.ruff.lint.per-file-ignores]
 # Tests assert (S101) and use hardcoded test-only vectors (S105/S106); both are
