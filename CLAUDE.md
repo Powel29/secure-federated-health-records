@@ -67,10 +67,21 @@ contradict itself.
 (T55): grid, per-pane queries and layout, the states it must handle, visual
 rules, and what is deliberately out of scope.
 
+**`docs/adr/README.md`** — The decision log. The tracker table lists every
+decision taken so far, by whom, and its status; each row links to a one-file ADR
+with the full context. Read it to see what has been decided; add to it whenever
+you decide something (see the standing rule below and `CONVENTIONS.md` §6).
+
 ---
 
 ## Standing rules that override convenience
 
+- **Every decision with alternatives gets logged.** When anyone makes a choice
+  — a library, an algorithm, a contract change, a CI or deployment change, a
+  security control, or reversing something in the four docs — write an ADR in
+  `docs/adr/` and add its row to the tracker in `docs/adr/README.md`, in the
+  same PR. The tracker is the single place to see every decision and who made
+  it. The channel message where it was decided is not the record; the ADR is.
 - **`src/contracts/` is frozen** after Phase 0. Changes need a `contract:` PR
   approved by all four.
 - **One owner per `src/` module.** Do not edit someone else's directory, even

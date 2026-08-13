@@ -56,10 +56,13 @@ when its exit criteria are met, not on a date. See `WORKFLOW.md`.
 
 ## 3. Grading criteria
 
-**STATUS: UNCONFIRMED — must be resolved in Phase 0 (task T06).**
+**STATUS: CONFIRMED 2026-08-13 (task T03) — see "Faculty answers" below.**
+One residual: faculty gave the report weight (10 marks) but did not itemise the
+code/demo vs viva split, so that split remains the assumed shape.
 
-Until faculty confirm, the plan optimises against this assumed weighting, which
-is the common shape for a lab project of this type:
+Faculty confirmed the written report is worth **10 marks** (2026-08-13) but did
+not break out the rest, so the plan optimises against this assumed shape for the
+remaining components, which is the common shape for a lab project of this type:
 
 - Working implementation and demo — heaviest weight
 - Novelty and correctness of the security argument
@@ -74,16 +77,39 @@ regardless of what the rubric turns out to be:
    `WORKFLOW.md` exist partly to enforce this.
 2. The demo must survive a clean clone on a machine that is not the author's.
 
-**Open items to take to faculty (task T06):**
+**Open items to take to faculty (task T03):**
 
-- What is the actual weighting between code, report, and viva?
-- Do they want standards-based interoperability (FHIR/HL7) or a cryptographic
-  federation model? *We have defaulted to the cryptographic federation model —
-  it is our lane and the source of our novelty. If faculty want FHIR, the scope
-  changes materially and this plan must be revised before Phase 2.*
-- Is there an interim review or milestone submission we should target?
-- Is submission to an actual venue expected, or is the paper for internal
-  assessment only?
+- **Q1 — Weighting.** What is the actual weighting between code/demo, report,
+  and viva?
+- **Q2 — FHIR vs crypto.** Do they want standards-based interoperability
+  (FHIR/HL7) or a cryptographic federation model? *We have defaulted to the
+  cryptographic federation model — it is our lane and the source of our novelty
+  (see ADR-0010). If faculty want FHIR, the scope changes materially and this
+  plan must be revised before Phase 2.*
+- **Q3 — Milestones.** Is there an interim review or milestone submission we
+  should target?
+- **Q4 — Venue.** Is submission to an actual venue expected, or is the paper for
+  internal assessment only?
+
+### Faculty answers (T03) — recorded 2026-08-13, relayed by Powel
+
+- **Q1 Weighting:** ✅ Written report / paper = **10 marks**. Faculty specified
+  the report weight only; the code/demo and viva split was not itemised, so those
+  stay on the assumed shape above. *Residual: confirm the overall total and the
+  code/viva split if faculty will give it.*
+- **Q2 FHIR vs crypto:** ✅ **Cryptographic federation confirmed — FHIR/HL7 not
+  required.** The revision trigger below does **not** fire; ADR-0010 is Accepted.
+- **Q3 Milestones:** ✅ **One** interim review / milestone to target.
+  *Residual: pin the date once faculty give it.*
+- **Q4 Venue:** ✅ **Internal / lab assessment only** — no external venue
+  submission expected. The paper is still written to a publishable standard, but
+  there is no submission deadline to a venue.
+
+**Revision trigger (was: only if Q2 = FHIR) — NOT TRIGGERED.** FHIR was not
+required, so the federation design stands and Phase 2 is unblocked. Kept for the
+record: had faculty required FHIR, it would have reversed the §6 out-of-scope
+decision, forced a re-scope of `identity`/`federation`/`policy` (T15–T19) and a
+novelty revisit, and a new ADR superseding ADR-0010 before Phase 2.
 
 ---
 

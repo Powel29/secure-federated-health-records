@@ -288,8 +288,9 @@ src/
 tests/             mirrors src/, plus tests/security/ for negative tests
 bench/             C15  harness + analysis notebooks/scripts
 demo/              C16  seed data + scripted walkthrough
+wire/              C17  capture profiles + PyShark analysers (§4A module)
 paper/             LaTeX source, figures
-docs/              threat model, ADRs (architecture decision records)
+docs/              threat model, ADRs, dashboard build spec
 ```
 
 `src/contracts/` is the one directory everybody touches. It is frozen after

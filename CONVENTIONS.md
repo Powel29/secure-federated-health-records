@@ -124,11 +124,13 @@ cannot be reverted cleanly.
 
 ## 6. Documentation as we go
 
-- **Architecture Decision Records** in `docs/adr/NNN-short-title.md` whenever we
-  make a choice with alternatives — context, decision, consequences, in about
-  half a page. We already owe ADRs for: rejecting Charm-Crypto, the
-  secret-sharing access structure, and simulating the HSM timer. These become
-  paper prose almost verbatim, so writing them now is not overhead.
+- **Architecture Decision Records** in `docs/adr/NNNN-short-title.md` whenever
+  we make a choice with alternatives — context, decision, consequences, in about
+  half a page. Copy `docs/adr/template.md`, and **add a row to the tracker table
+  in `docs/adr/README.md` in the same PR** — an ADR not in the tracker is not
+  tracked. The three we owed (rejecting Charm-Crypto, the secret-sharing access
+  structure, simulating the HSM timer) are now written as ADR-0001–0003. These
+  become paper prose almost verbatim, so writing them as we go is not overhead.
 - Anything surprising gets a comment explaining **why**, not what.
 - When a limitation is discovered, add it to `PROJECT.md` §5 immediately.
   Limitations found late and written up honestly are fine; limitations
