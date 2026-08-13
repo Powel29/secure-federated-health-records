@@ -22,6 +22,7 @@ Each row links to a one-file ADR with the full context.
 | [0007](0007-pydantic-v2-contracts.md) | Pydantic v2 for the contract schemas | Proposed | 2026-08-12 | Powel → all four | T02 |
 | [0008](0008-contract-set-nine-schemas.md) | Freeze the contract set at nine schemas, not seven | Proposed | 2026-08-12 | Powel → all four | T02 |
 | [0009](0009-transitionevent-no-expiry-ts.md) | TransitionEvent carries no expiry_ts in v1 | Proposed | 2026-08-12 | Powel → all four | T02 |
+| [0010](0010-crypto-federation-over-fhir.md) | Default to cryptographic-federation model over FHIR | Accepted | 2026-08-13 | Team (faculty-confirmed) | T03 |
 
 ## Owed, not yet written
 
