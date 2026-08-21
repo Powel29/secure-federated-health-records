@@ -30,6 +30,7 @@ Each row links to a one-file ADR with the full context.
 | [0015](0015-strictness-pass-cuts.md) | Strictness-pass cuts (service-signing, plain-HTTP guard, BOLA middleware) | Accepted | 2026-08-18 | Team | PROJECT §4B |
 | [0016](0016-patient-self-access-as-attribute.md) | Patient self-access via an owner attribute, not a dual-wrapped DEK | Proposed | 2026-08-21 | Powel → all four | P4-10 |
 | [0017](0017-contract-additions-consent-correlation.md) | Contract additions for consent + correlation; RequestEnvelope reconciliation | Proposed (`contract:`) | 2026-08-21 | Powel → all four | ADR-0014/0015/0016 |
+| [0018](0018-crypto-spike-findings.md) | Crypto sanity-spike findings | Proposed | 2026-08-21 | Avaneeth → all four | P0-6 |
 
 ## Owed, not yet written
 
