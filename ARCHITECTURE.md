@@ -283,7 +283,7 @@ src/
   crypto_core/     C1   AES-GCM, HKDF, ECDSA, SHA-256 wrappers
   shamir/          C2   threshold secret sharing over GF(p)
   pre/             C3   proxy re-encryption
-  storage/         C4   SQLite schema + repositories
+  storage/         C4   PostgreSQL schema + repositories (ADR-0014/0020)
   identity/        C5   root anchor, facility CAs, cross-certification
   authority/       C6   multi-authority attribute issuance
   policy/          C7   access structure / policy tree engine
@@ -344,8 +344,8 @@ team uses day to day, and it honours the "keep it easy" constraint — a teammat
 who cannot install Docker is not blocked.
 
 **Path B — Docker Compose (for the demo and for reproducibility).** Five
-services in one `docker-compose.yml`, one shared bridge network, named volumes
-for the SQLite files. This is what runs on demo day and what an evaluator or a
+services in one `docker-compose.yml`, one shared bridge network, a named volume
+for the PostgreSQL data (ADR-0014). This is what runs on demo day and what an evaluator or a
 paper reviewer can bring up from a clean clone with one command. It also removes
 the "works on my machine" failure mode at the worst possible moment.
 

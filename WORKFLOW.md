@@ -249,9 +249,9 @@ everyone has switched over.
 *Done when:* a throwaway test script runs cleanly on all four machines; findings noted in an ADR.
 
 **P0-7 · Map out the pretend federation** *(was P0-7)* — Powel — 4h
-*What:* Decide the make-believe setup — three hospitals, two attribute authorities, one shared trust root — and which authority hands out which attributes.
+*What:* Decide the make-believe setup — two hospitals (matching ARCHITECTURE §7; reconciled from "three" per ADR-0019), two attribute authorities, one shared trust root — and which authority hands out which attributes.
 *Needs first:* nothing.
-*Done when:* a topology diagram and the attribute-ownership list are in `docs/`.
+*Done when:* a topology diagram and the attribute-ownership list are in `docs/` (`docs/federation-topology.md`, ADR-0019). ✅
 
 **P0-8 · Build the database schema** *(was P0-8)* — Avaneeth — 8h
 *What:* Create the **PostgreSQL** database structure — all the tables the system needs. Postgres holds only ciphertext, wrapped keys, and coded index — it **stores** data but never **decides** access; keys and the threshold gate do that (ADR-0014).

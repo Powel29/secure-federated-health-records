@@ -7,6 +7,10 @@ uvicorn[standard]==0.29.0
 pandas==2.2.1
 matplotlib==3.8.3
 
+# PostgreSQL driver for the shared store (C4, P0-8). Binary wheel -- no local
+# libpq/compiler needed. Raw SQL + parameterised queries, no ORM (ADR-0020).
+psycopg[binary]==3.2.9
+
 # pyshark is a wrapper around the `tshark` binary, which pip cannot install.
 # The traffic-analysis module (C17) needs Wireshark/tshark present on the
 # machine and on PATH -- see README.md "External tools".

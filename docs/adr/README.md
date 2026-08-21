@@ -31,6 +31,8 @@ Each row links to a one-file ADR with the full context.
 | [0016](0016-patient-self-access-as-attribute.md) | Patient self-access via an owner attribute, not a dual-wrapped DEK | Proposed | 2026-08-21 | Powel → all four | P4-10 |
 | [0017](0017-contract-additions-consent-correlation.md) | Contract additions for consent + correlation; RequestEnvelope reconciliation | Proposed (`contract:`) | 2026-08-21 | Powel → all four | ADR-0014/0015/0016 |
 | [0018](0018-crypto-spike-findings.md) | Crypto sanity-spike findings | Proposed | 2026-08-21 | Avaneeth → all four | P0-6 |
+| [0019](0019-federation-topology-and-attributes.md) | Federation at two facilities; attribute-authority ownership | Accepted | 2026-08-21 | Powel (team) | P0-7 |
+| [0020](0020-psycopg3-raw-sql-storage.md) | psycopg3 + raw SQL migrations for the store (no ORM) | Accepted | 2026-08-21 | Avaneeth (team) | P0-8 |
 
 ## Owed, not yet written
 
