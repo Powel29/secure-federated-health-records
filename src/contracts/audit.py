@@ -25,6 +25,12 @@ class AuditEntry(ContractModel):
     ``event_data`` carries identifiers, hashes, and metadata only -- never key
     material, DEKs, shares, or plaintext record contents (CONVENTIONS.md §2
     rule 3).
+
+    ``correlation_id`` ties every entry of one logical flow together -- a read, a
+    revocation, a whole break-glass sequence -- so the admin/audit portal can
+    reconstruct a flow end to end by that id (ADR-0014). It is a first-class,
+    required field rather than a key inside ``event_data`` precisely because it is
+    the value the portal queries and groups by.
     """
 
     seq: int  # position in the chain, monotonic from 0
@@ -33,6 +39,7 @@ class AuditEntry(ContractModel):
     event_type: str  # e.g. "transition", "breakglass_share_release"
     event_data: dict[str, Any]  # metadata only; see rule 3 above
     actor_id: Identifier
+    correlation_id: Identifier  # groups all entries of one flow (ADR-0014)
     timestamp: AwareDatetime
     signature: B64Bytes  # ECDSA over this entry by the audit service key
 

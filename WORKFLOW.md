@@ -28,7 +28,7 @@ open faculty questions before they can invalidate work.
 frozen and reviewed by all four; threat model written; faculty answers on
 grading and FHIR-vs-crypto recorded in `PROJECT.md`; the crypto spike proves
 AES-GCM, ECDSA, HKDF and a toy ElGamal PRE run in pure Python on **all four**
-machines.
+machines. The PostgreSQL schema exists (P0-8).
 
 ### Phase 1 — Crypto and data foundations
 Build the primitives everything else calls, plus storage.
@@ -66,6 +66,26 @@ Make it one federated system rather than eight libraries.
 deployment paths (`ARCHITECTURE.md` §7); the full cross-facility break-glass
 scenario runs end to end **from a clean clone on a machine that is not the
 author's**.
+
+**P4-10 · Patient portal (web UI)** *(new — replaces dashboard)* — Avaneeth — 10h
+*What:* The patient's web page (Django + Bootstrap): see who has access to their records, approve or deny incoming access requests, revoke a grant, and view the history of who accessed what — including any break-glass. **Also view their own uploaded records:** the patient reads a record via the `owner:<patient_id>` attribute leaf on the record's policy tree (ADR-0016), served by the home authority; the decrypted PDF is streamed to the browser for that request only, never persisted or logged. This is the patient half of the three-portal UI that replaces the old terminal dashboard.
+*Needs first:* P4-1, P3-2, P3-13; owner-attribute issuance in `authority` (ADR-0016).
+*Done when:* a patient can approve/deny/revoke and see their access history in the browser; a patient can open and view their own record, decrypted through the policy path (not by portal login alone) and failing closed if the owner attribute is absent; the portal never decrypts on its own and never becomes the access authority (keys still gate access).
+
+**P4-11 · Clinician portal (web UI)** *(new — replaces dashboard)* — Nandini — 10h
+*What:* The clinician's web page: request access to a patient's records, see what's currently granted, run a search during an emergency, and declare break-glass with a justification. Shows the live countdown on active emergency access.
+*Needs first:* P4-1, P3-5, P3-8.
+*Done when:* a clinician can request, search-when-emergency, and declare break-glass from the browser; denied actions show clear reasons; the portal holds no keys.
+
+**P4-12 · Admin / audit portal (web UI)** *(new — replaces dashboard)* — Ojas — 8h
+*What:* The oversight web page: browse the audit log by correlation ID, view the state of the federation and its services, and review completed break-glass cases. Read-only over the audit and state data.
+*Needs first:* P4-2, P3-3, P3-13.
+*Done when:* an admin can pull up a whole access flow by correlation ID and review break-glass cases in the browser; the portal is read-only and holds no keys.
+
+**P4-13 · Patient notifications** *(new)* — Ojas — 4h
+*What:* Alert the patient when their records are accessed under break-glass and when a grant is revoked. A notification event is emitted and surfaced in the patient portal (and logged in the audit chain).
+*Needs first:* P3-5, P3-7, P3-13.
+*Done when:* break-glass and revocation each produce a patient notification, visible in the patient portal and recorded in the audit log.
 
 ### Phase 5 — Testing and hardening
 Turn claims into evidence.
@@ -127,7 +147,6 @@ coordination than it saves in hours.
 - Consent / grant path
 - **Emergency Assertion Protocol** and replay protection (the trigger for
   break-glass — without it, "clinician asserts an emergency" is undefined)
-- Four-pane observability dashboard (see the flag under the task table)
 - `breakglass`: the 2-of-3 threshold gate
 - Time-boxed emergency key, auto-close, forced rotation
 - Paper: system design and state-machine formalism
@@ -146,11 +165,10 @@ coordination than it saves in hours.
 - `audit`: hash chain, signing, full-chain verification
 - Share custody: commit-before-release
 - Audit events for denials and federation operations
-- `pre`: proxy re-encryption + cross-facility handoff
+- `pre`: proxy re-encryption (one-direction re-wrap to the emergency clinician)
 - Audit and authority service processes
 - Containerisation, both deployment paths, and the capture profiles
 - Traffic capture harness (**required course module**)
-- Service-request signing (service identity across process boundaries)
 - Negative security test suite
 - Paper: security analysis and limitations
 
@@ -183,116 +201,354 @@ coordination than it saves in hours.
 
 ---
 
-## 3. Task table
+## 3. Task list
 
-Balanced by hours: **Powel 116, Avaneeth 112, Ojas 110, Nandini 109** (447h).
-Verified by summing the table programmatically, not estimated.
+Every task below has the same shape:
 
-The four-pane dashboard (T55, 16h) was funded by cutting T37 (scalability runs)
-and moving T33 (end-to-end orchestration) to Avaneeth, who owns the demo driver.
+**ID · Title** — Owner — estimated hours
+*What:* what you're actually building, in plain words.
+*Needs first:* which tasks must be done before this one can start.
+*Done when:* how you know it's finished.
 
-**Flagged:** T55 is a Textual UI owned by the person holding the entire critical
-path. It is the lowest-value work on the highest-value person, and it sits in
-front of `shamir`, `policy`, `lifecycle`, and `breakglass`. If Phase 3 starts
-slipping, T55 is the first thing to reassign — to Avaneeth, who already owns the
-demo surface — or to cut back to the two-pane variant.
+IDs are `P<phase>-<n>` — so `P3-5` is the fifth task of Phase 3. The old
+T-numbers are noted in brackets for anyone mid-task; they will disappear once
+everyone has switched over.
 
-The traffic-analysis module (T45, T46) added 17h. T40 is split between Powel and
+---
+
+### Phase 0 — Setup and architecture decisions
+
+**P0-1 · Set up the repo** *(was P0-1)* — Powel — 3h
+*What:* Create the project skeleton — folders, virtual environment, pinned dependency versions — so everyone starts from the same base.
+*Needs first:* nothing.
+*Done when:* `pip install -r requirements.txt` works on all four laptops and the folders match the layout in ARCHITECTURE §6.
+
+**P0-2 · Freeze the shared data shapes** *(was P0-2)* — Powel — 7h
+*What:* Agree and lock the core data structures everyone shares — Record, key-wrapping, transition event, audit entry, credential, facility, policy tree, plus the emergency-assertion and request-envelope shapes. Once frozen, these only change by a PR all four approve.
+*Needs first:* P0-1.
+*Done when:* all the shapes are defined, type-hinted, and signed off by all four.
+
+**P0-3 · Get answers from faculty** *(was P0-3)* — Powel — 2h
+*What:* Ask the two questions that could change the whole plan: how it's graded, and whether they want the cryptography approach or the FHIR/standards approach. *(Done — crypto lane confirmed, report = 10 marks.)*
+*Needs first:* nothing.
+*Done when:* answers are written into PROJECT §3. (Complete.)
+
+**P0-4 · Write the threat model** *(was P0-4)* — Ojas — 8h
+*What:* Describe who the attackers are and what each could do — treating the shared store, a hacked hospital node, a rogue authority, and colluding doctors as four *separate* threats with different consequences.
+*Needs first:* nothing.
+*Done when:* `docs/threat-model.md` covers all four attacker types distinctly.
+
+**P0-5 · Set up automated checks (CI)** *(was P0-5)* — Nandini — 4h
+*What:* Make every pull request automatically run the tests and style checks, so broken or messy code can't be merged.
+*Needs first:* P0-1.
+*Done when:* CI runs on every PR and blocks merging if anything fails.
+
+**P0-6 · Crypto sanity check on every machine** *(was P0-6)* — Avaneeth — 5h
+*What:* Prove the core crypto tools (AES, signatures, key-derivation, a toy proxy re-encryption) actually run in plain Python on all four laptops — before anyone builds on them.
+*Needs first:* nothing.
+*Done when:* a throwaway test script runs cleanly on all four machines; findings noted in an ADR.
+
+**P0-7 · Map out the pretend federation** *(was P0-7)* — Powel — 4h
+*What:* Decide the make-believe setup — three hospitals, two attribute authorities, one shared trust root — and which authority hands out which attributes.
+*Needs first:* nothing.
+*Done when:* a topology diagram and the attribute-ownership list are in `docs/`.
+
+**P0-8 · Build the database schema** *(was P0-8)* — Avaneeth — 8h
+*What:* Create the **PostgreSQL** database structure — all the tables the system needs. Postgres holds only ciphertext, wrapped keys, and coded index — it **stores** data but never **decides** access; keys and the threshold gate do that (ADR-0014).
+*Needs first:* P0-2.
+*Done when:* all tables exist per ARCHITECTURE §2, basic read/write is tested, and there's a migration script.
+
+
+---
+
+### Phase 1 — Crypto and data foundations
+
+**P1-1 · Core crypto: encryption + hashing** *(was P1-1)* — Powel — 6h
+*What:* The central toolbox everyone else calls for AES-256-GCM encryption, key-derivation, and SHA-256. No other module is allowed to touch raw crypto directly.
+*Needs first:* P0-2.
+*Done when:* known-answer test vectors pass, a fresh nonce is used every time, and nothing else imports raw crypto.
+
+**P1-2 · Core crypto: signatures** *(was P1-2)* — Powel — 5h
+*What:* Add signing and verifying (ECDSA) to the toolbox, plus saving/loading keys.
+*Needs first:* P1-1.
+*Done when:* sign-then-verify works and a tampered message fails verification.
+
+**P1-3 · Secret sharing (Shamir)** *(was P1-3)* — Powel — 8h
+*What:* Split a secret into three shares where any two rebuild it and any one reveals nothing. Used by both break-glass and the policy engine.
+*Needs first:* P0-2.
+*Done when:* any 2 of 3 shares reconstruct the secret, 1 gives nothing, tested over many random secrets.
+
+**P1-4 · Record encryption + key wrapping** *(was P1-4)* — Avaneeth — 8h
+*What:* Give each record its own encryption key, encrypt the record, and wrap that key for whoever's allowed to read it.
+*Needs first:* P1-1, P0-8.
+*Done when:* encrypt → store → retrieve → decrypt round-trips, with exactly one key per record.
+
+**P1-5 · Proxy re-encryption** *(was P1-5)* — Ojas — 7h
+*What:* A tool to re-wrap a record's key to a new person (the emergency doctor) without ever decrypting it. One direction only — no hospital-to-hospital handoff, since everything lives in one store now.
+*Needs first:* P1-1.
+*Done when:* a key can be re-wrapped to a new recipient and the tool provably never sees plaintext.
+
+**P1-6 · Policy engine stub** *(was P1-6)* — Powel — 2h
+*What:* A fake stand-in for the access-policy engine that returns predictable answers, so other people can build against it before the real one exists.
+*Needs first:* P0-2.
+*Done when:* other modules can call the real interface and get sensible fake results.
+
+
+---
+
+### Phase 2 — Federation and policy
+
+**P2-1 · Identity and cross-certification** *(was P2-1)* — Avaneeth — 12h
+*What:* Build the trust setup — a root authority, per-hospital certificate authorities, and cross-certification so an out-of-network doctor can be verified.
+*Needs first:* P1-2, P0-8.
+*Done when:* an out-of-network doctor's certificate validates back to the shared root, and a forged one is rejected.
+
+**P2-2 · Attribute issuing** *(was P2-2)* — Avaneeth — 8h
+*What:* Let the authorities hand out signed "attribute" credentials (like role:doctor, specialty:cardiology) that the policy engine checks. **A patient's home authority also issues that patient their own `owner:<patient_id>` attribute** (ADR-0016), which is what lets a patient self-decrypt their records; it follows the same credential lifecycle (validity window, revocation status) as any other attribute.
+*Needs first:* P2-1.
+*Done when:* two independent authorities issue valid credentials and a forged credential is rejected; a patient's home authority can issue an `owner:<patient_id>` attribute credential.
+
+**P2-3 · The real policy engine** *(was P2-3)* — Powel — 12h
+*What:* Replace the stub with the real thing: an AND/OR policy tree that lets someone unlock a record only if their attributes satisfy the policy. In standard terms this is the **Policy Decision Point (PDP)**; the check that enforces it in front of the record/key services is the **Policy Enforcement Point (PEP)**. This is our stand-in for full attribute-based encryption. **Policy-authoring convention (ADR-0016):** every record's tree is authored with a root-level `OR` whose branches are the clinical policy and an `owner:<patient_id>` leaf, so the patient can always reconstruct their own record via the same path. This is a convention on how trees are built, not a schema change — the `Attribute`/`PolicyTree` contracts already express it.
+*Needs first:* P1-3, P2-2.
+*Done when:* a doctor whose attributes satisfy the policy unlocks the record, one who doesn't is refused, a patient holding only their `owner` attribute unlocks their own record, and it drops in without changing any code that called the stub.
+
+**P2-4 · Find a patient's records** *(was P2-4)* — Nandini — 8h
+*What:* Given a patient, locate their encrypted records in the shared store — without the store or the asking hospital learning what's inside.
+*Needs first:* P0-8, P2-1.
+*Done when:* one hospital can find a patient's records in the shared store by patient index, learning nothing about contents.
+
+**P2-5 · Searchable encrypted index** *(was P2-5)* — Nandini — 12h
+*What:* Build the coded index that lets someone search records without the server ever seeing the search words or the contents. Built against a fixed test key until break-glass exists.
+*Needs first:* P1-4.
+*Done when:* the index is searchable but the server learns no plaintext words.
+
+**P2-6 · Credential lifecycle** *(was P2-6)* — Avaneeth — 6h
+*What:* Give every credential a serial number, a validity window, and a status — so credentials can expire and be revoked. (A project about revocation shouldn't issue credentials that never expire.)
+*Needs first:* P2-1, P2-2.
+*Done when:* expired or revoked credentials are rejected at check time.
+
+---
+
+### Phase 3 — The state machine and the core contributions
+
+**P3-1 · The state machine** *(was P3-1)* — Powel — 12h
+*What:* The heart of the project — the four states (Granted, Revoked, Emergency-open, Expired) and the signed events for every legal move between them. Illegal moves are refused.
+*Needs first:* P1-2, P1-4.
+*Done when:* all four states work, illegal transitions are rejected, and every transition produces a verifiable signed event.
+
+**P3-2 · Patient consent + granting access** *(was P3-2)* — Powel — 8h
+*What:* The full consent path. The patient issues a **signed, scoped, expiring grant** — naming the hospital, the clinician/role, the purpose, the records, and the time window — via a request-then-approve flow (hospital requests, patient approves or denies). Only the patient can create or revoke it. The grant then wraps the record's key to a policy so the approved doctor can read it. This makes "the patient grants access" a real, defined action, not an assumption.
+*Needs first:* P3-1, P2-3.
+*Done when:* a patient-issued grant is signed and scoped; an approved doctor reads within scope; an unauthorized one can't; and only the patient can revoke it.
+
+**P3-3 · The tamper-proof audit log** *(was P3-3)* — Ojas — 10h
+*What:* A hash-chained, signed log where each entry locks in the one before it, so tampering is detectable.
+*Needs first:* P1-2, P0-8.
+*Done when:* the full chain verifies and any tampered entry is caught.
+
+**P3-4 · Log-before-release (the headline)** *(was P3-4)* — Ojas — 8h
+*What:* Make the audit service hand over its emergency key-share *only after* it has committed the log entry. No log, no share — this is what makes logging a hard precondition of emergency access.
+*Needs first:* P3-3, P1-3.
+*Done when:* the share is released only after the log commits, and a failed log-write means no share (proven by a negative test).
+
+**P3-5 · Break-glass emergency access** *(was P3-5)* — Powel — 14h
+*What:* The emergency unlock. Three parties each hold a share (doctor, patient's home authority, audit service); any two rebuild the emergency key. One share alone is never enough — not even the audit service's. On unlock, the record key is re-wrapped to the emergency doctor without decrypting it in the open.
+*Needs first:* P3-4, P3-1, P2-2, P1-5.
+*Done when:* two shares unlock, one fails, the audit service alone can't open a record, and the doctor gets a usable key that was never exposed.
+
+**P3-6 · Time-boxed access + auto-expiry** *(was P3-6)* — Powel — 10h
+*What:* Make emergency access expire on its own after a set time, closing via a forced key-rotation that needs no admin action. The timer length is adjustable (short for demos, realistic for the paper).
+*Needs first:* P3-5.
+*Done when:* emergency access expires with no admin action, and the expiry is itself a signed, logged event.
+
+**P3-7 · Revocation by key-rotation** *(was P3-7)* — Avaneeth — 8h
+*What:* Taking access away — rotate the record's key and rebuild the wrappings so a revoked user can't read future versions.
+*Needs first:* P3-1, P1-4.
+*Done when:* after revocation the revoked user cannot decrypt (proven by a negative test).
+
+**P3-8 · Emergency-only search** *(was P3-8)* — Nandini — 10h
+*What:* Wire search so it only works during emergency access — the search key is derived from the emergency key, so it dies when the emergency expires.
+*Needs first:* P2-5, P3-6.
+*Done when:* search works while emergency access is open and stops working once it expires (negative test).
+
+**P3-9 · Re-key the search index on rotation** *(was P3-9)* — Nandini — 8h
+*What:* When a record's key rotates (revocation or expiry), rebuild its search index so old search keys stop working.
+*Needs first:* P2-5, P3-7.
+*Done when:* after rotation, stale search keys match nothing and no plaintext leaks during re-indexing.
+
+**P3-10 · Emergency assertion** *(was P3-10)* — Powel — 6h
+*What:* Define what "declaring an emergency" actually is — a signed statement binding the patient, doctor, hospital, time, reason, and an expiry. Break-glass won't start without a valid one.
+*Needs first:* P3-1, P2-1.
+*Done when:* unsigned or unbound assertions are rejected and break-glass refuses to proceed without one.
+
+**P3-11 · Replay protection** *(was P3-11)* — Powel — 3h
+*What:* Give emergency requests, share requests, and transition events one-time IDs so a captured request can't be replayed for repeat access.
+*Needs first:* P3-10.
+*Done when:* a replayed request is rejected, not re-run.
+
+**P3-12 · Check who's allowed to revoke** *(was P3-12)* — Avaneeth — 3h
+*What:* Make sure a revocation actually comes from the record's owner (patient) or its home authority — a valid signature from the wrong person isn't enough.
+*Needs first:* P3-7.
+*Done when:* a correctly-signed but unauthorized revocation is rejected.
+
+**P3-13 · Log denials and federation events** *(was P3-13)* — Ojas — 3h
+*What:* Record access-denials and federation actions (policy checks, discovery, re-wraps) in the audit chain — identifiers and hashes only, never key material. This is what makes the admin portal's denial view possible.
+*Needs first:* P3-3.
+*Done when:* denials and federation events appear in the chain with no sensitive data leaked.
+
+**P3-14 · Record upload path** *(was P3-14)* — Avaneeth — 4h
+*What:* The ingest flow — a submitted record gets its keys minted, gets encrypted, gets indexed, gets a policy attached, and gets logged. **The policy attached at ingest carries the `owner:<patient_id>` OR-leaf** (ADR-0016 convention from P2-3) so every record is patient-readable from the moment it is created — this must be baked in here, not retrofitted in Phase 4.
+*Needs first:* P1-5, P2-5.
+*Done when:* uploading a record produces an encrypted, indexed, policy-attached record (with the owner leaf present) and a log entry.
+
+---
+
+### Phase 4 — Integration and deployment
+
+**P4-1 · Hospital node service (API)** *(was P4-1)* — Avaneeth — 10h
+*What:* The web service for a hospital — endpoints for read, grant, revoke, break-glass, and search. No crypto in the route handlers; it just orchestrates.
+*Needs first:* P3-2, P3-7, P3-5.
+*Done when:* all endpoints work and no cryptography lives in a route handler.
+
+**P4-2 · Audit + authority services** *(was P4-2)* — Ojas — 8h
+*What:* Run the audit service and the authorities as their own separate processes that the hospitals talk to over HTTP.
+*Needs first:* P3-3, P2-2.
+*Done when:* they run as separate processes and a hospital can talk to them.
+
+**P4-3 · Deployment + bootstrap** *(was P4-3)* — Ojas — 12h
+*What:* Two ways to run the whole federation — a local launcher script and Docker Compose — plus the startup sequence that brings everything up in the right order. Includes the plain-HTTP capture mode for traffic analysis.
+*Needs first:* P4-1, P4-2.
+*Done when:* both run methods work, startup happens in order, and the audit chain verifies at boot or nothing starts.
+
+**P4-4 · Full end-to-end run** *(was P4-4)* — Avaneeth — 10h
+*What:* Wire the whole cross-hospital break-glass story together so it runs start to finish across all the processes.
+*Needs first:* P4-1, P4-2, P3-8.
+*Done when:* the full scenario runs from a clean clone across all processes.
+
+**P4-5 · Demo driver + fake data** *(was P4-5)* — Avaneeth — 8h
+*What:* A one-command script that seeds realistic fake patient data and runs the demo scenario with readable output. No real patient data, ever.
+*Needs first:* P4-4.
+*Done when:* one command seeds and runs the scenario with clear output.
+
+**P4-6 · Traffic capture setup** *(was P4-6)* — Ojas — 6h
+*What:* The capture harness and the two modes (plain-HTTP and TLS) that record network traffic for the required traffic-analysis module.
+*Needs first:* P4-3.
+*Done when:* both modes produce a capture file per scenario.
+
+
+---
+
+### Phase 5 — Testing and hardening
+
+**P5-1 · Security test suite** *(was P5-1)* — Ojas — 15h
+*What:* The eleven "attack fails" tests — each proves a security claim by showing the system refuses. These are the evidence for the paper. Includes the **patient-self-access fail-closed test** (ADR-0016): a logged-in patient is refused decryption when the `owner:<patient_id>` attribute is absent, proving portal login alone never releases a DEK.
+*Needs first:* P4-4.
+*Done when:* all eleven negative tests pass and each maps to a specific paper claim.
+
+**P5-2 · Benchmark harness** *(was P5-2)* — Nandini — 12h
+*What:* Measure and plot performance — timings, ciphertext expansion — reproducibly from one command.
+*Needs first:* P4-4.
+*Done when:* every benchmark number is produced and reproducible from one command.
+
+**P5-3 · Search leakage analysis** *(was P5-3)* — Nandini — 6h
+*What:* Measure exactly what the server can infer from search traffic (access patterns, frequency, volume) — from real captures, not argument.
+*Needs first:* P3-8, P3-9, P5-5.
+*Done when:* the measured leakage is quantified for the paper.
+
+**P5-4 · Edge cases** *(was P5-4)* — Nandini — 5h
+*What:* Handle the awkward cases — clock skew, missing shares, malformed input — and test them.
+*Needs first:* P4-4.
+*Done when:* each case is handled and tested.
+
+**P5-5 · Traffic analysis (PyShark)** *(was P5-5)* — Nandini — 13h
+*What:* Code that reads the captured traffic and automatically checks the wire-level claims — no plaintext leaks, no share released before its log entry, break-glass visible only as metadata. This is the required course module, delivered as code not screenshots.
+*Needs first:* P4-6, P4-4.
+*Done when:* all four wire-level checks run and pass automatically.
+
+---
+
+### Phase 6 — Paper and demo
+
+**P6-1 · Paper: design + state machine** *(was P6-1)* — Powel — 7h
+*What:* Write the system-design section — the state diagram, transition table, and protocol figures — matching the shipped code exactly.
+*Needs first:* P4-4.
+*Done when:* the figures match the code and the design reads clearly.
+
+**P6-2 · Paper: design write-up** *(was P6-2)* — Nandini — 7h
+*What:* Turn P6-1's formal design into readable prose for the paper's design section.
+*Needs first:* P6-1.
+*Done when:* the section reads as prose (not a spec dump) and Powel confirms it matches the design.
+
+**P6-3 · Paper: implementation + results** *(was P6-3)* — Nandini — 18h
+*What:* Write the implementation and evaluation sections — every performance number traceable to a benchmark run.
+*Needs first:* P5-2.
+*Done when:* every number traces to a real benchmark.
+
+**P6-4 · Paper: security analysis** *(was P6-4)* — Ojas — 14h
+*What:* Write the security analysis, threat model, limitations, and the security-properties table (with proxy re-encryption honestly marked unproven). Every claim maps to a passing test.
+*Needs first:* P5-1.
+*Done when:* every claim maps to a passing test and all four honesty caveats are stated up front.
+
+**P6-5 · Paper: intro + related work** *(was P6-5)* — Avaneeth — 12h
+*What:* Write the introduction, problem statement, the gap, and related work — citing both anchor papers and both rivals honestly.
+*Needs first:* P4-4.
+*Done when:* the gap statement holds up and rivals are cited fairly.
+
+**P6-6 · Demo script + rehearsal** *(was P6-6)* — Avaneeth — 6h
+*What:* Write and rehearse the demo, and capture a fallback recording in case the live run fails.
+*Needs first:* P4-5, P4-3.
+*Done when:* rehearsed twice on someone else's machine, with a recording captured.
+
+---
+
+### Workload and notes
+
+Balanced by hours: **Avaneeth 118, Nandini 113, Powel 109, Ojas 103** (443h).
+Verified by summing the table programmatically, not estimated (re-summed 2026-08-21
+after the ADR-0014 portal additions and the ADR-0015 cuts; the earlier 434h figure
+predated that reconciliation). P4-4 (end-to-end orchestration) is owned by
+Avaneeth, who owns the demo driver.
+
+The traffic-analysis module (P4-6, P5-5) added 17h. P6-1 is split between Powel and
 Nandini — he supplies the state-machine formalism, she turns it into prose —
 which was already flagged as sensible pairing, since writing the design section
 well and knowing the design deeply are not always the same person.
 
 If the total proves too heavy, cut in this order: stretch goals (`PROJECT.md`
-§7) first, then T39 (edge cases) reduced in scope, then T55 cut back to the
-two-pane variant.
-**Never cut T46**, which is what satisfies the mandatory course module, and
-never cut T35, which is the evidence base for the paper's security claims.
+§7) first, then P5-4 (edge cases) reduced in scope, then trim a portal
+(P4-10/11/12) to a read-only minimum. *(The old "P1-7 two-pane dashboard"
+fallback is gone — the dashboard was replaced by the three portals, ADR-0014.)*
+**Never cut P5-5**, which is what satisfies the mandatory course module, and
+never cut P5-1, which is the evidence base for the paper's security claims.
 
-| ID | Task | Owner | Phase | Depends on | Est. h | Definition of done |
-|---|---|---|---|---|---|---|
-| T01 | Repo scaffold, venv, pinned deps, folder structure | Powel | 0 | — | 3 | `pip install -r requirements.txt` works on all four machines; layout matches ARCHITECTURE §6 |
-| T02 | **Freeze interface contracts** in `src/contracts/` (incl. `EmergencyAssertion`, `RequestEnvelope`) | Powel | 0 | T01 | 7 | All 7 schemas defined, type-hinted, approved by all four |
-| T03 | Resolve faculty questions (grading, FHIR vs crypto) | Powel | 0 | — | 2 | Answers recorded in `PROJECT.md` §3; if FHIR, plan revised before Phase 2 |
-| T04 | Threat model + trust assumptions, **four adversaries modelled separately** | Ojas | 0 | — | 8 | `docs/threat-model.md` treats semi-trusted storage, compromised facility node, malicious authority, and colluding clinicians as distinct adversaries with distinct consequences |
-| T05 | CI: pytest + ruff + black on every PR | Nandini | 0 | T01 | 4 | CI green on empty suite; PRs blocked on failure |
-| T06 | Crypto spike on all four machines | Avaneeth | 0 | — | 5 | Throwaway script runs green everywhere; findings in an ADR |
-| T07 | Federation topology: 3 facilities, 2 authorities, 1 anchor | Avaneeth | 0 | — | 4 | Topology diagram + which authority owns which attributes, in `docs/` |
-| T08 | `crypto_core`: AES-256-GCM, HKDF, SHA-256 | Powel | 1 | T02 | 6 | Known-answer vectors pass; nonce generated per encryption; no raw hazmat imports elsewhere |
-| T09 | `crypto_core`: ECDSA keygen, sign, verify, serialisation | Powel | 1 | T08 | 5 | Round-trip tests; tampered payload fails verification |
-| T10 | **`shamir`: 2-of-3 split/combine over GF(p)** | Powel | 1 | T02 | 8 | Any 2 of 3 reconstruct; any 1 yields nothing; property test over random secrets |
-| T11 | `storage`: SQLite schema + repositories | Avaneeth | 1 | T02 | 8 | All tables per ARCHITECTURE §2 C4; CRUD tested; migration script |
-| T12 | `records`: per-record DEK, envelope wrap/unwrap | Avaneeth | 1 | T08, T11 | 8 | Encrypt→store→retrieve→decrypt round-trip; one DEK per record enforced |
-| T13 | `pre`: unidirectional ElGamal-style proxy re-encryption | Ojas | 1 | T08 | 12 | A→B re-encryption key transforms ciphertext; proxy provably never sees plaintext |
-| T14 | `policy` **stub** returning deterministic fakes | Powel | 1 | T02 | 2 | Downstream modules can call the real interface before the engine exists |
-| T15 | `identity`: root anchor, facility CAs, cross-certification | Avaneeth | 2 | T09, T11 | 12 | Out-of-network clinician cert validates via chain to shared anchor; forged cert rejected |
-| T16 | `authority`: multi-authority attribute issuance | Avaneeth | 2 | T15 | 8 | Two independent authorities issue signed credentials; forged credential rejected |
-| T17 | **`policy`: access structure engine (AND/OR tree over Shamir)** | Powel | 2 | T10, T16 | 12 | Satisfying credential set reconstructs root secret; non-satisfying set fails; replaces T14 stub with no caller changes |
-| T18 | `federation`: patient-indexed discovery | Nandini | 2 | T11, T15 | 8 | Facility B locates a patient's records held at Facility A without learning contents |
-| T19 | `search`: encrypted inverted index | Nandini | 2 | T12 | 12 | Index built over ciphertext; server learns no plaintext terms; built against a fixed test key until T24 lands |
-| T20 | **`lifecycle`: state machine core + signed transition events** | Powel | 3 | T09, T12 | 12 | 4 states, transition table enforced, illegal transitions raise, events independently verifiable |
-| T21 | Consent / grant path (→ Granted) | Powel | 3 | T20, T17 | 5 | Grant wraps DEK to a policy tree; authorised clinician reads, unauthorised does not |
-| T22 | `audit`: hash-chained signed log + verification | Ojas | 3 | T09, T11 | 10 | `h_i = SHA-256(h_{i-1} ‖ event ‖ ts ‖ actor)`; full-chain verify; tampered entry detected |
-| T23 | **Audit share custody: commit-before-release** | Ojas | 3 | T22, T10 | 8 | Share returned only after the chain head is committed; log-write failure ⇒ no share (negative test) |
-| T24 | **`breakglass`: 2-of-3 threshold gate (→ Emergency-open)** | Powel | 3 | T23, T20, T16 | 12 | Any 2 shares reconstruct the emergency key; 1 share insufficient; the audit service alone cannot open a record |
-| T25 | **Time-boxed key, auto-close, forced rotation (→ Expired →)** | Powel | 3 | T24 | 10 | Emergency state expires with no admin action; expiry is a signed, logged rotation; time-box configurable |
-| T26 | Revocation-as-key-rotation (→ Revoked) | Avaneeth | 3 | T20, T12 | 8 | Revoke rotates the DEK and rebuilds wrappings; revoked user cannot decrypt (negative test) |
-| T27 | **Emergency-only search tokens** | Nandini | 3 | T19, T25 | 10 | Token derives from the emergency key via HKDF; search works in Emergency-open, dead after expiry (negative test) |
-| T28 | Search-index re-keying on DEK rotation | Nandini | 3 | T19, T26 | 8 | After revocation or forced rotation the index is re-keyed; stale tokens fail; no plaintext re-indexing leak |
-| T29 | Cross-facility handoff via PRE | Ojas | 3 | T13, T18, T24 | 10 | Record key re-wrapped to an out-of-network clinician; proxy never decrypts |
-| T30 | Facility node FastAPI service | Avaneeth | 4 | T21, T26, T29 | 10 | Endpoints for read, grant, revoke, break-glass, search; **no cryptography in route handlers** |
-| T31 | Audit + authority FastAPI services | Ojas | 4 | T22, T16 | 8 | Run as separate processes; facility talks to them over HTTP |
-| T32 | **Deployment: local supervisor + Docker Compose + bootstrap** | Ojas | 4 | T30, T31 | 12 | Both paths in ARCHITECTURE §7 work; bootstrap sequence runs in order; chain verifies at boot or nothing starts |
-| T33 | End-to-end cross-facility break-glass orchestration | Avaneeth | 4 | T30, T31, T27 | 10 | Full scenario runs across all five processes from a clean clone |
-| T34 | Demo driver + synthetic seed dataset | Avaneeth | 4 | T33 | 8 | One command seeds and runs the scenario with examiner-readable output; zero real PHI |
-| T35 | Negative security test suite | Ojas | 5 | T33 | 15 | All 10 negative tests in CONVENTIONS §5 pass; each maps to a specific paper claim |
-| T36 | Benchmark harness + pandas analysis + plots, incl. ciphertext expansion | Nandini | 5 | T33 | 12 | Every D4 metric produced, including per-record ciphertext expansion; results reproducible from one command |
-| T38 | Search leakage-profile analysis, **measured from captures** | Nandini | 5 | T27, T28, T46 | 6 | Quantifies what the semi-trusted server learns (access pattern, frequency, volume) from real PCAPs, not from argument alone; goes straight into the paper |
-| T45 | **Capture harness + `capture-plain` / `capture-tls` profiles** | Ojas | 4 | T32 | 6 | Both profiles run; PCAP produced per scenario from the bridge network and from loopback; captures land in `bench/captures/` |
-| T46 | **PyShark analysers asserting wire-level properties**, correlated by request ID | Nandini | 5 | T45, T33 | 13 | Four assertions in `PROJECT.md` §4A automated as failing-on-violation checks: no plaintext PHI/DEK/share on the wire; share never precedes commit; break-glass metadata-only; leakage measured |
-| T48 | **Emergency Assertion Protocol** — signed, bound, expiring | Powel | 3 | T20, T15 | 6 | Assertion is an ECDSA-signed struct binding patient, clinician, facility, timestamp, nonce, reason code, expiry; unsigned or unbound assertions rejected; break-glass will not proceed without one |
-| T49 | **Replay protection** — nonce + consumed-request-ID store | Powel | 3 | T48 | 3 | Emergency assertions, share requests, and transition events each carry a one-time ID; a replayed request is rejected, not re-executed |
-| T50 | Revocation authorization binding | Avaneeth | 3 | T26 | 3 | Revocation signer must prove record ownership (patient) or home-authority status; a validly-signed but unauthorised revocation is rejected |
-| T51 | Object-level authorization middleware (BOLA) | Nandini | 4 | T30 | 4 | Caller authorised for the specific patient/record **before** any crypto or DB work; enumeration of patient IDs denied |
-| T52 | Credential lifecycle — serial, validity, revocation status | Avaneeth | 2 | T15, T16 | 6 | Clinician and authority credentials carry issuer, subject, serial, valid_from, valid_until, status; expired and revoked credentials rejected at validation |
-| T53 | Service-request signing (service identity without mTLS) | Ojas | 4 | T31, T09 | 4 | Every inter-service call signed with the caller's service key and verified by the callee; unsigned inter-service calls rejected |
-| T54 | `capture-plain` guard | Nandini | 4 | T32 | 2 | Services refuse to start in plain-HTTP mode unless `ENVIRONMENT=LAB_CAPTURE` is explicitly set; refusal is logged loudly |
-| T39 | Edge cases: clock skew, partial shares, malformed input | Nandini | 5 | T33 | 5 | Each handled and tested (replay moved to T49, where it belongs) |
-| T55 | **Four-pane observability dashboard** (Textual) — built to `docs/dashboard-design.md` | Powel | 4 | T32, T56 | 16 | Patient / clinician / authority / audit panes + chain strip; read-only SQLite URIs; no `crypto_core` import; each pane's query actor-scoped and tested |
-| T56 | Audit events for denials + federation operations | Ojas | 3 | T22 | 3 | `ACCESS_DENIED`, `POLICY_EVALUATED`, `DISCOVERY_QUERY`, `PRE_REWRAP` committed to the chain; identifiers and hashes only, never key material |
-| T57 | Record ingest path (upload → encrypt → index → policy) | Avaneeth | 3 | T13, T19 | 4 | A submitted record mints DEK + K_idx, encrypts, builds index tokens over designated fields, attaches policy tree, logs `RECORD_INGESTED` |
-| T40 | Paper: state-machine formalism + protocol figures | Powel | 6 | T33 | 7 | State diagram, transition table, protocol figures; matches shipped code exactly |
-| T40b | Paper: system design section drafted from T40 formalism | Nandini | 6 | T40 | 7 | Design section reads as prose, not as a spec dump; Powel verifies it matches the formalism |
-| T41 | Paper: implementation + evaluation + results | Nandini | 6 | T36 | 18 | Every number traceable to a benchmark run |
-| T42 | Paper: security analysis + threat model + limitations + **security-properties table** | Ojas | 6 | T35 | 14 | Every claim maps to a passing negative test; all four caveats stated up front, not buried |
-| T43 | Paper: intro, problem, gap, related work | Avaneeth | 6 | T33 | 12 | Both anchors and both rivals cited honestly; gap statement defensible under questioning |
-| T44 | Demo script, rehearsal, fallback recording | Avaneeth | 6 | T34, T32 | 6 | Rehearsed twice on a non-author machine; recording captured |
 
 ### Flagged risks in this assignment
 
-- **Powel holds the entire critical path.** T02 → T08 → T10 → T17 → T20 → T24 →
-  T25 → T33 is one unbroken chain, all owned by one person. If Powel is blocked
-  or unavailable, the project stops. *Mitigation:* Powel ships T14 (the policy
-  stub) early so nobody waits on T17, and the phase-gate cross-explanations
+- **Powel holds the entire critical path.** P0-2 → P1-1 → P1-3 → P2-3 → P3-1 → P3-5 →
+  P3-6 → P4-4 is one unbroken chain, all owned by one person. If Powel is blocked
+  or unavailable, the project stops. *Mitigation:* Powel ships P1-6 (the policy
+  stub) early so nobody waits on P2-3, and the phase-gate cross-explanations
   (§5) exist partly so a second person can pick up `lifecycle` if needed. Nominate
   Ojas as the designated backup reader for `lifecycle` and `breakglass`.
-- **T13 `pre` is the hardest task not owned by Powel.** If Ojas struggles with
-  the ElGamal construction, pair on it early rather than late — it gates T29,
-  which gates the cross-facility half of the demo.
-- **Nandini's Phase 2 is thin and her Phase 5–6 is heavy** (T36, T38, T41 =
+- **P1-5 `pre` is the hardest task not owned by Powel.** If Ojas struggles with
+  the ElGamal construction, pair on it early — it now feeds the break-glass
+  re-wrap in P3-5 (PRE shrank to one direction under one shared store, ADR-0012).
+- **Nandini's Phase 2 is thin and her Phase 5–6 is heavy** (P5-2, P5-3, P6-3 =
   36h). That is inherent to owning evaluation, which cannot start early. She has
-  T18 and T19 to work on meanwhile; if she runs dry in Phase 3, the first thing
-  to hand her is T39 (edge cases).
-- **Nobody security-reviews their own work.** T35's negative tests are written
+  P2-4 and P2-5 to work on meanwhile; if she runs dry in Phase 3, the first thing
+  to hand her is P5-4 (edge cases).
+- **Nobody security-reviews their own work.** P5-1's negative tests are written
   by the person who built the audit gate they test — a real conflict of
   interest. Powel is the named reviewer for `tests/security/` specifically.
-- **The course module must be code, not screenshots.** T46 is the deliverable
+- **The course module must be code, not screenshots.** P5-5 is the deliverable
   that satisfies the mandatory module requirement, and the requirement is
-  explicit that demonstration — not mention — is what counts. If T46 slips to
+  explicit that demonstration — not mention — is what counts. If P5-5 slips to
   screenshots-only, the project fails a stated course requirement regardless of
   how good the cryptography is. Treat it as non-negotiable, not as polish.
-- **T46 depends on T45, which depends on deployment (T32).** The required course
+- **P5-5 depends on P4-6, which depends on deployment (P4-3).** The required course
   module therefore sits behind the deployment work. If deployment slips, the
-  module slips with it — another reason T32 belongs in Phase 4, not Phase 6.
+  module slips with it — another reason P4-3 belongs in Phase 4, not Phase 6.
 - **Skill fit is unverified.** These assignments balance hours, not aptitude,
   because individual skill levels were never specified. Swap freely; the
   vertical boundaries matter more than who holds them.
@@ -324,7 +580,7 @@ never cut T35, which is the evidence base for the paper's security claims.
    through a `contract:` PR approved by all four and announced before merge.
 3. **Rebase on `dev` before opening a PR.** Resolve conflicts on your branch,
    never in `dev`.
-4. **One task per branch.** T20 and T25 are both Powel's and both touch
+4. **One task per branch.** P3-1 and P3-6 are both Powel's and both touch
    `lifecycle`, but they are separate branches merged in dependency order.
 5. Need a change in someone else's module? Open an issue. A one-line fix in
    someone else's file is how a two-hour merge conflict begins.
@@ -377,11 +633,11 @@ becoming a twice-weekly surprise.
 Runtime topology, the two paths, and the bootstrap sequence are specified in
 `ARCHITECTURE.md` §7. This section is the process around them.
 
-**Who owns it:** Ojas (T32), because he already owns the audit and authority
+**Who owns it:** Ojas (P4-3), because he already owns the audit and authority
 services and the trust boundaries that the topology has to preserve.
 
 **When it happens:** Phase 4, not Phase 6. Deployment discovered late is how
-demos fail. The rule is that from the moment T32 lands, **every phase gate is
+demos fail. The rule is that from the moment P4-3 lands, **every phase gate is
 demonstrated on the deployed topology**, not on a developer's laptop with five
 terminal tabs.
 

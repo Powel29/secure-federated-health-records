@@ -1,6 +1,6 @@
 """Cross-cutting invariants that must hold for every frozen contract.
 
-These are the properties the base configuration promises: all nine schemas are
+These are the properties the base configuration promises: all eleven schemas are
 importable by bare name, they are immutable, they reject unknown fields, and
 their ``bytes`` fields survive a JSON round-trip as base64. Each is a fail-closed
 guarantee the rest of the system relies on, so each has a negative case.
@@ -15,6 +15,8 @@ import pytest
 from contracts import (
     AttributeCredential,
     AuditEntry,
+    ConsentGrant,
+    ConsentRequest,
     DEKWrapping,
     EmergencyAssertion,
     Facility,
@@ -28,6 +30,8 @@ from pydantic import ValidationError
 from .conftest import (
     attribute_credential_kwargs,
     audit_entry_kwargs,
+    consent_grant_kwargs,
+    consent_request_kwargs,
     dek_wrapping_kwargs,
     emergency_assertion_kwargs,
     facility_kwargs,
@@ -37,7 +41,7 @@ from .conftest import (
     transition_event_kwargs,
 )
 
-# (model, factory) for every one of the nine frozen schemas.
+# (model, factory) for every one of the eleven frozen schemas.
 ALL_SCHEMAS = [
     (Record, record_kwargs),
     (DEKWrapping, dek_wrapping_kwargs),
@@ -48,6 +52,8 @@ ALL_SCHEMAS = [
     (Facility, facility_kwargs),
     (EmergencyAssertion, emergency_assertion_kwargs),
     (RequestEnvelope, request_envelope_kwargs),
+    (ConsentRequest, consent_request_kwargs),
+    (ConsentGrant, consent_grant_kwargs),
 ]
 
 EXPECTED_EXPORTS = {
@@ -60,11 +66,13 @@ EXPECTED_EXPORTS = {
     "Facility",
     "EmergencyAssertion",
     "RequestEnvelope",
+    "ConsentRequest",
+    "ConsentGrant",
 }
 
 
-def test_all_nine_schemas_exported() -> None:
-    """The freeze is nine schemas, each importable by bare name from contracts."""
+def test_all_eleven_schemas_exported() -> None:
+    """The freeze is eleven schemas, each importable by bare name from contracts."""
     assert EXPECTED_EXPORTS.issubset(set(contracts.__all__))
     for name in EXPECTED_EXPORTS:
         assert hasattr(contracts, name)

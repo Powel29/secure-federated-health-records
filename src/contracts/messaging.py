@@ -73,15 +73,22 @@ class EmergencyAssertion(ContractModel):
 
 
 class RequestEnvelope(ContractModel):
-    """Signed, one-time wrapper around an inter-service request (§8).
+    """One-time, integrity-protected wrapper around an inter-service request (§8).
 
-    Realises two §8 controls at once: service identity (every inter-service
-    request is signed by the caller and verified by the callee) and replay
-    protection (a one-time ``request_id`` the callee's consumed-id store rejects
-    on reuse; CONVENTIONS.md §2 rule 9). ``body`` is the opaque canonical
-    serialization of the wrapped message -- the envelope neither inspects nor
-    decrypts it. ``recipient_id`` binds the envelope to its destination so one
-    captured at one service cannot be presented to another.
+    Its purpose is **replay protection and payload integrity**: a one-time
+    ``request_id`` the callee's consumed-id store rejects on reuse (CONVENTIONS.md
+    §2 rule 9), with the signature binding that id, the ``recipient_id``, and the
+    ``body`` together so a captured envelope cannot be replayed or retargeted.
+    ``body`` is the opaque canonical serialization of the wrapped message -- the
+    envelope neither inspects nor decrypts it. ``recipient_id`` binds the envelope
+    to its destination so one captured at one service cannot be presented to
+    another.
+
+    Note (ADR-0015): this envelope is **not** a separate "service identity"
+    control replacing mTLS -- that framing was cut on the strictness pass as
+    redundant with the PKI and cross-certification (P2-1), which is where service
+    identity comes from. The signature here authenticates the *envelope's*
+    integrity and one-time binding, not a parallel identity layer. See ADR-0017.
     """
 
     request_id: UUID  # one-time; consumed-id store rejects reuse

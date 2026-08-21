@@ -1,0 +1,78 @@
+# Continuous integration for P0-5 (owner: Nandini), implementing the ADR-0006
+# lint/format ruleset. Every PR into dev/main runs lint, format, and tests; a red
+# job blocks the merge once branch protection requires these checks (see below).
+#
+# Branch protection is a GitHub repo setting, not something a workflow can set.
+# To satisfy WORKFLOW.md ("CI must be green. No merging around a red build"),
+# a maintainer must, in Settings -> Branches, add a protection rule for `dev` and
+# `main` that requires the status checks `lint`, `format`, and `test` to pass
+# before merging. This file makes the checks run; branch protection makes them
+# mandatory.
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      # requirements-dev.txt pulls in requirements.txt, the editable install, and
+      # the pinned ruff/black/pytest -- one pinned source, no versions duplicated
+      # in this file (ADR-0005).
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Ruff check
+        run: ruff check src/ tests/
+
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Black check
+        run: black --check src/ tests/
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      # pytest reads pythonpath = ["src"] from pyproject, so this is green on an
+      # empty suite from a clean clone (Phase 0 exit criterion). bench/ is not a
+      # testpath and never runs here (CONVENTIONS.md §5).
+      - name: Run tests
+        run: pytest tests/ -ra -q

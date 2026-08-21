@@ -4,7 +4,7 @@ Nothing here computes cryptography. Contracts are typed value objects that carry
 opaque crypto material (`bytes`) across module and process boundaries; the
 signing, verification, and encryption that produce those bytes live in the owning
 modules and go through `crypto_core` (CONVENTIONS.md §2 rule 1). This module
-exists so all nine schemas share one base configuration and one wire encoding.
+exists so all eleven schemas share one base configuration and one wire encoding.
 """
 
 from __future__ import annotations

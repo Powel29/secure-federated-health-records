@@ -58,7 +58,9 @@ merge conflicts across four parallel workstreams.
 
 **The one exception is `src/contracts/`.** It holds the shared schemas
 (`Record`, `DEKWrapping`, `TransitionEvent`, `AuditEntry`, `AttributeCredential`,
-`Facility`, `PolicyTree`). It is frozen at the end of Phase 0. After that:
+`Facility`, `PolicyTree`, plus `EmergencyAssertion` and `RequestEnvelope` from the
+§8 review, and `ConsentRequest` and `ConsentGrant` from ADR-0017 — eleven in
+all). It is frozen at the end of Phase 0. After that:
 
 - A change to `contracts/` requires a PR titled `contract: <what changed>`,
   reviewed and approved by **all four** members before merge.

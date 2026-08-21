@@ -13,6 +13,8 @@ import pytest
 from contracts import (
     AttributeCredential,
     AuditEntry,
+    ConsentGrant,
+    ConsentRequest,
     DEKWrapping,
     EmergencyAssertion,
     Facility,
@@ -26,6 +28,8 @@ from pydantic import ValidationError
 from .conftest import (
     attribute_credential_kwargs,
     audit_entry_kwargs,
+    consent_grant_kwargs,
+    consent_request_kwargs,
     dek_wrapping_kwargs,
     emergency_assertion_kwargs,
     facility_kwargs,
@@ -63,6 +67,8 @@ def test_dek_wrapping_rejects_negative_generation() -> None:
         (EmergencyAssertion, emergency_assertion_kwargs),
         (RequestEnvelope, request_envelope_kwargs),
         (TransitionEvent, transition_event_kwargs),
+        (ConsentRequest, consent_request_kwargs),
+        (ConsentGrant, consent_grant_kwargs),
     ],
 )
 def test_short_antireplay_nonce_rejected(model, factory) -> None:
@@ -81,6 +87,8 @@ def test_short_antireplay_nonce_rejected(model, factory) -> None:
         (AttributeCredential, attribute_credential_kwargs),
         (EmergencyAssertion, emergency_assertion_kwargs),
         (RequestEnvelope, request_envelope_kwargs),
+        (ConsentRequest, consent_request_kwargs),
+        (ConsentGrant, consent_grant_kwargs),
     ],
 )
 def test_empty_signature_rejected(model, factory) -> None:
@@ -211,3 +219,63 @@ def test_internal_node_with_one_child_rejected() -> None:
     """A boolean node with a single child is degenerate; require >= 2."""
     with pytest.raises(ValidationError):
         PolicyTree(node_type="and", children=(PolicyTree(**leaf_kwargs()),))
+
+
+# --- Audit correlation id (ADR-0014) ----------------------------------------
+
+
+def test_audit_entry_requires_correlation_id() -> None:
+    """Every audit entry must be correlatable end to end (ADR-0014)."""
+    kw = audit_entry_kwargs()
+    kw.pop("correlation_id")
+    with pytest.raises(ValidationError):
+        AuditEntry(**kw)
+
+
+def test_audit_entry_rejects_empty_correlation_id() -> None:
+    with pytest.raises(ValidationError):
+        AuditEntry(**audit_entry_kwargs(correlation_id=""))
+
+
+# --- Consent scope, purpose, and expiry (ADR-0014, ADR-0017) ----------------
+
+
+@pytest.mark.parametrize(
+    "model, factory",
+    [
+        (ConsentRequest, consent_request_kwargs),
+        (ConsentGrant, consent_grant_kwargs),
+    ],
+)
+def test_consent_rejects_empty_scope(model, factory) -> None:
+    """Consent must name what it covers; an empty scope fails closed."""
+    with pytest.raises(ValidationError):
+        model(**factory(scope=()))
+
+
+def test_consent_request_rejects_blank_purpose() -> None:
+    with pytest.raises(ValidationError):
+        ConsentRequest(**consent_request_kwargs(purpose="   "))
+
+
+def test_consent_request_rejects_expiry_before_request() -> None:
+    kw = consent_request_kwargs()
+    with pytest.raises(ValidationError):
+        ConsentRequest(**{**kw, "expires_at": kw["requested_at"]})
+
+
+def test_consent_grant_rejects_expiry_before_decision() -> None:
+    kw = consent_grant_kwargs()
+    with pytest.raises(ValidationError):
+        ConsentGrant(**{**kw, "expires_at": kw["decided_at"]})
+
+
+def test_consent_grant_rejects_unknown_status() -> None:
+    """status is a closed enum (ConsentStatus), never free text."""
+    with pytest.raises(ValidationError):
+        ConsentGrant(**consent_grant_kwargs(status="approved"))
+
+
+def test_consent_grant_denied_is_valid() -> None:
+    """A denial is a first-class, well-formed decision, not an error."""
+    assert ConsentGrant(**consent_grant_kwargs(status="denied"))
