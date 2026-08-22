@@ -96,3 +96,25 @@ jobs:
       # testpath and never runs here (CONVENTIONS.md §5).
       - name: Run tests
         run: pytest tests/ -ra -q
+
+  # The Django portals (C16, ADR-0021). Runs the portal's own tests on SQLite --
+  # no Postgres needed; verifies registration and the "signup issues no
+  # credential" invariant. portal/ is outside the src/ lint/format scope.
+  portal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Run portal tests
+        working-directory: portal
+        run: python manage.py test --settings=config.test_settings

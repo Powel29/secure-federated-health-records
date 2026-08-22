@@ -30,6 +30,51 @@ grading and FHIR-vs-crypto recorded in `PROJECT.md`; the crypto spike proves
 AES-GCM, ECDSA, HKDF and a toy ElGamal PRE run in pure Python on **all four**
 machines. The PostgreSQL schema exists (P0-8).
 
+### Parallel track — Portal shells (ADR-0021)
+Runs alongside Phases 1–4; **does not gate Phase 0** and must not consume the
+crypto critical path. All three Django portals start now as shells; graded
+features still complete on the Phase-4 schedule as their backends land. Governing
+invariant: *a portal account alone grants zero access* — credentials are issued
+by an authority (P2-2), never by a signup form.
+
+**PS-1 · Django scaffold + portal tests in CI** *(done)* — Nandini — 3h
+*What:* `portal/` Django project, Bootstrap base, DB config (portal schema +
+read-only `store` alias), CI step running the portal tests on SQLite.
+*Done when:* `manage.py check` clean and the portal test job is green. ✅
+
+**PS-2 · Self-service registration (request-then-issue)** *(done)* — Nandini — 4h
+*What:* Patient and clinician registration creating a login + PENDING request; the
+`issue_credential` step is stubbed (authority issues, P2-2). Includes the
+invariant test (*signup issues no credential*).
+*Done when:* both flows create pending requests and no signup issues a credential. ✅
+
+**PS-3 · Patient portal shell** *(shell done)* — Avaneeth (owns future wiring) — 4h
+*What:* Patient pages (enrollment status, upload → ingest stub, access history).
+*Done when:* pages render; upload reaches the `ingest_upload` stub. ✅ *(shell built
++ verified at the Django layer; future ingest wiring stays off Avaneeth's P2
+critical path)*
+
+**PS-4 · Clinician portal shell** *(done)* — Nandini — 4h
+*What:* Clinician pages (credential status, request-access + break-glass → stubs).
+*Done when:* pages render; actions reach their stubs with clear messages. ✅
+
+**PS-5 · Admin/audit portal (read-only over store)** *(done)* — Ojas — 4h
+*What:* Read the P0-8 store read-only (records, audit chain, lifecycle); list
+pending registration requests; approve → `issue_credential` stub.
+*Done when:* real store rows render read-only; approve reaches the issue stub. ✅
+*(verified against live Postgres: seeded record + audit entry render read-only,
+and a `portal_ro` write is denied by the database — the wall holds)*
+
+**PS-6 · Two-role DB + Django schema wiring** *(done)* — Avaneeth — 2h
+*What:* `portal` schema + `portal_ro` read-only role (`portal/sql/roles.sql`),
+Django `DATABASES`/router so the ORM never writes the store.
+*Done when:* Django writes only the `portal` schema; the `store` alias is SELECT-only. ✅
+
+**PS-later (Phase 2–3)** — wire `issue_credential` → `authority` (P2-2); wire
+`ingest_upload`/request-access/break-glass → their backends (P3-14, P3, P3-5).
+
+---
+
 ### Phase 1 — Crypto and data foundations
 Build the primitives everything else calls, plus storage.
 

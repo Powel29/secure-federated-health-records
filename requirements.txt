@@ -11,6 +11,10 @@ matplotlib==3.8.3
 # libpq/compiler needed. Raw SQL + parameterised queries, no ORM (ADR-0020).
 psycopg[binary]==3.2.9
 
+# Django powers the three role-based web portals (C16, ADR-0014/0021). Portals
+# store data and identify users; they never decide access or decrypt.
+Django==5.0.6
+
 # pyshark is a wrapper around the `tshark` binary, which pip cannot install.
 # The traffic-analysis module (C17) needs Wireshark/tshark present on the
 # machine and on PATH -- see README.md "External tools".

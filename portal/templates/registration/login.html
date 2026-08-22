@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Log in{% endblock %}
+{% block content %}
+<div class="col-md-5">
+  <h1 class="h4 mb-3">Log in</h1>
+  {% if form.errors %}<div class="alert alert-danger">Invalid credentials.</div>{% endif %}
+  <form method="post">
+    {% csrf_token %}
+    <div class="mb-2"><label class="form-label">Username</label>
+      <input class="form-control" name="username" autofocus></div>
+    <div class="mb-3"><label class="form-label">Password</label>
+      <input class="form-control" type="password" name="password"></div>
+    <button class="btn btn-primary">Log in</button>
+  </form>
+</div>
+{% endblock %}

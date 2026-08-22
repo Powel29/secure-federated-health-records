@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Register as clinician{% endblock %}
+{% block content %}
+<div class="col-md-6">
+  <h1 class="h4 mb-3">Register as a clinician</h1>
+  <p class="text-muted small">This creates your login and a <strong>request</strong>.
+    An authority verifies your licence and <strong>issues</strong> your role /
+    specialty credential (P2-2). Until then you hold no attribute and can open
+    nothing &mdash; a signup never makes you a physician.</p>
+  {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+  <form method="post">
+    {% csrf_token %}
+    <div class="mb-2"><label class="form-label">Username</label>
+      <input class="form-control" name="username" required></div>
+    <div class="mb-2"><label class="form-label">Password</label>
+      <input class="form-control" type="password" name="password" required></div>
+    <div class="mb-2"><label class="form-label">Clinician id</label>
+      <input class="form-control" name="clinician_id" placeholder="doc-201" required></div>
+    <div class="mb-2"><label class="form-label">Requested attributes</label>
+      <input class="form-control" name="requested_attributes"
+             placeholder="role:physician, specialty:cardiology"></div>
+    <div class="mb-3"><label class="form-label">Licence / proof</label>
+      <textarea class="form-control" name="license_info" rows="2"
+                placeholder="Medical licence number, issuing board"></textarea></div>
+    <button class="btn btn-primary">Create account &amp; submit request</button>
+  </form>
+</div>
+{% endblock %}
