@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Patient portal{% endblock %}
+{% block content %}
+<h1 class="h4 mb-3">Patient portal</h1>
+<div class="row g-3">
+  <div class="col-md-6">
+    <div class="card"><div class="card-body">
+      <h2 class="h6">Your enrollment</h2>
+      <p class="mb-1">Subject: <code>{{ user.profile.subject_id }}</code></p>
+      {% for r in user.requests.all %}
+        <span class="badge bg-warning text-dark">{{ r.get_status_display }}</span>
+        <span class="small text-muted">{{ r.requested_attributes }}</span>
+      {% endfor %}
+    </div></div>
+  </div>
+  <div class="col-md-6">
+    <div class="card"><div class="card-body">
+      <h2 class="h6">Upload a record</h2>
+      <form method="post">
+        {% csrf_token %}
+        <input class="form-control mb-2" name="filename" placeholder="scan.png">
+        <button class="btn btn-primary btn-sm" name="upload" value="1">Upload</button>
+        <span class="text-muted small">(encrypted by the ingest service)</span>
+      </form>
+    </div></div>
+  </div>
+</div>
+{% endblock %}

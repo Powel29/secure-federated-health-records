@@ -37,13 +37,44 @@ project itself in editable mode:
 pip install -r requirements-dev.txt
 ```
 
-Verify:
+Verify (same scope as CI):
 
 ```bash
-pytest; ruff check .; black --check .
+pytest; ruff check src/ tests/; black --check src/ tests/
 ```
 
-An empty test suite passing is the expected result until Phase 1 lands.
+The `storage` tests need PostgreSQL (see below) and **skip cleanly without it**,
+so a clone without a database still runs green. The Django portals have their own
+test suite — see [portal/README.md](portal/README.md).
+
+## Database (PostgreSQL)
+
+The shared store (C4) is PostgreSQL (`ADR-0014`/`ADR-0020`). Bring up a throwaway
+instance with Docker, then apply the schema:
+
+```bash
+docker run -d --name p08pg -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_DB=ehr_test -p 55432:5432 postgres:16-alpine
+```
+
+```bash
+DATABASE_URL="postgresql://postgres@localhost:55432/ehr_test" python -m storage.migrate
+```
+
+With `DATABASE_URL` set, the storage tests run the real read/write round-trips:
+
+```bash
+DATABASE_URL="postgresql://postgres@localhost:55432/ehr_test" pytest tests/storage/
+```
+
+(PowerShell: prefix with `$env:DATABASE_URL="…";` instead of the inline form.)
+
+## Web portals
+
+Three role-based Django portals (patient / clinician / admin-audit) plus
+self-service registration live in [`portal/`](portal/). They identify users and
+show data; they never decide access or decrypt (`ADR-0014`/`ADR-0021`). To run
+the frontend (Postgres + Django + browser), follow
+[portal/README.md](portal/README.md).
 
 ## External tools
 
@@ -53,8 +84,9 @@ An empty test suite passing is the expected result until Phase 1 lands.
 - **Wireshark / tshark**, on `PATH`. `pyshark` is only a wrapper around the
   `tshark` binary; `import pyshark` succeeding does not mean capture works.
   Check with `tshark --version`.
-- **Docker Desktop**, for the Compose deployment path (`ARCHITECTURE.md` §7).
-  The local five-process path works without it.
+- **Docker Desktop**, for the Compose deployment path (`ARCHITECTURE.md` §7) and
+  for the local PostgreSQL used by the storage tests and the portals (above).
+  The local multi-process path itself works without it.
 
 ## Imports
 
