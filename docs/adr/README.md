@@ -23,14 +23,27 @@ Each row links to a one-file ADR with the full context.
 | [0008](0008-contract-set-nine-schemas.md) | Freeze the contract set at nine schemas, not seven | Proposed | 2026-08-12 | Powel → all four | T02 |
 | [0009](0009-transitionevent-no-expiry-ts.md) | TransitionEvent carries no expiry_ts in v1 | Proposed | 2026-08-12 | Powel → all four | T02 |
 | [0010](0010-crypto-federation-over-fhir.md) | Default to cryptographic-federation model over FHIR | Accepted | 2026-08-13 | Team (faculty-confirmed) | T03 |
+| [0011](0011-single-shared-store.md) | Single shared encrypted store, not per-facility storage | Accepted | 2026-08-18 | Team | ARCHITECTURE §5 |
+| [0012](0012-shrink-proxy-reencryption.md) | Shrink proxy re-encryption to one-direction re-wrap | Accepted | 2026-08-18 | Team | ARCHITECTURE §5 (pre) |
+| [0013](0013-dashboard-early-shell.md) | Dashboard built as an early shell that grows per phase | Superseded by ADR-0014 | 2026-08-18 | Team | ARCHITECTURE §2 C16 |
+| [0014](0014-web-portals-and-postgres.md) | Three web portals replace the dashboard; PostgreSQL as storage | Accepted | 2026-08-18 | Team | PROJECT §5A |
+| [0015](0015-strictness-pass-cuts.md) | Strictness-pass cuts (service-signing, plain-HTTP guard, BOLA middleware) | Accepted | 2026-08-18 | Team | PROJECT §4B |
+| [0016](0016-patient-self-access-as-attribute.md) | Patient self-access via an owner attribute, not a dual-wrapped DEK | Proposed | 2026-08-21 | Powel → all four | P4-10 |
+| [0017](0017-contract-additions-consent-correlation.md) | Contract additions for consent + correlation; RequestEnvelope reconciliation | Proposed (`contract:`) | 2026-08-21 | Powel → all four | ADR-0014/0015/0016 |
+| [0018](0018-crypto-spike-findings.md) | Crypto sanity-spike findings | Proposed | 2026-08-21 | Avaneeth → all four | P0-6 |
+| [0019](0019-federation-topology-and-attributes.md) | Federation at two facilities; attribute-authority ownership | Accepted | 2026-08-21 | Powel (team) | P0-7 |
+| [0020](0020-psycopg3-raw-sql-storage.md) | psycopg3 + raw SQL migrations for the store (no ORM) | Accepted | 2026-08-21 | Avaneeth (team) | P0-8 |
 
 ## Owed, not yet written
 
 Decisions already made in the docs that still need their own ADR (whoever owns
 the area writes it):
 
-- **Signed inter-service requests instead of mTLS** — ARCHITECTURE §8. A real
-  choice with a real alternative (it exists to keep `capture-plain` readable).
+- ~~**Signed inter-service requests instead of mTLS** — ARCHITECTURE §8.~~
+  **Resolved.** The "separate service-identity control replacing mTLS" was cut on
+  the strictness pass (ADR-0015); the `RequestEnvelope` that remains is a replay/
+  integrity wrapper, restated as such in ADR-0017. Service identity comes from the
+  PKI and cross-certification (P2-1). No standalone ADR is owed.
 
 ## How to add one
 

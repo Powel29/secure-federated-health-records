@@ -20,11 +20,15 @@ class AttributeCredential(ContractModel):
     issuer, subject, serial, ``valid_from``, ``valid_until``, status. Only an
     ``ACTIVE`` credential inside its validity window passes verification; the
     ``policy`` engine trusts a satisfied leaf only for a valid credential.
+
+    The subject is usually a clinician, but not always: under ADR-0016 a patient's
+    home authority issues the patient their own ``owner:<patient_id>`` attribute,
+    so ``subject_id`` may be a patient. Same shape, same lifecycle.
     """
 
     serial: Identifier  # unique per issuer
     issuer_id: Identifier  # the authority (medical council, hospital network)
-    subject_id: Identifier  # the clinician the attribute is bound to
+    subject_id: Identifier  # subject bound to the attribute (clinician or patient)
     attribute: Attribute  # what is certified, e.g. role:physician
     valid_from: AwareDatetime
     valid_until: AwareDatetime

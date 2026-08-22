@@ -45,7 +45,7 @@ healthcare interoperability standards.
 | D1 | Working implementation | Python repo, runnable end-to-end | Multi-process: facility nodes, authority services, audit service |
 | D2 | Live demo | Scripted walkthrough of the cross-facility break-glass scenario | Must run from a clean clone; fallback recording required |
 | D3 | Paper | Publishable write-up, IEEE-style | Design, security analysis, evaluation, honest limitations |
-| D4 | Benchmark results | Tables + plots generated from the harness | Backs the evaluation section of D3. Covers revocation latency, threshold reconstruction, emergency-search latency, re-wrap cost, audit verification, cross-facility latency, and ciphertext expansion. **Scalability curves vs. #patients/#facilities were cut** to fund the demo dashboard — state this as a limitation rather than implying the runs were done |
+| D4 | Benchmark results | Tables + plots generated from the harness | Backs the evaluation section of D3. Covers revocation latency, threshold reconstruction, emergency-search latency, re-wrap cost, audit verification, cross-facility latency, and ciphertext expansion. **Scalability curves vs. #patients/#facilities were cut** to fund the demo UI (the three web portals, ADR-0014 — originally the terminal dashboard) — state this as a limitation rather than implying the runs were done |
 | D5 | Test suite | pytest, including negative security tests | The negative tests are evidence for D3's claims |
 
 **Deadline model:** no fixed calendar deadline. The team's stated intent is to
@@ -209,10 +209,10 @@ adopted and what was rejected, so neither is re-litigated later.
 | Emergency assertion undefined | T48 — signed, bound, expiring assertion (`ARCHITECTURE.md` §8) |
 | Break-glass replay | T49 — one-time IDs + consumed-ID store |
 | Revocation not bound to record ownership | T50 |
-| Object-level authorization missing | T51 |
+| Object-level authorization missing | folded into P5-1 as a test, not middleware (ADR-0015) |
 | Credential lifecycle incomplete | T52 |
-| Service identity unspecified | T53 — signed service requests, **not** mTLS |
-| `capture-plain` could become default | T54 — refuses to start without `ENVIRONMENT=LAB_CAPTURE` |
+| Service identity unspecified | ~~T53~~ — **cut on strictness pass** (redundant with existing PKI; ADR-0015) |
+| `capture-plain` could become default | ~~T54~~ — **cut on strictness pass** (guards a failure a lab project can't hit; ADR-0015) |
 | PRE properties overclaimed | T42 — security-properties table marking PRE unproven |
 | Threat model conflates adversaries | T04 — four adversaries modelled separately |
 | Audit/wire correlation | T46 — request IDs |
@@ -276,6 +276,21 @@ than this is the fastest way to lose credibility in the viva.
    This must be stated explicitly in the paper. Real CP-ABE is a stretch goal.
 
 ---
+
+## 5A. UI decision reversed (ADR-0014)
+
+The earlier decision to keep only a read-only terminal dashboard has been
+reversed: the project now includes **three role-based web portals** (patient,
+clinician, admin) in Django + Bootstrap, and uses **PostgreSQL** as storage.
+Alongside this the plan adopts a proper patient consent model, patient
+notifications, correlation IDs on audit events, and PEP/PDP naming.
+
+**The boundary that protects the contribution:** the portals and the database
+*store data and identify users; they never decide access.* Decryption remains
+gated by the Shamir threshold and the key wrappings. Django login says who is
+asking, not whether a key may be released. See ADR-0014. The cryptographic core
+— threshold gate, unified state machine, logging-as-precondition, proxy
+re-encryption, searchable encryption, traffic analysis — is unchanged.
 
 ## 6. Explicitly out of scope
 

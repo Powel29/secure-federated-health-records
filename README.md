@@ -40,7 +40,7 @@ pip install -r requirements-dev.txt
 Verify:
 
 ```bash
-pytest && ruff check . && black --check .
+pytest; ruff check .; black --check .
 ```
 
 An empty test suite passing is the expected result until Phase 1 lands.

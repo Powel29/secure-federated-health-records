@@ -22,7 +22,7 @@ sophistication win.
 | Proxy re-encryption | **Hand-rolled** ElGamal-style unidirectional PRE | No maintained easy-install PRE library exists |
 | Access structure | **Hand-rolled** policy tree over Shamir | Replaces CP-ABE — see §3 |
 | Services | FastAPI + Uvicorn | Trivial to run several processes; gives us real network boundaries |
-| Storage | SQLite (one file per facility node) | Zero setup, real enough for benchmarks |
+| Storage | **PostgreSQL** (one shared store) | Real concurrent multi-service access; holds only ciphertext, wrapped keys, and coded index — stores data, never decides access (ADR-0014) |
 | Analysis | pandas + matplotlib | Benchmark tables and plots |
 | Testing | pytest | Including the negative security suite |
 | Style | black + ruff | See `CONVENTIONS.md` |
@@ -51,7 +51,7 @@ share validation. Used by both the break-glass gate and the policy engine.
 re-encryption key from A to B, transform a ciphertext without ever seeing
 plaintext.
 
-**C4 — `storage`.** SQLite schema and repository objects. Tables: patients,
+**C4 — `storage`.** PostgreSQL schema and repository objects. Tables: patients,
 records, dek_wrappings, attributes, authorities, facilities, lifecycle_state,
 transition_events, audit_log, search_index.
 
@@ -88,28 +88,34 @@ the new chain head is returned. Reconstructs the time-boxed emergency key.
 token derivation. Tokens derive from the emergency key, so search capability
 exists only while the record is in Emergency-open and is dead once it expires.
 
-**C13 — `federation`.** Patient-indexed, location-independent record discovery.
-Any federated facility can ask "where do this patient's records live" without
-learning contents.
+**C13 — `federation`.** Patient-indexed discovery over the shared store. Records
+live in **one semi-trusted encrypted store**, not scattered per facility.
+Discovery answers "which encrypted records exist for this patient" by patient
+index, so any facility can locate a patient's records without the store — or the
+querying facility — learning contents (ADR-0011).
 
 **C14 — `api`.** FastAPI applications: facility node, authority service, audit
 service. Thin — request handling and orchestration only, no cryptography.
 
 **C15 — `bench`.** Benchmark harness and pandas analysis.
 
-**C16 — `demo`.** Seeded synthetic dataset, the scripted cross-facility
-break-glass walkthrough, and the four-pane observability dashboard.
+**C16 — `ui`.** Three role-based web portals (Django + Bootstrap), replacing the
+earlier terminal dashboard (ADR-0014):
+- **Patient portal** — approve/deny access requests, revoke grants, view access
+  history including break-glass, receive notifications.
+- **Clinician portal** — request access, search during emergency, declare
+  break-glass, see the live emergency countdown.
+- **Admin/audit portal** — browse the audit log by correlation ID, view
+  federation/service state, review break-glass cases (read-only).
 
-The dashboard is **read-only observability, not an application**. It opens each
-service's SQLite file with a `mode=ro` URI — enforced by the driver, not by
-convention — and imports nothing from `crypto_core`, so it cannot decrypt. It
-renders four actor panes (patient, clinician, authority, audit) plus the audit
-chain as a shared footer strip. Each pane's query is scoped by actor identity in
-the `WHERE` clause rather than filtered from a global view: if the patient pane
-could render another patient's record, the demo would show the inverse of the
-project's central claim. It has no input handling and triggers nothing; actions
-come from the scripted CLI and the panes reflect them. Services must set
-`PRAGMA journal_mode=WAL` so concurrent readers do not block writers.
+The portals are a **front-end over the cryptographic core, not a replacement for
+it**. They never hold keys and never decide access — the threshold gate, the
+policy engine, and the key wrappings do. Django login identifies *who is asking*;
+it does not authorise decryption. This boundary is the one thing that keeps the
+portals from quietly becoming the "database decides access" model the project
+argues against (ADR-0014).
+
+
 
 **C17 — `wire`.** Traffic capture and analysis (the required course module; see
 `PROJECT.md` §4A). Capture harness that records PCAPs per scenario from the
@@ -257,8 +263,12 @@ contracts (T02) -> crypto_core -> records -> lifecycle -> breakglass -> search -
 
 ### Trust boundaries
 
-- The **cloud store** is semi-trusted: it holds ciphertext and the encrypted
-  index, and is assumed honest-but-curious.
+- The **shared store** is semi-trusted and central by design: it holds every
+  ciphertext record, the wrapped keys, and the coded search index, and is
+  assumed honest-but-curious. It is one place, but never one that can *read*
+  anything — it holds no keys and never sees plaintext. A full compromise of the
+  store yields only gibberish. This is the deliberate trade of a central store:
+  one target, but one that holds nothing usable (ADR-0011).
 - The **audit service** is trusted to hold one share and to commit before
   releasing — but it **cannot open a record alone**, which is a tested property.
 - The **HSM/KMS timer** is simulated by a trusted process. Its subversion is a
@@ -273,7 +283,7 @@ src/
   crypto_core/     C1   AES-GCM, HKDF, ECDSA, SHA-256 wrappers
   shamir/          C2   threshold secret sharing over GF(p)
   pre/             C3   proxy re-encryption
-  storage/         C4   SQLite schema + repositories
+  storage/         C4   PostgreSQL schema + repositories (ADR-0014/0020)
   identity/        C5   root anchor, facility CAs, cross-certification
   authority/       C6   multi-authority attribute issuance
   policy/          C7   access structure / policy tree engine
@@ -309,12 +319,13 @@ undermine the paper's central claim.
 
 ### Runtime topology
 
-Five processes, each with its own SQLite file and its own signing key:
+Six processes. The shared `store` holds the encrypted records; the other five each have their own signing key and a small local DB for keys and state:
 
 | Process | Port | Role | Holds |
 |---|---|---|---|
-| `facility-a` | 8001 | Patient's home facility | Records, DEK wrappings, home authority link |
-| `facility-b` | 8002 | Out-of-network facility (the demo entry point) | No records for this patient — must discover |
+| `store`      | 8000 | Shared semi-trusted encrypted record store | All ciphertext records, wrapped keys, coded search index — **never plaintext, never unwrapped keys** |
+| `facility-a` | 8001 | Patient's home facility | Clinician certs + home-authority link; **holds no records** — reads them from `store` |
+| `facility-b` | 8002 | Out-of-network facility (the demo entry point) | Clinician certs only; must discover the patient in `store`, then break-glass |
 | `authority-med` | 8010 | Medical council attribute authority | Attribute keys for `role:*` |
 | `authority-net` | 8011 | Hospital network attribute authority | Attribute keys for `specialty:*`, `facility:*` |
 | `audit` | 8020 | Audit service — chain custodian + share 3 | Hash-chained log, break-glass share |
@@ -333,8 +344,8 @@ team uses day to day, and it honours the "keep it easy" constraint — a teammat
 who cannot install Docker is not blocked.
 
 **Path B — Docker Compose (for the demo and for reproducibility).** Five
-services in one `docker-compose.yml`, one shared bridge network, named volumes
-for the SQLite files. This is what runs on demo day and what an evaluator or a
+services in one `docker-compose.yml`, one shared bridge network, a named volume
+for the PostgreSQL data (ADR-0014). This is what runs on demo day and what an evaluator or a
 paper reviewer can bring up from a clean clone with one command. It also removes
 the "works on my machine" failure mode at the worst possible moment.
 
@@ -448,23 +459,12 @@ break-glass request could be replayed for repeated emergency sessions, which
 would defeat the time-boxing that the state machine exists to enforce.
 
 ### Object-level authorization
+Endpoints authorise the caller for the *specific* patient/record before doing
+work, but the cryptographic layer is the real backstop: an unauthorised caller
+cannot decrypt regardless. The residual risk is metadata leakage and patient-ID
+enumeration, so this is verified by a **test** in the security suite (P5-1)
+rather than a separate middleware layer (strictness pass, ADR-0015).
 
-Facility endpoints authorise the caller for the *specific* patient and record
-before any database or cryptographic work. Our encryption backstops disclosure —
-an unauthorised caller cannot decrypt — but without this check the API still
-leaks existence and enables patient-ID enumeration.
-
-### Service identity
-
-Every inter-service request is signed with the calling service's own key and
-verified by the callee, using the PKI we already build for clinicians.
-
-**Why signed requests rather than mTLS:** mTLS was considered and rejected.
-It would encrypt inter-service traffic by default, which directly conflicts with
-`capture-plain` — the profile that produces the evidence for our required course
-module (`PROJECT.md` §4A). Signed requests demonstrate the same property
-(authenticated service identity, verifiable per-request) while leaving the wire
-readable for analysis.
 
 ### Credential lifecycle
 
@@ -473,11 +473,6 @@ Clinician and authority credentials carry issuer, subject, serial,
 validation. A system whose central claim is that revocation is part of a unified
 key lifecycle cannot coherently issue credentials that never expire.
 
-### Deployment guard
-
-Services refuse to start in plain-HTTP mode unless `ENVIRONMENT=LAB_CAPTURE` is
-explicitly set. `capture-plain` is a laboratory research profile and never a
-deployable configuration.
 
 ### Deliberately excluded
 

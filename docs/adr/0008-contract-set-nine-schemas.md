@@ -20,6 +20,11 @@ Freeze **nine** schemas: the original seven plus `EmergencyAssertion` and
 `RequestEnvelope`. Fix the stale "7" references in CONVENTIONS §3 and the
 WORKFLOW build order as part of the freeze PR so the count stops misleading.
 
+> **Later amended by [ADR-0017](0017-contract-additions-consent-correlation.md)**
+> (2026-08-21): the ADR-0014 consent model added `ConsentRequest` and
+> `ConsentGrant`, taking the frozen set to **eleven**. This ADR still records why
+> the freeze was nine at T02; the count moved on through the same all-four gate.
+
 ## Consequences
 
 - The two security-review structs are first-class frozen contracts, not

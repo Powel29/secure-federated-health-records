@@ -97,6 +97,7 @@ def audit_entry_kwargs(**overrides: object) -> dict[str, object]:
         event_type="transition",
         event_data={"record_id": "rec-1", "to_state": "revoked"},
         actor_id="audit-svc",
+        correlation_id="corr-0001",
         timestamp=_NOW,
         signature=SIG,
     )
@@ -155,6 +156,39 @@ def request_envelope_kwargs(**overrides: object) -> dict[str, object]:
         operation="commit_transition",
         body=b"canonical-serialized-body",
         issued_at=_NOW,
+        nonce=ANTIREPLAY_NONCE,
+        signature=SIG,
+    )
+    base.update(overrides)
+    return base
+
+
+def consent_request_kwargs(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = dict(
+        request_id=uuid4(),
+        patient_id="pat-1",
+        requester_id="dr-1",
+        scope=("rec-1", "rec-2"),
+        purpose="post-operative follow-up",
+        requested_at=_NOW,
+        expires_at=_LATER,
+        nonce=ANTIREPLAY_NONCE,
+        signature=SIG,
+    )
+    base.update(overrides)
+    return base
+
+
+def consent_grant_kwargs(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = dict(
+        grant_id=uuid4(),
+        request_id=uuid4(),
+        patient_id="pat-1",
+        grantee_id="dr-1",
+        scope=("rec-1",),
+        status="granted",
+        decided_at=_NOW,
+        expires_at=_LATER,
         nonce=ANTIREPLAY_NONCE,
         signature=SIG,
     )

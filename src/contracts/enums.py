@@ -64,3 +64,19 @@ class PolicyNodeType(str, Enum):
     LEAF = "leaf"  # an attribute test
     AND = "and"  # k-of-k Shamir split across children
     OR = "or"  # every child receives the same secret; any one suffices
+
+
+class ConsentStatus(str, Enum):
+    """Outcome of a patient consent decision (ADR-0014 consent model).
+
+    A :class:`~contracts.consent.ConsentGrant` answers a request with exactly one
+    of these. ``GRANTED`` is the only status that authorises access; the others
+    all fail closed at the policy/enforcement layer. Consent never *decides*
+    decryption on its own -- keys and the threshold gate do (ADR-0014) -- it
+    records the patient's signed intent that the policy layer then honours.
+    """
+
+    GRANTED = "granted"
+    DENIED = "denied"
+    REVOKED = "revoked"
+    EXPIRED = "expired"

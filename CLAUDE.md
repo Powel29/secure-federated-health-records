@@ -63,9 +63,9 @@ contradict itself.
   limitations that must appear in the abstract. Load for anything under
   `paper/`.
 
-**`docs/dashboard-design.md`** — Build spec for the four-pane demo dashboard
-(T55): grid, per-pane queries and layout, the states it must handle, visual
-rules, and what is deliberately out of scope.
+**Three web portals (patient / clinician / admin)** replace the old dashboard —
+see ADR-0014. Portals store data and identify users but never decide access;
+keys and the threshold gate do. `docs/dashboard-design.md` is superseded.
 
 **`docs/adr/README.md`** — The decision log. The tracker table lists every
 decision taken so far, by whom, and its status; each row links to a one-file ADR
@@ -98,6 +98,9 @@ you decide something (see the standing rule below and `CONVENTIONS.md` §6).
   Never campus, shared, or third-party networks.
 - **Break-glass requires a valid signed Emergency Assertion.** "The clinician
   asserts an emergency" is not a specification — see `ARCHITECTURE.md` §8.
+- **Portals and Postgres store data and identify users; they never decide
+  access.** Keys and the Shamir threshold gate decide access. If a portal login
+  or a DB check ever releases a key, the novelty is gone (ADR-0014).
 - **Do not re-add the ML anomaly-detection layer** or FHIR/HL7 interoperability.
   Both were cut deliberately; see `PROJECT.md` §6.
 - **Phases are gated, not dated.** A phase ends when its exit criteria are
