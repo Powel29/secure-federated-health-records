@@ -9,4 +9,3 @@ class PolicyError(Exception):
 
 class PolicyDeniedError(PolicyError):
     """Raised when presented credentials do not satisfy the policy tree."""
-
