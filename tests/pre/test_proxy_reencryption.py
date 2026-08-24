@@ -1,0 +1,86 @@
+"""Tests for Proxy Re-Encryption (C3)."""
+
+from __future__ import annotations
+
+import secrets
+
+from pre.elgamal import (
+    GENERATOR_G,
+    SAFE_PRIME_P,
+    SUBGROUP_ORDER_Q,
+    decapsulate_key,
+    decrypt_point,
+    encapsulate_key,
+    encrypt_point,
+    generate_keypair,
+    generate_rekey,
+    reencrypt,
+)
+
+
+def test_pre_encrypt_decrypt_original_recipient() -> None:
+    """Original recipient A can decrypt their own ciphertext."""
+    sk_a, pk_a = generate_keypair()
+    m = pow(GENERATOR_G, secrets.randbelow(SUBGROUP_ORDER_Q - 2) + 2, SAFE_PRIME_P)
+
+    c1, c2 = encrypt_point(pk_a, m)
+    recovered = decrypt_point(sk_a, c1, c2)
+    assert recovered == m
+
+
+def test_pre_reencryption_and_delegatee_decryption() -> None:
+    """Ciphertext transformed with re-encryption key rk_{A->B} decrypts under sk_B."""
+    sk_a, pk_a = generate_keypair()
+    sk_b, pk_b = generate_keypair()
+
+    m = pow(GENERATOR_G, secrets.randbelow(SUBGROUP_ORDER_Q - 2) + 2, SAFE_PRIME_P)
+    c1, c2 = encrypt_point(pk_a, m)
+
+    rk_a_to_b = generate_rekey(sk_a, sk_b)
+    c1_prime, c2_prime = reencrypt(rk_a_to_b, c1, c2)
+
+    # c1 is transformed
+    assert c1_prime != c1
+    assert c2_prime == c2
+
+    # Recipient B decrypts the transformed ciphertext
+    recovered_b = decrypt_point(sk_b, c1_prime, c2_prime)
+    assert recovered_b == m
+
+
+def test_pre_proxy_blindness() -> None:
+    """Proxy holding rk_{A->B} cannot recover plaintext without sk_B."""
+    sk_a, pk_a = generate_keypair()
+    sk_b, pk_b = generate_keypair()
+
+    m = pow(GENERATOR_G, secrets.randbelow(SUBGROUP_ORDER_Q - 2) + 2, SAFE_PRIME_P)
+    c1, c2 = encrypt_point(pk_a, m)
+
+    rk_a_to_b = generate_rekey(sk_a, sk_b)
+    c1_prime, c2_prime = reencrypt(rk_a_to_b, c1, c2)
+
+    # An unauthorized party or the proxy cannot obtain m directly
+    wrong_sk, _ = generate_keypair()
+    unauthorized = decrypt_point(wrong_sk, c1_prime, c2_prime)
+    assert unauthorized != m
+
+
+def test_pre_symmetric_key_encapsulation_round_trip() -> None:
+    """Encapsulated symmetric key decapsulates cleanly before and after PRE."""
+    sk_a, pk_a = generate_keypair()
+    sk_b, pk_b = generate_keypair()
+
+    (c1, c2), sym_key = encapsulate_key(pk_a)
+    assert len(sym_key) == 32
+
+    # A decapsulates
+    decaps_a = decapsulate_key(sk_a, c1, c2)
+    assert decaps_a == sym_key
+
+    # Transform to B
+    rk = generate_rekey(sk_a, sk_b)
+    c1_re, c2_re = reencrypt(rk, c1, c2)
+
+    # B decapsulates
+    decaps_b = decapsulate_key(sk_b, c1_re, c2_re)
+    assert decaps_b == sym_key
