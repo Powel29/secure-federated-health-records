@@ -73,6 +73,12 @@ Django `DATABASES`/router so the ORM never writes the store.
 **PS-later (Phase 2–3)** — wire `issue_credential` → `authority` (P2-2); wire
 `ingest_upload`/request-access/break-glass → their backends (P3-14, P3, P3-5).
 
+**PS-future (stretch)** — Drive-style virtual department folders & heuristic
+auto-sorting in the patient and clinician portals. Records organised into
+departmental folders (Cardiology, Radiology, Pathology, General, Emergency)
+mapped to attribute-policy scopes (`dept:cardiology`, `dept:radiology`,
+`emergency:breakglass`). See `PROJECT.md` §7 and `portal/README.md`.
+
 ---
 
 ### Phase 1 — Crypto and data foundations
@@ -148,6 +154,8 @@ recording captured; every member can explain the whole system, not only their
 own module.
 
 **Stretch goals** (`PROJECT.md` §7) may not start until the Phase 5 gate passes.
+These include verifiable search, consent-aware filtering, real CP-ABE, and
+Drive-style department virtual folders with auto-sorting (PS-future).
 
 ---
 

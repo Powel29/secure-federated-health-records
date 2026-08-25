@@ -86,6 +86,14 @@ directly. To see the **patient**/**clinician** portals, use the register buttons
 | Register (patient & clinician), login, role routing | Authority *issues* the credential (P2-2) |
 | Admin/audit reads the store **read-only** (records, audit, lifecycle) | live federation state |
 | Upload / request-access / break-glass buttons → `NotWiredYet` | real ingest (P3-14), consent/grant (P3), break-glass (P3-5) |
+| Basic record list views | Drive-style medical department folders & heuristic auto-sorting (Cardiology, Radiology, Pathology, General, Emergency) mapped to attribute policies |
+
+## Future UI Roadmap (Planned)
+
+- **Drive-Style Department Folders & Auto-Sorting:**
+  - Patient and Clinician portals will organize records into virtual departmental folders (`📁 Cardiology`, `📁 Radiology & Imaging`, `📁 Pathology & Labs`, `📁 General`, `📁 Emergency / Break-Glass`).
+  - Automatic classification/heuristic auto-sorting on record upload (detecting file naming conventions and types, e.g., `*mri*` ➔ Radiology, `*ecg*` ➔ Cardiology) with manual folder override.
+  - Direct mapping between department folders and cryptographic access policy attributes (e.g., `dept:cardiology`, `dept:radiology`, `emergency:breakglass`).
 
 Not in the strict `src/` lint/format scope (Django has its own idioms); revisit
 if it grows. CI runs the portal tests on SQLite (`portal` job).
