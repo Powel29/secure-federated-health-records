@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import secrets
 
+import pytest
 from pre.elgamal import (
     GENERATOR_G,
     SAFE_PRIME_P,
@@ -16,6 +17,11 @@ from pre.elgamal import (
     generate_rekey,
     reencrypt,
 )
+from pre.exceptions import PREKeyError
+
+# (P - 1) == -1 mod P is a well-formed field element (1 < x < P) of order 2,
+# so it is a valid stand-in for a hostile non-subgroup group element.
+_NON_SUBGROUP_ELEMENT = SAFE_PRIME_P - 1
 
 
 def test_pre_encrypt_decrypt_original_recipient() -> None:
@@ -84,3 +90,30 @@ def test_pre_symmetric_key_encapsulation_round_trip() -> None:
     # B decapsulates
     decaps_b = decapsulate_key(sk_b, c1_re, c2_re)
     assert decaps_b == sym_key
+
+
+def test_encrypt_point_rejects_non_subgroup_public_key() -> None:
+    """A public key outside the order-q subgroup is refused (small-subgroup guard).
+
+    Backs the claim: caller-supplied group elements are validated for subgroup
+    membership before any exponentiation, closing off small-subgroup confinement.
+    """
+    m = pow(GENERATOR_G, secrets.randbelow(SUBGROUP_ORDER_Q - 2) + 2, SAFE_PRIME_P)
+    with pytest.raises(PREKeyError):
+        encrypt_point(_NON_SUBGROUP_ELEMENT, m)
+
+
+def test_reencrypt_rejects_non_subgroup_c1() -> None:
+    """A ciphertext c1 outside the order-q subgroup is refused before re-wrapping."""
+    sk_a, _ = generate_keypair()
+    sk_b, _ = generate_keypair()
+    rk = generate_rekey(sk_a, sk_b)
+    with pytest.raises(PREKeyError):
+        reencrypt(rk, _NON_SUBGROUP_ELEMENT, c2=12345)
+
+
+def test_decrypt_point_rejects_non_subgroup_c1() -> None:
+    """A ciphertext c1 outside the order-q subgroup is refused before decryption."""
+    sk, _ = generate_keypair()
+    with pytest.raises(PREKeyError):
+        decrypt_point(sk, _NON_SUBGROUP_ELEMENT, c2=12345)

@@ -18,10 +18,28 @@ SAFE_PRIME_P = 0xF45C8BBE9322D813D2A0A92464E19D100A043DC1994F7CDC2A5D70D8D0F7366
 SUBGROUP_ORDER_Q = (SAFE_PRIME_P - 1) // 2
 GENERATOR_G = 4  # Quadratic residue generating the prime order-q subgroup
 
+# Fixed HKDF context for symmetric-key encapsulation. A KDF salt and info string
+# are domain-separation material, not secret key material, so pinning them to a
+# constant is safe and does not violate the "never hardcode a key" rule
+# (CONVENTIONS.md §2): recovery still requires the private key, never the salt.
+_KDF_SALT = b"pre-key-encapsulation-salt"
+_KDF_INFO = b"pre-symmetric-key"
+
 
 def _rand_exponent() -> int:
     """Generate a random exponent in [2, SUBGROUP_ORDER_Q - 1]."""
     return secrets.randbelow(SUBGROUP_ORDER_Q - 2) + 2
+
+
+def _is_subgroup_member(x: int) -> bool:
+    """Return True if x is a non-trivial element of the prime-order-q subgroup.
+
+    A caller-supplied group element (a public key, or the ``c1`` component of a
+    ciphertext) that is not in the order-q subgroup enables small-subgroup
+    confinement attacks against this hand-rolled ElGamal PRE. Every such element
+    is checked before it is used in an exponentiation.
+    """
+    return 1 < x < SAFE_PRIME_P and pow(x, SUBGROUP_ORDER_Q, SAFE_PRIME_P) == 1
 
 
 def generate_keypair() -> tuple[int, int]:
@@ -79,10 +97,10 @@ def encrypt_point(pk: int, message_point: int) -> tuple[int, int]:
         Tuple of ciphertext components ``(c1, c2)``.
 
     Raises:
-        PREKeyError: If public key is invalid.
+        PREKeyError: If the public key is not a valid subgroup element.
     """
-    if not (1 < pk < SAFE_PRIME_P):
-        raise PREKeyError("Invalid public key")
+    if not _is_subgroup_member(pk):
+        raise PREKeyError("Public key is not a member of the order-q subgroup")
 
     k = _rand_exponent()
     c1 = pow(GENERATOR_G, k, SAFE_PRIME_P)
@@ -106,7 +124,15 @@ def reencrypt(rk: int, c1: int, c2: int) -> tuple[int, int]:
     Security property:
         Proxy blindness: The proxy transforms the ciphertext without learning
         the underlying message or private keys (ADR-0012).
+
+    Raises:
+        PREKeyError: If c1 is not a valid subgroup element.
     """
+    if not _is_subgroup_member(c1):
+        raise PREKeyError(
+            "Ciphertext component c1 is not a member of the order-q subgroup"
+        )
+
     c1_prime = pow(c1, rk, SAFE_PRIME_P)
     return c1_prime, c2
 
@@ -125,8 +151,14 @@ def decrypt_point(sk: int, c1: int, c2: int) -> int:
         The recovered group element message_point.
 
     Raises:
+        PREKeyError: If c1 is not a valid subgroup element.
         PREDecryptionError: If decryption fails.
     """
+    if not _is_subgroup_member(c1):
+        raise PREKeyError(
+            "Ciphertext component c1 is not a member of the order-q subgroup"
+        )
+
     try:
         c1_inv_sk = pow(c1, -sk, SAFE_PRIME_P)
         return (c2 * c1_inv_sk) % SAFE_PRIME_P
@@ -153,8 +185,8 @@ def encapsulate_key(pk: int) -> tuple[tuple[int, int], bytes]:
     # Derive 32-byte symmetric key from the point using HKDF
     symmetric_key = hkdf_derive(
         ikm=point.to_bytes(32, byteorder="big"),
-        salt=b"pre-key-encapsulation-salt",
-        info=b"pre-symmetric-key",
+        salt=_KDF_SALT,
+        info=_KDF_INFO,
         length=32,
     )
 
@@ -175,7 +207,7 @@ def decapsulate_key(sk: int, c1: int, c2: int) -> bytes:
     point = decrypt_point(sk, c1, c2)
     return hkdf_derive(
         ikm=point.to_bytes(32, byteorder="big"),
-        salt=b"pre-key-encapsulation-salt",
-        info=b"pre-symmetric-key",
+        salt=_KDF_SALT,
+        info=_KDF_INFO,
         length=32,
     )

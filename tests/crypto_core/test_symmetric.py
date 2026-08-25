@@ -97,3 +97,44 @@ def test_sha256_digest() -> None:
         "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
     )
     assert sha256_digest(message) == expected
+
+
+def test_aes_256_gcm_known_answer_vector() -> None:
+    """AES-256-GCM matches a published known-answer vector (P1-1 exit criterion).
+
+    McGrew & Viega GCM Test Case 16 (AES-256 with AAD), the same vector set NIST
+    references. ``aes_gcm_encrypt`` generates its own nonce and so cannot be
+    driven from a fixed IV; the deterministic direction is decryption, so the
+    KAT verifies ``aes_gcm_decrypt`` reproduces the reference plaintext from the
+    reference key/nonce/ciphertext/tag/AAD.
+    """
+    key = bytes.fromhex(
+        "feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308"
+    )
+    nonce = bytes.fromhex("cafebabefacedbaddecaf888")
+    aad = bytes.fromhex("feedfacedeadbeeffeedfacedeadbeefabaddad2")
+    ciphertext = bytes.fromhex(
+        "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa"
+        "8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662"
+    )
+    tag = bytes.fromhex("76fc6ece0f4e1768cddf8853bb2d551b")
+    expected_plaintext = bytes.fromhex(
+        "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a72"
+        "1c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39"
+    )
+
+    recovered = aes_gcm_decrypt(key, nonce, ciphertext + tag, aad)
+    assert recovered == expected_plaintext
+
+
+def test_hkdf_sha256_known_answer_vector() -> None:
+    """HKDF-SHA256 matches RFC 5869 Test Case 1 (P1-1 exit criterion)."""
+    ikm = bytes.fromhex("0b" * 22)
+    salt = bytes.fromhex("000102030405060708090a0b0c")
+    info = bytes.fromhex("f0f1f2f3f4f5f6f7f8f9")
+    expected_okm = bytes.fromhex(
+        "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf"
+        "34007208d5b887185865"
+    )
+
+    assert hkdf_derive(ikm, salt, info, length=42) == expected_okm

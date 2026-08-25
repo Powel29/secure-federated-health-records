@@ -56,36 +56,36 @@ def aes_gcm_encrypt(
     key: bytes,
     plaintext: bytes,
     aad: bytes | None = None,
-    nonce: bytes | None = None,
 ) -> tuple[bytes, bytes]:
     """Encrypt plaintext using AES-256-GCM with associated authenticated data.
+
+    A fresh nonce is generated for every call and returned to the caller; the
+    nonce is deliberately not accepted as a parameter, because AES-GCM nonce
+    reuse under a single key is catastrophic (CONVENTIONS.md §2 rule 5). This
+    closes off the one way a caller could reuse a nonce.
 
     Args:
         key: 32-byte AES key.
         plaintext: Plaintext bytes to encrypt.
         aad: Optional associated data to authenticate.
-        nonce: Optional pre-generated 12-byte nonce (if None, a fresh one is generated).
 
     Returns:
         A tuple of ``(ciphertext_with_tag, nonce)``.
 
     Raises:
-        ValueError: If key or nonce length is invalid.
+        ValueError: If key length is invalid.
 
     Security property:
         Authenticated encryption (AEAD) ensures both confidentiality and
-        ciphertext integrity. Nonces are never reused for a key.
+        ciphertext integrity. A fresh nonce is generated per encryption and can
+        never be reused for a key.
     """
     if len(key) != DEFAULT_KEY_BYTES:
         raise ValueError(
             f"AES-256 key must be {DEFAULT_KEY_BYTES} bytes, got {len(key)}"
         )
 
-    if nonce is None:
-        nonce = generate_nonce()
-    elif len(nonce) != GCM_NONCE_BYTES:
-        raise ValueError(f"GCM nonce must be {GCM_NONCE_BYTES} bytes, got {len(nonce)}")
-
+    nonce = generate_nonce()
     aesgcm = AESGCM(key)
     ciphertext = aesgcm.encrypt(nonce, plaintext, aad)
     return ciphertext, nonce
