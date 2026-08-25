@@ -312,10 +312,12 @@ Do not re-open these without a team decision recorded in this file.
   not a deliverable and must not consume time that belongs to the crypto core.
 
 ## 7. Stretch goals
+ 
+ Not started until the Phase 5 gate passes. These are the first things to cut.
+ 
+ - Verifiable search (proof of no silent omission of results).
+ - Consent-aware search result filtering.
+ - Real pairing-based multi-authority CP-ABE replacing the secret-sharing
+   access structure.
+ - **Drive-style department virtual folders & auto-sorting:** Portal UI enhancement organizing patient records into department folders (Cardiology, Radiology, Pathology, General, Emergency) linked directly to attribute policy scopes.
 
-Not started until the Phase 5 gate passes. These are the first things to cut.
-
-- Verifiable search (proof of no silent omission of results).
-- Consent-aware search result filtering.
-- Real pairing-based multi-authority CP-ABE replacing the secret-sharing
-  access structure.

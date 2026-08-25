@@ -115,6 +115,12 @@ it does not authorise decryption. This boundary is the one thing that keeps the
 portals from quietly becoming the "database decides access" model the project
 argues against (ADR-0014).
 
+*Future enhancement (stretch):* Drive-style virtual department folders
+(Cardiology, Radiology, Pathology, General, Emergency) with heuristic
+auto-sorting on upload, mapping each folder directly to attribute-policy scopes
+(`dept:cardiology`, `dept:radiology`, `emergency:breakglass`). See `PROJECT.md`
+§7 and `portal/README.md`.
+
 
 
 **C17 — `wire`.** Traffic capture and analysis (the required course module; see
