@@ -34,6 +34,9 @@ Each row links to a one-file ADR with the full context.
 | [0019](0019-federation-topology-and-attributes.md) | Federation at two facilities; attribute-authority ownership | Accepted | 2026-08-21 | Powel (team) | P0-7 |
 | [0020](0020-psycopg3-raw-sql-storage.md) | psycopg3 + raw SQL migrations for the store (no ORM) | Accepted | 2026-08-21 | Avaneeth (team) | P0-8 |
 | [0021](0021-early-portal-shells-and-registration.md) | Early portal shells + self-service registration (request-then-issue) | Accepted | 2026-08-21 | Team | portal shells |
+| [0022](0022-elgamal-group-parameters-and-kem.md) | Unidirectional ElGamal Group Parameters and KEM for PRE | Accepted | 2026-08-24 | Ojas, Avaneeth | P1-5 |
+| [0023](0023-envelope-encryption-multi-key-wrapping.md) | Envelope encryption and multi-key DEK lifecycle | Accepted | 2026-08-24 | Powel, Avaneeth | P1-4 |
+| [0024](0024-deterministic-policy-engine-tree.md) | Deterministic policy tree evaluation engine | Accepted | 2026-08-24 | Nandini, Avaneeth | P1-6 |
 
 ## Owed, not yet written
 
