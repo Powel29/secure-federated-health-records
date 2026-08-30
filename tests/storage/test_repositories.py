@@ -176,3 +176,34 @@ def test_db_rejects_bad_nonce_fail_closed(conn):
                     _now(),
                 ),
             )
+
+
+def _make_record(record_id: str, patient_id: str) -> Record:
+    return Record(
+        record_id=record_id,
+        patient_id=patient_id,
+        facility_id="facility-a",
+        policy_id="pol-77",
+        content_type="text/plain",
+        ciphertext=b"\xde\xad",
+        nonce=b"n" * 12,
+        aad=None,
+        created_at=_now(),
+    )
+
+
+def test_find_record_ids_by_patient_returns_only_ids_for_that_patient(conn):
+    """P2-4: discovery is a projection over record_id, scoped to one patient."""
+    _seed_refs(conn)
+    repo.insert_patient(conn, "pat-102", "authority-net")
+
+    repo.insert_record(conn, _make_record("rec-a-1", "pat-101"))
+    repo.insert_record(conn, _make_record("rec-a-2", "pat-101"))
+    repo.insert_record(conn, _make_record("rec-b-1", "pat-102"))
+
+    ids = repo.find_record_ids_by_patient(conn, "pat-101")
+
+    assert set(ids) == {"rec-a-1", "rec-a-2"}
+    # Every element is a bare record-id string; there is no attribute path
+    # from the discovery result to ciphertext, nonce, or aad.
+    assert all(isinstance(x, str) for x in ids)
