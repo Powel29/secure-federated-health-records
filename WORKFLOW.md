@@ -351,12 +351,12 @@ everyone has switched over.
 
 ### Phase 2 — Federation and policy
 
-**P2-1 · Identity and cross-certification** *(was P2-1)* — Avaneeth — 12h
+**P2-1 · Identity and cross-certification** *(was P2-1)* — Ojas *(swapped from Avaneeth, ADR-0025)* — 12h
 *What:* Build the trust setup — a root authority, per-hospital certificate authorities, and cross-certification so an out-of-network doctor can be verified.
 *Needs first:* P1-2, P0-8.
 *Done when:* an out-of-network doctor's certificate validates back to the shared root, and a forged one is rejected. ✅ *(`src/identity/`: `root_anchor.py`, `certificates.py`, `chain.py`, `trust_registry.py`; see ADR-0024 for the single-root cross-certification design; negative tests in `tests/security/test_phase2_security.py`.)*
 
-**P2-2 · Attribute issuing** *(was P2-2)* — Avaneeth — 8h
+**P2-2 · Attribute issuing** *(was P2-2)* — Ojas *(swapped from Avaneeth, ADR-0025)* — 8h
 *What:* Let the authorities hand out signed "attribute" credentials (like role:doctor, specialty:cardiology) that the policy engine checks. **A patient's home authority also issues that patient their own `owner:<patient_id>` attribute** (ADR-0016), which is what lets a patient self-decrypt their records; it follows the same credential lifecycle (validity window, revocation status) as any other attribute.
 *Needs first:* P2-1.
 *Done when:* two independent authorities issue valid credentials and a forged credential is rejected; a patient's home authority can issue an `owner:<patient_id>` attribute credential. ✅ *(`src/authority/`: `issuance.py`, `certification.py`; live revocation registry deferred to P2-6 per the module's docstring; negative tests in `tests/security/test_phase2_security.py`.)*

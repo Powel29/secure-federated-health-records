@@ -37,6 +37,7 @@ Each row links to a one-file ADR with the full context.
 | [0022](0022-aes-gcm-no-caller-nonce.md) | Remove caller-supplied nonce from `aes_gcm_encrypt` | Proposed | 2026-08-25 | Phase-1 review → Powel | P1-1 review |
 | [0023](0023-pre-subgroup-validation.md) | Validate order-q subgroup membership in the ElGamal PRE | Proposed | 2026-08-25 | Phase-1 review → Ojas | P1-5 review |
 | [0024](0024-single-root-cross-certification.md) | Cross-certification via a single shared root, not a peer CA mesh | Accepted | 2026-08-30 | Avaneeth | P2-1, P2-2 |
+| [0025](0025-p2-1-p2-2-ownership-swap.md) | Swap ownership of P2-1/P2-2 from Avaneeth to Ojas | Accepted | 2026-08-30 | Ojas, Avaneeth | P2-1, P2-2 |
 
 ## Owed, not yet written
 
