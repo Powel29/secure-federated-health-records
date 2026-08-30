@@ -41,6 +41,7 @@ Each row links to a one-file ADR with the full context.
 | [0026](0026-policy-engine-cryptographic-enforcement.md) | Policy engine enforces access cryptographically (Shamir over attribute keys), not by boolean check alone | Accepted | 2026-08-30 | Powel | P2-3 |
 | [0027](0027-search-token-construction.md) | Search-token construction: deterministic HKDF over emergency key with versioned salt; per-record binding and normalisation deferred | Proposed | 2026-08-30 | Nandini, Powel → all four | P2-5 |
 | [0028](0028-credential-lifecycle-and-revocation-registry.md) | Credential lifecycle and revocation registry | Proposed | 2026-08-30 | Avaneeth (team) | P2-6 |
+| [0029](0029-simplify-revocation-registry-ponytail.md) | Revocation registry simplification and complexity reduction (Ponytail Review) | Proposed | 2026-08-30 | Avaneeth (team) | P2-6 review |
 
 ## Owed, not yet written
 
