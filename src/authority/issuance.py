@@ -9,6 +9,14 @@ issues and verifies them. A live revocation *registry* -- turning a credential
 that was ACTIVE at issuance into one an authority can later mark REVOKED -- is
 P2-6's job; this module establishes the shape and the issuance-time checks
 P2-6 builds on.
+
+Beyond credentials, an authority also owns the **attribute key material** the
+policy engine seals leaf shares to (ARCHITECTURE.md §3, §8 C6; ADR-0026). A key
+is per-attribute, not per-holder -- every holder of ``role:physician`` recovers
+the *same* key, which is precisely why the scheme is not collusion-resistant
+(ADR-0002). :meth:`AttributeAuthority.attribute_key` is the authoring-side
+accessor (used to compile a policy); :meth:`AttributeAuthority.get_attribute_key`
+is the holder-facing, credential-gated release.
 """
 
 from __future__ import annotations
@@ -17,7 +25,7 @@ import datetime
 import secrets
 
 from contracts import Attribute, AttributeCredential, CredentialStatus
-from crypto_core import generate_ec_keypair, sign, verify
+from crypto_core import generate_ec_keypair, generate_key, sign, verify
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from authority.exceptions import (
@@ -56,6 +64,82 @@ class AttributeAuthority:
         self.private_key = private_key
         self.public_key = public_key
         self.owned_attribute_names = owned_attribute_names
+        # Per-attribute key material, keyed (name, value), minted on demand for
+        # attributes this authority owns. In-memory for now; persisting it rides
+        # with the authority's signing-key persistence (a P2-6 concern).
+        self._attribute_keys: dict[tuple[str, str], bytes] = {}
+
+    def attribute_key(self, name: str, value: str) -> bytes:
+        """Return the 32-byte attribute key for an owned ``name:value`` (authoring).
+
+        Minted on first request and stable thereafter, so every leaf naming this
+        attribute -- and every holder issued it -- shares one key. This is the
+        accessor a policy author (record ingest, P3-14) uses to seal a leaf; it
+        is not a credential-gated release (see :meth:`get_attribute_key`).
+
+        Args:
+            name: The attribute name (must be in this authority's namespace).
+            value: The attribute value.
+
+        Returns:
+            The attribute's 32-byte key.
+
+        Raises:
+            UnauthorizedAttributeError: ``name`` is outside this authority's
+                owned namespace -- it cannot mint keys it does not own.
+
+        Security property:
+            One key per attribute (ADR-0026). Namespace ownership is enforced so
+            an authority cannot produce key material for another's attributes.
+        """
+        if name not in self.owned_attribute_names:
+            raise UnauthorizedAttributeError(
+                f"authority {self.authority_id!r} does not own attribute "
+                f"namespace {name!r}"
+            )
+        return self._attribute_keys.setdefault((name, value), generate_key())
+
+    def get_attribute_key(
+        self,
+        credential: AttributeCredential,
+        at: datetime.datetime | None = None,
+    ) -> bytes:
+        """Release an attribute key to a holder presenting a valid credential.
+
+        This is the gate that connects the credential lifecycle to the policy
+        engine (ARCHITECTURE.md §8 C6): a holder only obtains the key that
+        decrypts a leaf if their credential for that attribute verifies --
+        correct signature, ACTIVE status, inside its validity window, and issued
+        by this authority. A forged, expired, revoked, or wrong-authority
+        credential yields no key.
+
+        Args:
+            credential: The holder's credential for the attribute.
+            at: The instant to check the validity window against; defaults to now.
+
+        Returns:
+            The attribute's 32-byte key.
+
+        Raises:
+            UnauthorizedAttributeError: The credential was not issued by this
+                authority, or names an attribute outside its namespace.
+            InvalidSignatureError: The credential signature does not verify.
+            CredentialStatusError / CredentialNotYetValidError /
+            CredentialExpiredError: The credential is not currently valid.
+
+        Security property:
+            Fails closed -- verification runs before any key is returned, so an
+            invalid credential cannot extract key material (CONVENTIONS.md §2
+            rule 6).
+        """
+        if credential.issuer_id != self.authority_id:
+            raise UnauthorizedAttributeError(
+                f"credential issued by {credential.issuer_id!r}, not this "
+                f"authority {self.authority_id!r}"
+            )
+        # Raises on bad signature / status / validity window; no key on failure.
+        verify_credential(credential, self.public_key, at=at)
+        return self.attribute_key(credential.attribute.name, credential.attribute.value)
 
 
 def generate_authority(

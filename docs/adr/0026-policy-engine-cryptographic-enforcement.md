@@ -60,12 +60,20 @@ from — the issuing authority — is `authority`'s concern, not the engine's.
   `authority-net` is encrypted under that authority's key; a holder of some
   other authority's key for the same `name:value` simply cannot decrypt it.
   The wrong-authority case fails closed by construction.
-- **`authority` owes attribute-key issuance (follow-up on Ojas's module,
-  ADR-0025).** ARCHITECTURE §8-C6 says the authority issues "the attribute key
-  material used by the policy engine"; P2-2 as merged does not. Until that
-  lands, the engine is exercised with test-supplied keyrings. This is a change
-  *request* to `authority`, not something `policy` may reach in and do
-  (CONVENTIONS §3, one owner per module). Filed as a P2-2 follow-up.
+- **`authority` now issues attribute-key material (completes P2-2's §8-C6
+  half).** ARCHITECTURE §8-C6 says the authority issues "the attribute key
+  material used by the policy engine"; P2-2 as merged issued credentials only.
+  `AttributeAuthority.attribute_key(name, value)` mints one stable 32-byte key
+  per owned attribute (authoring side); `get_attribute_key(credential)` releases
+  it only after the credential verifies (signature, ACTIVE status, validity
+  window, issuing authority) — the credential-lifecycle gate meeting the crypto
+  gate. The engine consumes these instead of test-conjured keys (see
+  `tests/policy/test_authority_integration.py`).
+  - **Cross-owner edit — needs Ojas's review.** This change is in
+    `src/authority/issuance.py`, Ojas's module per ADR-0025. It was made at
+    Powel's direction to unblock P2-3, but under CONVENTIONS §3 (one owner per
+    module) it must be reviewed and signed off by Ojas before merge, since
+    attribute-key issuance is squarely P2-2/`authority` scope.
 - **Collusion limit unchanged (ADR-0002).** Two clinicians pooling attribute
   keys still satisfy a policy neither satisfies alone; Reading A does not fix
   this and does not worsen it. A test documents it so the paper's honesty
@@ -86,7 +94,8 @@ from — the issuing authority — is `authority`'s concern, not the engine's.
   novelty claim the project rests on — a change that would have to be disclosed
   in the paper. It is faster only because it skips the very mechanism that is
   the contribution.
-- **Add attribute-key issuance to `authority` inside this PR.** Rejected:
-  `authority` is not `policy`'s to edit (CONVENTIONS §3, ADR-0025 gives it to
-  Ojas). The engine instead depends on injected key material and the authority
-  change is coordinated separately.
+- **Leave attribute-key issuance as a separate later PR on `authority`.**
+  Initially preferred (the engine took injected keys), but reversed at Powel's
+  direction so P2-3 ships end-to-end rather than wired to an empty socket. The
+  attribute-key work is included here as a cross-owner edit flagged for Ojas's
+  review (see Consequences), not left as a dangling dependency.
