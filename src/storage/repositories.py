@@ -48,6 +48,19 @@ def get_record(conn: psycopg.Connection, record_id: str) -> Record | None:
         row = cur.fetchone()
     return Record(**row) if row else None
 
+def find_records_by_patient(
+    conn: psycopg.Connection, patient_id: str
+) -> list[Record]:
+    """Return all encrypted records belonging to a patient."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT * FROM records WHERE patient_id = %s",
+            (patient_id,),
+        )
+        rows = cur.fetchall()
+
+    return [Record(**row) for row in rows]
+
 
 # --- dek_wrappings -----------------------------------------------------------
 
@@ -268,3 +281,15 @@ def insert_search_term(
             "INSERT INTO search_index (record_id, coded_term) VALUES (%s, %s)",
             (record_id, coded_term),
         )
+def find_records_by_search_term(
+    conn: psycopg.Connection, coded_term: bytes
+) -> list[str]:
+    """Return record IDs matching an opaque search term."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT record_id FROM search_index WHERE coded_term = %s",
+            (coded_term,),
+        )
+        rows = cur.fetchall()
+
+    return [row[0] for row in rows]
