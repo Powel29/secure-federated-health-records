@@ -9,6 +9,11 @@ dist/
 .pytest_cache/
 .ruff_cache/
 
+# Lock files -- ADR-0005 pins deps only in requirements.txt; no lock tool.
+uv.lock
+Pipfile.lock
+poetry.lock
+
 # --- Key material: NEVER commit, including test keys ---
 # WORKFLOW.md §4. A test key that "doesn't matter" is still a viva finding,
 # and git history does not forget.

@@ -110,6 +110,14 @@ class AttributeAuthority:
     ) -> CredentialStatus:
         """Compute the dynamic lifecycle status of a credential.
 
+        This is a *query* helper. Full temporal validation -- including the
+        not-yet-valid case (``at < credential.valid_from``) -- lives in
+        :func:`verify_credential`, which raises the specific error. The
+        ``CredentialStatus`` enum has only ``ACTIVE`` / ``REVOKED`` / ``EXPIRED``
+        (contracts are frozen; see ARCHITECTURE §8), so a not-yet-valid
+        credential returned here reads as its raw stored status. Callers that
+        need a hard authorisation decision must call ``verify_credential``.
+
         Args:
             credential: The credential to check.
             at: The instant to evaluate against; defaults to utcnow.
@@ -117,7 +125,8 @@ class AttributeAuthority:
         Returns:
             :class:`CredentialStatus.REVOKED` if revoked in registry or marked revoked,
             :class:`CredentialStatus.EXPIRED` if past valid_until or marked expired,
-            otherwise the current status (e.g. :class:`CredentialStatus.ACTIVE`).
+            otherwise ``credential.status`` (typically ``ACTIVE``) -- including
+            when ``at < credential.valid_from``.
         """
         if (
             self.is_credential_revoked(credential.serial)

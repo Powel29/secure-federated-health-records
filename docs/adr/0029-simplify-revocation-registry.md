@@ -1,23 +1,23 @@
-# ADR-0029: Revocation Registry Simplification and Complexity Reduction (Ponytail Review)
+# ADR-0029: Simplify revocation registry to serial-keyed O(1) lookup
 
 - **Status:** Proposed
 - **Date:** 2026-08-30
 - **Deciders:** Avaneeth (author), Powel, Ojas → all four for ratification
-- **Task / source:** P2-6 review pass (`/ponytail-review`); ADR-0028 follow-up
+- **Task / source:** P2-6 review pass; ADR-0028 follow-up
 - **Affects:** `src/authority/revocation.py`, `src/authority/issuance.py`, `tests/authority/test_lifecycle.py`
 
 ## Context
 
-During the implementation of Phase 2 Task 6 (P2-6, [ADR-0028](0028-credential-lifecycle-and-revocation-registry.md)), the initial `RevocationRegistry` was implemented using a composite dictionary key `(serial, issuer_id)` and included multi-tenant filtering logic.
+During the implementation of Phase 2 Task 6 (P2-6, [ADR-0028](0028-credential-lifecycle-and-revocation-registry.md)), an early draft of `RevocationRegistry` used a composite dictionary key `(serial, issuer_id)` and included multi-tenant filtering logic.
 
-A code review for over-engineering (`/ponytail-review`) identified four areas of accidental complexity:
+A pre-commit review pass for over-engineering identified four areas of accidental complexity:
 1. **Redundant composite keys:** `RevocationRegistry` is instantiated per `AttributeAuthority` instance (`self.revocation_registry = RevocationRegistry()`). Because each registry is private to a single authority, storing `issuer_id` inside the lookup key was solving multi-tenant isolation inside an already isolated single-tenant object.
 2. **Linear search fallbacks:** Because keys were composite tuples `(serial, issuer_id)`, checking revocation by `serial` alone forced a `for (entry_serial, _) in self._entries` loop across all entries, degrading dictionary lookups from $O(1)$ to $O(N)$.
 3. **Speculative filtering helpers:** `all_revoked()` contained 12 lines of optional `issuer_id` filtering code with zero production callers.
 
 ## Decision
 
-Adopt the ponytail review simplifications across `src/authority/revocation.py` and its callers in `src/authority/issuance.py`:
+Adopt the simplifications across `src/authority/revocation.py` and its callers in `src/authority/issuance.py`:
 1. Key `RevocationRegistry._entries` directly by `serial: str` (`dict[str, RevocationEntry]`).
 2. Replace the $O(N)$ linear scans in `is_revoked(serial)` and `get_entry(serial)` with instant $O(1)$ dictionary lookups.
 3. Simplify `all_revoked()` to a 1-line `list(self._entries.values())`.
