@@ -38,6 +38,7 @@ Each row links to a one-file ADR with the full context.
 | [0023](0023-pre-subgroup-validation.md) | Validate order-q subgroup membership in the ElGamal PRE | Proposed | 2026-08-25 | Phase-1 review → Ojas | P1-5 review |
 | [0024](0024-single-root-cross-certification.md) | Cross-certification via a single shared root, not a peer CA mesh | Accepted | 2026-08-30 | Avaneeth | P2-1, P2-2 |
 | [0025](0025-p2-1-p2-2-ownership-swap.md) | Swap ownership of P2-1/P2-2 from Avaneeth to Ojas | Accepted | 2026-08-30 | Ojas, Avaneeth | P2-1, P2-2 |
+| [0026](0026-policy-engine-cryptographic-enforcement.md) | Policy engine enforces access cryptographically (Shamir over attribute keys), not by boolean check alone | Accepted | 2026-08-30 | Powel | P2-3 |
 
 ## Owed, not yet written
 
