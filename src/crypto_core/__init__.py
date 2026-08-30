@@ -17,6 +17,7 @@ from crypto_core.asymmetric import (
     verify,
 )
 from crypto_core.exceptions import (
+    CertificateExpiredError,
     CryptoError,
     InvalidSignatureError,
     InvalidTagError,
@@ -31,19 +32,35 @@ from crypto_core.symmetric import (
     hkdf_derive,
     sha256_digest,
 )
+from crypto_core.x509_certs import (
+    build_certificate,
+    certificate_from_pem,
+    certificate_public_key,
+    certificate_to_pem,
+    check_certificate_validity_window,
+    is_ca_certificate,
+    verify_certificate_signature,
+)
 
 __all__ = [
     "DEFAULT_KEY_BYTES",
+    "CertificateExpiredError",
     "CryptoError",
     "InvalidSignatureError",
     "InvalidTagError",
     "KeyFormatError",
     "aes_gcm_decrypt",
     "aes_gcm_encrypt",
+    "build_certificate",
+    "certificate_from_pem",
+    "certificate_public_key",
+    "certificate_to_pem",
+    "check_certificate_validity_window",
     "generate_ec_keypair",
     "generate_key",
     "generate_nonce",
     "hkdf_derive",
+    "is_ca_certificate",
     "private_key_from_pem",
     "private_key_to_pem",
     "public_key_from_pem",
@@ -51,4 +68,5 @@ __all__ = [
     "sha256_digest",
     "sign",
     "verify",
+    "verify_certificate_signature",
 ]

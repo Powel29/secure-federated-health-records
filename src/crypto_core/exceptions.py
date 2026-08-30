@@ -17,3 +17,7 @@ class InvalidSignatureError(CryptoError):
 
 class KeyFormatError(CryptoError):
     """Raised when a key cannot be parsed or deserialized."""
+
+
+class CertificateExpiredError(CryptoError):
+    """Raised when a certificate is checked outside its validity window."""
