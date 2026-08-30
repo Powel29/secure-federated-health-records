@@ -40,6 +40,7 @@ Each row links to a one-file ADR with the full context.
 | [0025](0025-p2-1-p2-2-ownership-swap.md) | Swap ownership of P2-1/P2-2 from Avaneeth to Ojas | Accepted | 2026-08-30 | Ojas, Avaneeth | P2-1, P2-2 |
 | [0026](0026-policy-engine-cryptographic-enforcement.md) | Policy engine enforces access cryptographically (Shamir over attribute keys), not by boolean check alone | Accepted | 2026-08-30 | Powel | P2-3 |
 | [0027](0027-search-token-construction.md) | Search-token construction: deterministic HKDF over emergency key with versioned salt; per-record binding and normalisation deferred | Proposed | 2026-08-30 | Nandini, Powel → all four | P2-5 |
+| [0028](0028-credential-lifecycle-and-revocation-registry.md) | Credential lifecycle and revocation registry | Proposed | 2026-08-30 | Avaneeth (team) | P2-6 |
 
 ## Owed, not yet written
 

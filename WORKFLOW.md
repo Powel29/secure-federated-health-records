@@ -369,17 +369,17 @@ everyone has switched over.
 **P2-4 · Find a patient's records** *(was P2-4)* — Nandini — 8h
 *What:* Given a patient, locate their encrypted records in the shared store — without the store or the asking hospital learning what's inside.
 *Needs first:* P0-8, P2-1.
-*Done when:* one hospital can find a patient's records in the shared store by patient index, learning nothing about contents.
+*Done when:* one hospital can find a patient's records in the shared store by patient index, learning nothing about contents. ✅ *(`src/storage/repositories.py`: `find_record_ids_by_patient`; negative security tests in `tests/security/test_phase2_discovery.py`.)*
 
 **P2-5 · Searchable encrypted index** *(was P2-5)* — Nandini — 12h
 *What:* Build the coded index that lets someone search records without the server ever seeing the search words or the contents. Built against a fixed test key until break-glass exists.
 *Needs first:* P1-4.
-*Done when:* the index is searchable but the server learns no plaintext words.
+*Done when:* the index is searchable but the server learns no plaintext words. ✅ *(`src/search/service.py`: `derive_search_token`, `index_search_term`, `search_records`; see ADR-0027; tests in `tests/search/test_service.py` and `tests/security/test_phase2_search.py`.)*
 
 **P2-6 · Credential lifecycle** *(was P2-6)* — Avaneeth — 6h
 *What:* Give every credential a serial number, a validity window, and a status — so credentials can expire and be revoked. (A project about revocation shouldn't issue credentials that never expire.)
 *Needs first:* P2-1, P2-2.
-*Done when:* expired or revoked credentials are rejected at check time.
+*Done when:* expired or revoked credentials are rejected at check time. ✅ *(`src/authority/`: `revocation.py`, `issuance.py`, `exceptions.py`; see ADR-0028; unit tests in `tests/authority/test_lifecycle.py` and negative security tests in `tests/security/test_phase2_lifecycle.py`.)*
 
 ---
 
