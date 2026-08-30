@@ -126,7 +126,10 @@ class AttributeAuthority:
             return CredentialStatus.REVOKED
 
         now = at if at is not None else datetime.datetime.now(datetime.timezone.utc)
-        if now > credential.valid_until or credential.status == CredentialStatus.EXPIRED:
+        if (
+            now > credential.valid_until
+            or credential.status == CredentialStatus.EXPIRED
+        ):
             return CredentialStatus.EXPIRED
 
         return credential.status
@@ -200,7 +203,8 @@ class AttributeAuthority:
                 f"credential issued by {credential.issuer_id!r}, not this "
                 f"authority {self.authority_id!r}"
             )
-        # Raises on bad signature / revoked / status / validity window; no key on failure.
+        # Raises on bad signature / revoked / status / validity window;
+        # no key on failure.
         verify_credential(
             credential,
             self.public_key,
@@ -354,7 +358,9 @@ def verify_credential(
     at: datetime.datetime | None = None,
     revocation_registry: RevocationRegistry | None = None,
 ) -> None:
-    """Verify a credential's signature, revocation status, static status, and validity window.
+    """Verify a credential's signature, status, and validity window.
+
+    Includes dynamic revocation checks when a revocation registry is provided.
 
     Args:
         credential: The credential to verify.

@@ -1,4 +1,4 @@
-"""Negative security tests for credential lifecycle and revocation (P2-6, CONVENTIONS §5).
+"""Negative security tests for credential lifecycle and revocation (P2-6).
 
 Backs the P2-6 exit criterion in WORKFLOW.md: "expired or revoked credentials are
 rejected at check time" and the CONVENTIONS §5 negative test requirement:
@@ -7,9 +7,8 @@ rejected at check time" and the CONVENTIONS §5 negative test requirement:
 Proves that:
 1. Revoked credentials fail validation and cannot release attribute keys.
 2. Expired credentials fail validation and cannot release attribute keys.
-3. Policy reconstruction fails closed when an essential attribute credential has
-   been revoked or expired.
-4. Patient self-access fails closed if the patient's owner credential is revoked or expired.
+3. Policy reconstruction fails closed when an essential credential is revoked.
+4. Patient self-access fails closed if the owner credential is revoked.
 """
 
 from __future__ import annotations
@@ -18,11 +17,8 @@ import datetime
 
 import pytest
 from authority import (
-    AttributeAuthority,
     CredentialExpiredError,
-    CredentialNotYetValidError,
     CredentialRevokedError,
-    CredentialStatusError,
     generate_authority,
     issue_credential,
     issue_owner_credential,
@@ -42,7 +38,7 @@ from policy.exceptions import PolicyDeniedError
 
 
 def test_sec_revoked_credential_fails_validation_and_key_release() -> None:
-    """Security property: a revoked credential immediately fails validation and yields no key."""
+    """Security property: a revoked credential fails validation and yields no key."""
     now = datetime.datetime.now(datetime.timezone.utc)
     valid_from = now - datetime.timedelta(days=1)
     valid_until = now + datetime.timedelta(days=365)
@@ -63,7 +59,7 @@ def test_sec_revoked_credential_fails_validation_and_key_release() -> None:
     # Authority revokes the credential
     authority.revoke_credential(cred.serial, reason="Suspended license")
 
-    # Negative 1: verify_credential with the authority's registry raises CredentialRevokedError
+    # Negative 1: verify_credential raises CredentialRevokedError
     with pytest.raises(CredentialRevokedError):
         verify_credential(
             cred,
@@ -102,7 +98,7 @@ def test_sec_expired_credential_fails_validation_and_key_release() -> None:
 
 
 def test_sec_tampered_revoked_status_fails_signature() -> None:
-    """Security property: modifying status field without re-signing fails signature verification."""
+    """Security property: modifying status field without re-signing fails signature."""
     now = datetime.datetime.now(datetime.timezone.utc)
     valid_from = now - datetime.timedelta(days=1)
     valid_until = now + datetime.timedelta(days=365)
@@ -138,13 +134,13 @@ def test_sec_tampered_revoked_status_fails_signature() -> None:
         update={"status": CredentialStatus.ACTIVE}
     )
 
-    # Recomputed payload with ACTIVE fails signature check against the original signature over REVOKED
+    # Signature fails against the original signature over REVOKED
     with pytest.raises(InvalidSignatureError):
         verify_credential(tampered_active, authority.public_key)
 
 
 def test_sec_revoked_attribute_credential_denies_policy_decryption() -> None:
-    """Security property: revoking a clinician's attribute denies policy-gated key recovery.
+    """Security property: revoking an attribute denies policy-gated key recovery.
 
     End-to-end integration: A policy requires role:physician. When the clinician's
     credential is valid, they obtain the attribute key and reconstruct the root secret.
@@ -172,13 +168,11 @@ def test_sec_revoked_attribute_credential_denies_policy_decryption() -> None:
 
     root_secret = generate_key()
     authoring_keyring = {
-        (med.authority_id, "role", "physician"): med.attribute_key(
-            "role", "physician"
-        )
+        (med.authority_id, "role", "physician"): med.attribute_key("role", "physician")
     }
     compiled = compile_policy(tree, root_secret, authoring_keyring)
 
-    # Positive control: with active credential, key is released and root secret reconstructs
+    # Positive control: with active credential, root secret reconstructs
     physician_key = med.get_attribute_key(cred)
     holder_keys = {(med.authority_id, "role", "physician"): physician_key}
     assert reconstruct_root_secret(compiled, holder_keys) == root_secret
@@ -196,18 +190,14 @@ def test_sec_revoked_attribute_credential_denies_policy_decryption() -> None:
 
 
 def test_sec_revoked_owner_credential_denies_patient_self_access() -> None:
-    """Security property: patient self-access via ADR-0016 fails closed if owner credential is revoked."""
+    """Security property: patient self-access fails if owner credential is revoked."""
     now = datetime.datetime.now(datetime.timezone.utc)
     valid_from = now - datetime.timedelta(days=1)
     valid_until = now + datetime.timedelta(days=365)
 
-    home_auth = generate_authority(
-        "authority-net", frozenset({"specialty", "owner"})
-    )
+    home_auth = generate_authority("authority-net", frozenset({"specialty", "owner"}))
     patient_id = "patient-999"
-    owner_cred = issue_owner_credential(
-        home_auth, patient_id, valid_from, valid_until
-    )
+    owner_cred = issue_owner_credential(home_auth, patient_id, valid_from, valid_until)
 
     clinical_tree = PolicyTree(
         node_type=PolicyNodeType.LEAF,
@@ -240,4 +230,3 @@ def test_sec_revoked_owner_credential_denies_patient_self_access() -> None:
     # Key release is refused
     with pytest.raises(CredentialRevokedError):
         home_auth.get_attribute_key(owner_cred)
-

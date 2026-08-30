@@ -61,22 +61,18 @@ def test_authority_revoke_credential_and_status(
 
     # Initial status is ACTIVE
     assert not authority_med.is_credential_revoked(cred.serial)
-    assert (
-        authority_med.get_credential_status(cred) == CredentialStatus.ACTIVE
-    )
+    assert authority_med.get_credential_status(cred) == CredentialStatus.ACTIVE
 
     # Revoke
     authority_med.revoke_credential(cred.serial, reason="Credentials updated")
     assert authority_med.is_credential_revoked(cred.serial)
-    assert (
-        authority_med.get_credential_status(cred) == CredentialStatus.REVOKED
-    )
+    assert authority_med.get_credential_status(cred) == CredentialStatus.REVOKED
 
 
 def test_get_credential_status_temporal_expiry(
     authority_med: AttributeAuthority, valid_window: tuple
 ) -> None:
-    """get_credential_status accurately reports EXPIRED when evaluated past valid_until."""
+    """Status is accurately reported as EXPIRED when evaluated past valid_until."""
     valid_from, valid_until = valid_window
     cred = issue_credential(
         authority_med,
@@ -87,21 +83,30 @@ def test_get_credential_status_temporal_expiry(
     )
 
     # Inside window -> ACTIVE
-    assert authority_med.get_credential_status(cred, at=valid_from + datetime.timedelta(days=1)) == CredentialStatus.ACTIVE
+    assert (
+        authority_med.get_credential_status(
+            cred, at=valid_from + datetime.timedelta(days=1)
+        )
+        == CredentialStatus.ACTIVE
+    )
 
     # Past validity window -> EXPIRED
     future = valid_until + datetime.timedelta(days=1)
-    assert authority_med.get_credential_status(cred, at=future) == CredentialStatus.EXPIRED
+    assert (
+        authority_med.get_credential_status(cred, at=future) == CredentialStatus.EXPIRED
+    )
 
     # Revocation takes precedence over expiry
     authority_med.revoke_credential(cred.serial, reason="Disciplinary action")
-    assert authority_med.get_credential_status(cred, at=future) == CredentialStatus.REVOKED
+    assert (
+        authority_med.get_credential_status(cred, at=future) == CredentialStatus.REVOKED
+    )
 
 
 def test_verify_credential_fails_closed_when_revoked(
     authority_med: AttributeAuthority, valid_window: tuple
 ) -> None:
-    """verify_credential raises CredentialRevokedError when checked against a revocation registry."""
+    """verify_credential raises CredentialRevokedError on revoked credentials."""
     valid_from, valid_until = valid_window
     cred = issue_credential(
         authority_med,
@@ -134,7 +139,7 @@ def test_verify_credential_fails_closed_when_revoked(
 def test_get_attribute_key_fails_closed_on_revoked_credential(
     authority_med: AttributeAuthority, valid_window: tuple
 ) -> None:
-    """AttributeAuthority.get_attribute_key refuses to release keys for revoked credentials."""
+    """get_attribute_key refuses to release keys for revoked credentials."""
     valid_from, valid_until = valid_window
     cred = issue_credential(
         authority_med,
@@ -159,7 +164,7 @@ def test_get_attribute_key_fails_closed_on_revoked_credential(
 def test_get_attribute_key_fails_closed_on_expired_and_not_yet_valid(
     authority_med: AttributeAuthority, valid_window: tuple
 ) -> None:
-    """AttributeAuthority.get_attribute_key fails closed on temporal boundary violations."""
+    """get_attribute_key fails closed on temporal boundary violations."""
     valid_from, valid_until = valid_window
     cred = issue_credential(
         authority_med,
@@ -178,4 +183,3 @@ def test_get_attribute_key_fails_closed_on_expired_and_not_yet_valid(
     after_window = valid_until + datetime.timedelta(days=1)
     with pytest.raises(CredentialExpiredError):
         authority_med.get_attribute_key(cred, at=after_window)
-
