@@ -31,9 +31,11 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from authority.exceptions import (
     CredentialExpiredError,
     CredentialNotYetValidError,
+    CredentialRevokedError,
     CredentialStatusError,
     UnauthorizedAttributeError,
 )
+from authority.revocation import RevocationEntry, RevocationRegistry
 
 DEFAULT_CREDENTIAL_VALID_DAYS = 365  # ARCHITECTURE.md §8: nothing issues forever
 _FIELD_SEPARATOR = b"\x1f"  # ASCII unit separator -- keeps fields unambiguous
@@ -65,9 +67,81 @@ class AttributeAuthority:
         self.public_key = public_key
         self.owned_attribute_names = owned_attribute_names
         # Per-attribute key material, keyed (name, value), minted on demand for
-        # attributes this authority owns. In-memory for now; persisting it rides
-        # with the authority's signing-key persistence (a P2-6 concern).
+        # attributes this authority owns.
         self._attribute_keys: dict[tuple[str, str], bytes] = {}
+        # Revocation registry for credentials issued by this authority (P2-6).
+        self.revocation_registry: RevocationRegistry = RevocationRegistry()
+
+    def revoke_credential(
+        self,
+        serial: str,
+        reason: str = "",
+        revoked_at: datetime.datetime | None = None,
+    ) -> RevocationEntry:
+        """Revoke an issued credential by its serial identifier.
+
+        Args:
+            serial: The credential serial number to revoke.
+            reason: Optional human-readable or coded reason for revocation.
+            revoked_at: The timestamp of revocation; defaults to utcnow.
+
+        Returns:
+            The created :class:`RevocationEntry`.
+
+        Security property:
+            Revocation is immediate: subsequent calls to :meth:`get_attribute_key`
+            or :func:`verify_credential` presenting this credential will fail closed.
+        """
+        return self.revocation_registry.revoke(
+            serial=serial,
+            issuer_id=self.authority_id,
+            reason=reason,
+            revoked_at=revoked_at,
+        )
+
+    def is_credential_revoked(self, serial: str) -> bool:
+        """Return True if this authority has revoked the given credential serial."""
+        return self.revocation_registry.is_revoked(serial)
+
+    def get_credential_status(
+        self,
+        credential: AttributeCredential,
+        at: datetime.datetime | None = None,
+    ) -> CredentialStatus:
+        """Compute the dynamic lifecycle status of a credential.
+
+        This is a *query* helper. Full temporal validation -- including the
+        not-yet-valid case (``at < credential.valid_from``) -- lives in
+        :func:`verify_credential`, which raises the specific error. The
+        ``CredentialStatus`` enum has only ``ACTIVE`` / ``REVOKED`` / ``EXPIRED``
+        (contracts are frozen; see ARCHITECTURE §8), so a not-yet-valid
+        credential returned here reads as its raw stored status. Callers that
+        need a hard authorisation decision must call ``verify_credential``.
+
+        Args:
+            credential: The credential to check.
+            at: The instant to evaluate against; defaults to utcnow.
+
+        Returns:
+            :class:`CredentialStatus.REVOKED` if revoked in registry or marked revoked,
+            :class:`CredentialStatus.EXPIRED` if past valid_until or marked expired,
+            otherwise ``credential.status`` (typically ``ACTIVE``) -- including
+            when ``at < credential.valid_from``.
+        """
+        if (
+            self.is_credential_revoked(credential.serial)
+            or credential.status == CredentialStatus.REVOKED
+        ):
+            return CredentialStatus.REVOKED
+
+        now = at if at is not None else datetime.datetime.now(datetime.timezone.utc)
+        if (
+            now > credential.valid_until
+            or credential.status == CredentialStatus.EXPIRED
+        ):
+            return CredentialStatus.EXPIRED
+
+        return credential.status
 
     def attribute_key(self, name: str, value: str) -> bytes:
         """Return the 32-byte attribute key for an owned ``name:value`` (authoring).
@@ -109,8 +183,8 @@ class AttributeAuthority:
         This is the gate that connects the credential lifecycle to the policy
         engine (ARCHITECTURE.md §8 C6): a holder only obtains the key that
         decrypts a leaf if their credential for that attribute verifies --
-        correct signature, ACTIVE status, inside its validity window, and issued
-        by this authority. A forged, expired, revoked, or wrong-authority
+        correct signature, ACTIVE status, not revoked, inside its validity window,
+        and issued by this authority. A forged, expired, revoked, or wrong-authority
         credential yields no key.
 
         Args:
@@ -124,8 +198,9 @@ class AttributeAuthority:
             UnauthorizedAttributeError: The credential was not issued by this
                 authority, or names an attribute outside its namespace.
             InvalidSignatureError: The credential signature does not verify.
-            CredentialStatusError / CredentialNotYetValidError /
-            CredentialExpiredError: The credential is not currently valid.
+            CredentialStatusError / CredentialRevokedError /
+            CredentialNotYetValidError / CredentialExpiredError: The credential is
+                not currently valid.
 
         Security property:
             Fails closed -- verification runs before any key is returned, so an
@@ -137,8 +212,14 @@ class AttributeAuthority:
                 f"credential issued by {credential.issuer_id!r}, not this "
                 f"authority {self.authority_id!r}"
             )
-        # Raises on bad signature / status / validity window; no key on failure.
-        verify_credential(credential, self.public_key, at=at)
+        # Raises on bad signature / revoked / status / validity window;
+        # no key on failure.
+        verify_credential(
+            credential,
+            self.public_key,
+            at=at,
+            revocation_registry=self.revocation_registry,
+        )
         return self.attribute_key(credential.attribute.name, credential.attribute.value)
 
 
@@ -284,18 +365,24 @@ def verify_credential(
     credential: AttributeCredential,
     issuer_public_key: ec.EllipticCurvePublicKey,
     at: datetime.datetime | None = None,
+    revocation_registry: RevocationRegistry | None = None,
 ) -> None:
     """Verify a credential's signature, status, and validity window.
+
+    Includes dynamic revocation checks when a revocation registry is provided.
 
     Args:
         credential: The credential to verify.
         issuer_public_key: The purported issuer's public key.
         at: The instant to check the validity window against; defaults to now.
+        revocation_registry: Optional registry to check for post-issuance revocation.
 
     Raises:
         InvalidSignatureError: The signature does not verify against the
             recomputed payload -- a forged or tampered credential.
         CredentialStatusError: ``credential.status`` is not ``ACTIVE``.
+        CredentialRevokedError: The credential has been recorded as revoked in
+            the revocation registry.
         CredentialNotYetValidError: ``at`` is before ``valid_from``.
         CredentialExpiredError: ``at`` is after ``valid_until``.
 
@@ -320,6 +407,14 @@ def verify_credential(
         raise CredentialStatusError(
             f"credential {credential.serial!r} has status "
             f"{credential.status.value!r}, not active"
+        )
+
+    if revocation_registry is not None and revocation_registry.is_revoked(
+        credential.serial
+    ):
+        raise CredentialRevokedError(
+            f"credential {credential.serial!r} has been revoked by authority "
+            f"{credential.issuer_id!r}"
         )
 
     now = at if at is not None else datetime.datetime.now(datetime.timezone.utc)

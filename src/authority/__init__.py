@@ -12,6 +12,7 @@ from authority.certification import certify_authority
 from authority.exceptions import (
     CredentialExpiredError,
     CredentialNotYetValidError,
+    CredentialRevokedError,
     CredentialStatusError,
     UnauthorizedAttributeError,
 )
@@ -22,12 +23,19 @@ from authority.issuance import (
     issue_owner_credential,
     verify_credential,
 )
+from authority.revocation import (
+    RevocationEntry,
+    RevocationRegistry,
+)
 
 __all__ = [
     "AttributeAuthority",
     "CredentialExpiredError",
     "CredentialNotYetValidError",
+    "CredentialRevokedError",
     "CredentialStatusError",
+    "RevocationEntry",
+    "RevocationRegistry",
     "UnauthorizedAttributeError",
     "certify_authority",
     "generate_authority",

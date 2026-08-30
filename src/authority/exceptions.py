@@ -18,6 +18,10 @@ class CredentialStatusError(CryptoError):
     """Raised when a credential's ``status`` is not ``ACTIVE``."""
 
 
+class CredentialRevokedError(CredentialStatusError):
+    """Raised when a credential has been revoked post-issuance."""
+
+
 class CredentialNotYetValidError(CryptoError):
     """Raised when a credential is checked before its ``valid_from``."""
 
