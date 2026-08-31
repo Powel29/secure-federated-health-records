@@ -42,6 +42,7 @@ Each row links to a one-file ADR with the full context.
 | [0027](0027-search-token-construction.md) | Search-token construction: deterministic HKDF over emergency key with versioned salt; per-record binding and normalisation deferred | Proposed | 2026-08-30 | Nandini, Powel → all four | P2-5 |
 | [0028](0028-credential-lifecycle-and-revocation-registry.md) | Credential lifecycle and revocation registry | Proposed | 2026-08-30 | Avaneeth (team) | P2-6 |
 | [0029](0029-simplify-revocation-registry.md) | Simplify revocation registry to serial-keyed O(1) lookup | Proposed | 2026-08-30 | Avaneeth (team) | P2-6 review |
+| [0030](0030-lifecycle-state-machine.md) | Lifecycle state machine: six-transition legal set, signature-before-legality on verify, in-memory consumed-id store consumed after signature check | Proposed | 2026-08-31 | Powel → all four | P3-1 |
 
 ## Owed, not yet written
 

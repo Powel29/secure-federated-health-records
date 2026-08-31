@@ -388,7 +388,7 @@ everyone has switched over.
 **P3-1 · The state machine** *(was P3-1)* — Powel — 12h
 *What:* The heart of the project — the four states (Granted, Revoked, Emergency-open, Expired) and the signed events for every legal move between them. Illegal moves are refused.
 *Needs first:* P1-2, P1-4.
-*Done when:* all four states work, illegal transitions are rejected, and every transition produces a verifiable signed event.
+*Done when:* all four states work, illegal transitions are rejected, and every transition produces a verifiable signed event. ✅ *(`src/lifecycle/`: `state_machine.py`, `exceptions.py`; six legal transitions per ADR-0030; unit tests in `tests/lifecycle/test_state_machine.py`; negative security tests in `tests/security/test_phase3_security.py` cover illegal transitions, invalid signatures, field tampering, missing reason code, state mismatch, and event-id replay.)*
 
 **P3-2 · Patient consent + granting access** *(was P3-2)* — Powel — 8h
 *What:* The full consent path. The patient issues a **signed, scoped, expiring grant** — naming the hospital, the clinician/role, the purpose, the records, and the time window — via a request-then-approve flow (hospital requests, patient approves or denies). Only the patient can create or revoke it. The grant then wraps the record's key to a policy so the approved doctor can read it. This makes "the patient grants access" a real, defined action, not an assumption.
