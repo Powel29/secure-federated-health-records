@@ -430,15 +430,15 @@ everyone has switched over.
 *Needs first:* P2-5, P3-7.
 *Done when:* after rotation, stale search keys match nothing and no plaintext leaks during re-indexing.
 
-**P3-10 · Emergency assertion** *(was P3-10)* — Powel — 6h
+**P3-10 · Emergency assertion** *(was P3-10)* — Tejas *(taken from Powel)* — 6h
 *What:* Define what "declaring an emergency" actually is — a signed statement binding the patient, doctor, hospital, time, reason, and an expiry. Break-glass won't start without a valid one.
 *Needs first:* P3-1, P2-1.
-*Done when:* unsigned or unbound assertions are rejected and break-glass refuses to proceed without one.
+*Done when:* unsigned or unbound assertions are rejected and break-glass refuses to proceed without one. ✅ *(`src/breakglass/`: `assertion.py`, `exceptions.py`; five-point validation sequence per ARCHITECTURE §8 and ADR-0032; unit tests in `tests/breakglass/test_assertion.py`; negative security tests in `tests/security/test_phase3_assertion_security.py` cover field tampering, untrusted cert, clinician mismatch, facility mismatch, expiry, and replay.)*
 
-**P3-11 · Replay protection** *(was P3-11)* — Powel — 3h
+**P3-11 · Replay protection** *(was P3-11)* — Tejas *(taken from Powel)* — 3h
 *What:* Give emergency requests, share requests, and transition events one-time IDs so a captured request can't be replayed for repeat access.
 *Needs first:* P3-10.
-*Done when:* a replayed request is rejected, not re-run.
+*Done when:* a replayed request is rejected, not re-run. ✅ *(`src/breakglass/`: `replay.py` (thread-safe `ConsumedAssertionIds`, `ConsumedRequestIds`), `envelopes.py` (signed `RequestEnvelope` creation and verification with recipient binding); ADR-0032; unit tests in `tests/breakglass/test_replay.py` and `tests/breakglass/test_envelopes.py`; negative security tests in `tests/security/test_phase3_assertion_security.py` cover replay rejection and the ordering invariant that forged messages cannot burn legitimate IDs.)*
 
 **P3-12 · Check who's allowed to revoke** *(was P3-12)* — Avaneeth — 3h
 *What:* Make sure a revocation actually comes from the record's owner (patient) or its home authority — a valid signature from the wrong person isn't enough.

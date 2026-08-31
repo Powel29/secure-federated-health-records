@@ -15,28 +15,90 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.CreateModel(
-            name='Profile',
+            name="Profile",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('role', models.CharField(choices=[('patient', 'Patient'), ('clinician', 'Clinician'), ('admin', 'Admin / audit')], max_length=16)),
-                ('subject_id', models.CharField(max_length=128, unique=True)),
-                ('home_facility_id', models.CharField(blank=True, max_length=128)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('user', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='profile', to=settings.AUTH_USER_MODEL)),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                (
+                    "role",
+                    models.CharField(
+                        choices=[
+                            ("patient", "Patient"),
+                            ("clinician", "Clinician"),
+                            ("admin", "Admin / audit"),
+                        ],
+                        max_length=16,
+                    ),
+                ),
+                ("subject_id", models.CharField(max_length=128, unique=True)),
+                ("home_facility_id", models.CharField(blank=True, max_length=128)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "user",
+                    models.OneToOneField(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="profile",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
             ],
         ),
         migrations.CreateModel(
-            name='RegistrationRequest',
+            name="RegistrationRequest",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('role', models.CharField(choices=[('patient', 'Patient'), ('clinician', 'Clinician'), ('admin', 'Admin / audit')], max_length=16)),
-                ('subject_id', models.CharField(max_length=128)),
-                ('requested_attributes', models.TextField(blank=True)),
-                ('license_info', models.TextField(blank=True)),
-                ('status', models.CharField(choices=[('pending', 'Pending authority review'), ('approved', 'Approved (awaiting issuance)'), ('issued', 'Credential issued'), ('denied', 'Denied')], default='pending', max_length=16)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('decided_at', models.DateTimeField(blank=True, null=True)),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='requests', to=settings.AUTH_USER_MODEL)),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                (
+                    "role",
+                    models.CharField(
+                        choices=[
+                            ("patient", "Patient"),
+                            ("clinician", "Clinician"),
+                            ("admin", "Admin / audit"),
+                        ],
+                        max_length=16,
+                    ),
+                ),
+                ("subject_id", models.CharField(max_length=128)),
+                ("requested_attributes", models.TextField(blank=True)),
+                ("license_info", models.TextField(blank=True)),
+                (
+                    "status",
+                    models.CharField(
+                        choices=[
+                            ("pending", "Pending authority review"),
+                            ("approved", "Approved (awaiting issuance)"),
+                            ("issued", "Credential issued"),
+                            ("denied", "Denied"),
+                        ],
+                        default="pending",
+                        max_length=16,
+                    ),
+                ),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("decided_at", models.DateTimeField(blank=True, null=True)),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="requests",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
             ],
         ),
     ]
