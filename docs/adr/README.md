@@ -43,6 +43,7 @@ Each row links to a one-file ADR with the full context.
 | [0028](0028-credential-lifecycle-and-revocation-registry.md) | Credential lifecycle and revocation registry | Proposed | 2026-08-30 | Avaneeth (team) | P2-6 |
 | [0029](0029-simplify-revocation-registry.md) | Simplify revocation registry to serial-keyed O(1) lookup | Proposed | 2026-08-30 | Avaneeth (team) | P2-6 review |
 | [0030](0030-lifecycle-state-machine.md) | Lifecycle state machine: six-transition legal set, signature-before-legality on verify, in-memory consumed-id store consumed after signature check | Proposed | 2026-08-31 | Powel → all four | P3-1 |
+| [0031](0031-consent-as-gate.md) | Patient consent is a read-time gate over an already-wrapped record, not a wrap-time re-policy; revocation is a fresh patient-signed grant with `status=REVOKED` | Proposed | 2026-08-31 | Powel → all four | P3-2 |
 
 ## Owed, not yet written
 

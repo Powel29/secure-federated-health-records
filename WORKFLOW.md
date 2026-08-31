@@ -393,7 +393,7 @@ everyone has switched over.
 **P3-2 · Patient consent + granting access** *(was P3-2)* — Powel — 8h
 *What:* The full consent path. The patient issues a **signed, scoped, expiring grant** — naming the hospital, the clinician/role, the purpose, the records, and the time window — via a request-then-approve flow (hospital requests, patient approves or denies). Only the patient can create or revoke it. The grant then wraps the record's key to a policy so the approved doctor can read it. This makes "the patient grants access" a real, defined action, not an assumption.
 *Needs first:* P3-1, P2-3.
-*Done when:* a patient-issued grant is signed and scoped; an approved doctor reads within scope; an unauthorized one can't; and only the patient can revoke it.
+*Done when:* a patient-issued grant is signed and scoped; an approved doctor reads within scope; an unauthorized one can't; and only the patient can revoke it. ✅ *(`src/consent/`: `service.py`, `exceptions.py`; consent is a read-time gate over the already-wrapped record per ADR-0031; revocation is a fresh patient-signed grant with `status=REVOKED`; unit tests in `tests/consent/test_consent.py`; end-to-end + negative security tests in `tests/security/test_phase3_consent_security.py` cover approved read, unauthorized doctor denied, out-of-scope denied, expired/denied/revoked denied, forged signature denied, non-patient revocation denied.)*
 
 **P3-3 · The tamper-proof audit log** *(was P3-3)* — Ojas — 10h
 *What:* A hash-chained, signed log where each entry locks in the one before it, so tampering is detectable.
