@@ -19,7 +19,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # DJANGO_SECRET_KEY in any real deployment.
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY") or secrets.token_urlsafe(32)
 DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
-ALLOWED_HOSTS = ["*"] if DEBUG else os.environ.get("DJANGO_ALLOWED_HOSTS", "").split(",")
+ALLOWED_HOSTS = (
+    ["*"] if DEBUG else os.environ.get("DJANGO_ALLOWED_HOSTS", "").split(",")
+)
 
 INSTALLED_APPS = [
     "django.contrib.admin",

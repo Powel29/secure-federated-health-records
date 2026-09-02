@@ -8,9 +8,9 @@ Run with the SQLite unit settings (no store needed)::
 from __future__ import annotations
 
 from django.test import TestCase
+from portal_core import stubs
 
 from accounts.models import Profile, RegistrationRequest, RequestStatus
-from portal_core import stubs
 
 
 class RegistrationTests(TestCase):

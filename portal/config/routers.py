@@ -20,8 +20,6 @@ class PortalRouter:
     def allow_relation(self, obj1: Any, obj2: Any, **hints: Any) -> bool:
         return True
 
-    def allow_migrate(
-        self, db: str, app_label: str, **hints: Any
-    ) -> bool | None:
+    def allow_migrate(self, db: str, app_label: str, **hints: Any) -> bool | None:
         # Only ever migrate `default`; the store schema is owned by P0-8.
         return db == "default"

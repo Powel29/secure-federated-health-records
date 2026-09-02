@@ -8,10 +8,9 @@ issue_credential stub: issuance is the authority's job (P2-2), never the portal'
 
 from __future__ import annotations
 
+from accounts.models import RegistrationRequest, RequestStatus
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import render
-
-from accounts.models import RegistrationRequest, RequestStatus
 from portal_core import store_reader, stubs
 
 
