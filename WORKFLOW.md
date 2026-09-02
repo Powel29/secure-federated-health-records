@@ -118,31 +118,6 @@ deployment paths (`ARCHITECTURE.md` §7); the full cross-facility break-glass
 scenario runs end to end **from a clean clone on a machine that is not the
 author's**.
 
-**P4-10 · Patient portal (web UI)** *(new — replaces dashboard)* — Avaneeth — 10h
-*What:* The patient's web page (Django + Bootstrap): see who has access to their records, approve or deny incoming access requests, revoke a grant, and view the history of who accessed what — including any break-glass. **Also view their own uploaded records:** the patient reads a record via the `owner:<patient_id>` attribute leaf on the record's policy tree (ADR-0016), served by the home authority; the decrypted PDF is streamed to the browser for that request only, never persisted or logged. This is the patient half of the three-portal UI that replaces the old terminal dashboard.
-*Needs first:* P4-1, P3-2, P3-13; owner-attribute issuance in `authority` (ADR-0016).
-*Done when:* a patient can approve/deny/revoke and see their access history in the browser; a patient can open and view their own record, decrypted through the policy path (not by portal login alone) and failing closed if the owner attribute is absent; the portal never decrypts on its own and never becomes the access authority (keys still gate access).
-
-**P4-11 · Clinician portal (web UI)** *(new — replaces dashboard)* — Nandini — 10h
-*What:* The clinician's web page: request access to a patient's records, see what's currently granted, run a search during an emergency, and declare break-glass with a justification. Shows the live countdown on active emergency access.
-*Needs first:* P4-1, P3-5, P3-8.
-*Done when:* a clinician can request, search-when-emergency, and declare break-glass from the browser; denied actions show clear reasons; the portal holds no keys.
-
-**P4-11a · Emergency patient identification (name + DOB search)** *(new — ADR-0033)* — Nandini — 4h
-*What:* The identification step that produces the `patient_id` a break-glass declaration is bound to. Add a `PatientDirectory` model in the portal Postgres (given_name, family_name, date_of_birth, subject_id — subject_id is the same string as the crypto-side `patient_id`; no mapping table). Add a search view in the clinician portal: enter name and DOB, see candidate matches, select one, and the break-glass form on P4-11 receives the resolved `patient_id`. Ambiguous matches (multiple rows with the same name and DOB) are all shown — never auto-selected. Every lookup, hit or miss, is written to the audit chain as a `patient.lookup` event.
-*Needs first:* P4-11 shell, P3-10 (assertion contract), P3-13 (audit event types — Ojas adds `patient.lookup`).
-*Done when:* a clinician can search by name and DOB, pick from a candidate list, and the resolved `patient_id` is carried into a signed `EmergencyAssertion`; ambiguous matches show all candidates; PII lives only in the portal DB and never in the crypto store (ADR-0011 / ADR-0033); the search view holds no keys and grants no access on its own (a negative test proves that portal login without a valid assertion decrypts nothing); every lookup — including empty ones — appears in the audit chain.
-
-**P4-12 · Admin / audit portal (web UI)** *(new — replaces dashboard)* — Ojas — 8h
-*What:* The oversight web page: browse the audit log by correlation ID, view the state of the federation and its services, and review completed break-glass cases. Read-only over the audit and state data.
-*Needs first:* P4-2, P3-3, P3-13.
-*Done when:* an admin can pull up a whole access flow by correlation ID and review break-glass cases in the browser; the portal is read-only and holds no keys.
-
-**P4-13 · Patient notifications** *(new)* — Ojas — 4h
-*What:* Alert the patient when their records are accessed under break-glass and when a grant is revoked. A notification event is emitted and surfaced in the patient portal (and logged in the audit chain).
-*Needs first:* P3-5, P3-7, P3-13.
-*Done when:* break-glass and revocation each produce a patient notification, visible in the patient portal and recorded in the audit log.
-
 ### Phase 5 — Testing and hardening
 Turn claims into evidence.
 
@@ -493,6 +468,31 @@ everyone has switched over.
 *What:* The capture harness and the two modes (plain-HTTP and TLS) that record network traffic for the required traffic-analysis module.
 *Needs first:* P4-3.
 *Done when:* both modes produce a capture file per scenario.
+
+**P4-10 · Patient portal (web UI)** *(new — replaces dashboard)* — Avaneeth — 10h
+*What:* The patient's web page (Django + Bootstrap): see who has access to their records, approve or deny incoming access requests, revoke a grant, and view the history of who accessed what — including any break-glass. **Also view their own uploaded records:** the patient reads a record via the `owner:<patient_id>` attribute leaf on the record's policy tree (ADR-0016), served by the home authority; the decrypted PDF is streamed to the browser for that request only, never persisted or logged. This is the patient half of the three-portal UI that replaces the old terminal dashboard.
+*Needs first:* P4-1, P3-2, P3-13; owner-attribute issuance in `authority` (ADR-0016).
+*Done when:* a patient can approve/deny/revoke and see their access history in the browser; a patient can open and view their own record, decrypted through the policy path (not by portal login alone) and failing closed if the owner attribute is absent; the portal never decrypts on its own and never becomes the access authority (keys still gate access).
+
+**P4-11 · Clinician portal (web UI)** *(new — replaces dashboard)* — Nandini — 10h
+*What:* The clinician's web page: request access to a patient's records, see what's currently granted, run a search during an emergency, and declare break-glass with a justification. Shows the live countdown on active emergency access.
+*Needs first:* P4-1, P3-5, P3-8.
+*Done when:* a clinician can request, search-when-emergency, and declare break-glass from the browser; denied actions show clear reasons; the portal holds no keys.
+
+**P4-11a · Emergency patient identification (name + DOB search)** *(new — ADR-0033)* — Nandini — 4h
+*What:* The identification step that produces the `patient_id` a break-glass declaration is bound to. Add a `PatientDirectory` model in the portal Postgres (given_name, family_name, date_of_birth, subject_id — subject_id is the same string as the crypto-side `patient_id`; no mapping table). Add a search view in the clinician portal: enter name and DOB, see candidate matches, select one, and the break-glass form on P4-11 receives the resolved `patient_id`. Ambiguous matches (multiple rows with the same name and DOB) are all shown — never auto-selected. Every lookup, hit or miss, is written to the audit chain as a `patient.lookup` event.
+*Needs first:* P4-11 shell, P3-10 (assertion contract), P3-13 (audit event types — Ojas adds `patient.lookup`).
+*Done when:* a clinician can search by name and DOB, pick from a candidate list, and the resolved `patient_id` is carried into a signed `EmergencyAssertion`; ambiguous matches show all candidates; PII lives only in the portal DB and never in the crypto store (ADR-0011 / ADR-0033); the search view holds no keys and grants no access on its own (a negative test proves that portal login without a valid assertion decrypts nothing); every lookup — including empty ones — appears in the audit chain.
+
+**P4-12 · Admin / audit portal (web UI)** *(new — replaces dashboard)* — Ojas — 8h
+*What:* The oversight web page: browse the audit log by correlation ID, view the state of the federation and its services, and review completed break-glass cases. Read-only over the audit and state data.
+*Needs first:* P4-2, P3-3, P3-13.
+*Done when:* an admin can pull up a whole access flow by correlation ID and review break-glass cases in the browser; the portal is read-only and holds no keys.
+
+**P4-13 · Patient notifications** *(new)* — Ojas — 4h
+*What:* Alert the patient when their records are accessed under break-glass and when a grant is revoked. A notification event is emitted and surfaced in the patient portal (and logged in the audit chain).
+*Needs first:* P3-5, P3-7, P3-13.
+*Done when:* break-glass and revocation each produce a patient notification, visible in the patient portal and recorded in the audit log.
 
 
 ---
