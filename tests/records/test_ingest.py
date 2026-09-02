@@ -40,7 +40,7 @@ def _leaf(name: str, value: str, authority_id: str) -> PolicyTree:
 
 
 def _setup_federation() -> tuple[AttributeAuthority, AttributeAuthority, PolicyTree]:
-    """Two authorities and a clinical policy ``AND(role:physician, specialty:cardiology)``."""
+    """Two authorities and policy ``AND(role:physician, specialty:cardiology)``."""
     med = generate_authority(MED_AUTHORITY_ID, frozenset({"role"}))
     net = generate_authority(NET_AUTHORITY_ID, frozenset({"specialty", "owner"}))
     clinical = PolicyTree(
@@ -205,7 +205,7 @@ class TestClinicianAccess:
     """Clinician reconstructs via the AND branch of the policy."""
 
     def test_clinician_can_reconstruct_via_clinical_branch(self) -> None:
-        """A clinician holding role AND specialty credentials recovers the root secret."""
+        """Clinician holding role AND specialty credentials recovers the root secret."""
         med, net, clinical = _setup_federation()
         patient_id = "pat-400"
         keyring = _authoring_keyring(med, net, patient_id)
@@ -427,9 +427,7 @@ class TestEndToEnd:
             ),
         }
 
-        root_secret = reconstruct_root_secret(
-            result.compiled_policy, clinician_keyring
-        )
+        root_secret = reconstruct_root_secret(result.compiled_policy, clinician_keyring)
         dek = unwrap_dek(result.dek_wrapping, root_secret)
         decrypted = decrypt_record(result.record, dek)
         assert decrypted == plaintext

@@ -1,4 +1,4 @@
-"""Record encryption, envelope key management, and ingest (owner module: ``records``, C8).
+"""Record encryption, envelope key management, and ingest (``records``, C8).
 
 Provides per-record DEK minting, AES-256-GCM record encryption, DEK wrapping,
 key rotation re-wrapping, and the full record upload pipeline (P3-14).
@@ -28,4 +28,3 @@ __all__ = [
     "unwrap_dek",
     "wrap_dek",
 ]
-

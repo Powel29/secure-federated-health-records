@@ -32,6 +32,7 @@ from contracts.enums import LifecycleState
 from contracts.policy import PolicyTree
 from contracts.records import DEKWrapping, Record
 from crypto_core.symmetric import generate_key
+
 from records.service import encrypt_record, wrap_dek
 
 if TYPE_CHECKING:
@@ -39,6 +40,7 @@ if TYPE_CHECKING:
 
 # Re-export the type alias at module level for callers that only need the name.
 AttributeKeyring = Mapping[tuple[str, str, str], bytes]
+
 
 @dataclass(frozen=True)
 class IngestResult:
@@ -116,9 +118,7 @@ def ingest_record(
           no indexing (search dies with the emergency, per P3-8 design).
     """
     if search_terms and not emergency_key:
-        raise ValueError(
-            "emergency_key is required when search_terms are provided"
-        )
+        raise ValueError("emergency_key is required when search_terms are provided")
 
     # Lazy imports: policy.engine imports records (for unwrap_dek), so importing
     # it at module level from inside the records package creates a circular
