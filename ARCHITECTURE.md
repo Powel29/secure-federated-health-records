@@ -244,8 +244,18 @@ contracts (T02) -> crypto_core -> records -> lifecycle -> breakglass -> search -
 
 ### Cross-facility break-glass (the headline scenario)
 
-1. Unconscious patient at an out-of-network facility. Clinician asserts
-   emergency; their certificate is validated via cross-certification (C5).
+0. **Identification.** Clinician looks up the patient in the clinician
+   portal by name and date of birth against the portal's `PatientDirectory`
+   (ADR-0033). PII lives only in the portal DB — never in the crypto store
+   (ADR-0011). Ambiguous matches are shown as a list; the clinician
+   selects one, and the resulting `patient_id` is carried into the signed
+   assertion below. The lookup itself is a `patient.lookup` audit event
+   whether or not a match is selected. Identification produces no key and
+   grants no access; the checks that follow are the ones that decide that.
+1. Unconscious patient at an out-of-network facility. Clinician signs an
+   `EmergencyAssertion` bound to the `patient_id` from step 0 (see
+   "The Emergency Assertion" below); their certificate is validated via
+   cross-certification (C5).
 2. Federated discovery locates the patient's records (C13).
 3. Threshold collection begins (C11):
    - **Share 1** — attending clinician, released against a valid emergency
@@ -456,6 +466,14 @@ a currently-valid clinician certificate; `clinician_id` matches the certificate
 subject; `facility_id` matches the receiving node; `expires_at` is in the
 future; `assertion_id` has not been consumed. Failure at any step is
 fail-closed — no share request is made.
+
+**How `patient_id` gets into the assertion.** The clinician resolves the
+identifier upstream of signing via a name + DOB lookup in the clinician
+portal (ADR-0033, step 0 of the break-glass sequence above). Identification
+is not authorization: picking a candidate from the search results releases
+no key, and the five validation checks and threshold gate below are the
+things that actually decide access. PII (name, DOB) lives only in the
+portal DB, never in the crypto store (ADR-0011).
 
 ### Replay protection
 
