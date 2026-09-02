@@ -44,6 +44,7 @@ Each row links to a one-file ADR with the full context.
 | [0029](0029-simplify-revocation-registry.md) | Simplify revocation registry to serial-keyed O(1) lookup | Proposed | 2026-08-30 | Avaneeth (team) | P2-6 review |
 | [0030](0030-lifecycle-state-machine.md) | Lifecycle state machine: six-transition legal set, signature-before-legality on verify, in-memory consumed-id store consumed after signature check | Proposed | 2026-08-31 | Powel → all four | P3-1 |
 | [0031](0031-consent-as-gate.md) | Patient consent is a read-time gate over an already-wrapped record, not a wrap-time re-policy; revocation is a fresh patient-signed grant with `status=REVOKED` | Proposed | 2026-08-31 | Powel → all four | P3-2 |
+| [0032](0032-emergency-assertion-and-anti-replay.md) | Emergency assertion five-point validation and thread-safe anti-replay consumed-ID stores | Proposed | 2026-08-31 | Tejas → all four | P3-10, P3-11 |
 
 ## Owed, not yet written
 
