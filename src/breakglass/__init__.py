@@ -2,12 +2,20 @@
 
 P3-10: Emergency assertion creation and five-point validation.
 P3-11: Anti-replay consumed-ID stores and request envelope protection.
+P3-5: Emergency key generation/split and the threshold unlock gate.
 """
 
 from breakglass.assertion import (
     create_emergency_assertion,
     validate_emergency_assertion,
     verify_emergency_assertion_signature,
+)
+from breakglass.emergency_key import (
+    EMERGENCY_KEY_BYTES,
+    THRESHOLD,
+    TOTAL_SHARES,
+    generate_emergency_key,
+    split_emergency_key,
 )
 from breakglass.envelopes import (
     create_request_envelope,
@@ -19,8 +27,13 @@ from breakglass.exceptions import (
     ClinicianMismatchError,
     EnvelopeRecipientMismatchError,
     FacilityMismatchError,
+    InsufficientSharesError,
     ReplayedAssertionError,
     ReplayedRequestError,
+)
+from breakglass.gate import (
+    EmergencyUnlockResult,
+    open_emergency_access,
 )
 from breakglass.replay import (
     ConsumedAssertionIds,
@@ -32,6 +45,14 @@ __all__ = [
     "create_emergency_assertion",
     "validate_emergency_assertion",
     "verify_emergency_assertion_signature",
+    # Emergency key + gate (P3-5)
+    "EMERGENCY_KEY_BYTES",
+    "THRESHOLD",
+    "TOTAL_SHARES",
+    "EmergencyUnlockResult",
+    "generate_emergency_key",
+    "open_emergency_access",
+    "split_emergency_key",
     # Envelope (P3-11)
     "create_request_envelope",
     "verify_request_envelope",
@@ -44,6 +65,7 @@ __all__ = [
     "ClinicianMismatchError",
     "EnvelopeRecipientMismatchError",
     "FacilityMismatchError",
+    "InsufficientSharesError",
     "ReplayedAssertionError",
     "ReplayedRequestError",
 ]

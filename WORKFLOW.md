@@ -251,42 +251,42 @@ everyone has switched over.
 
 ### Phase 0 — Setup and architecture decisions
 
-**P0-1 · Set up the repo** *(was P0-1)* — Powel — 3h
+**P0-1 · Set up the repo** *(was P0-1)* — Powel — 3h ✅
 *What:* Create the project skeleton — folders, virtual environment, pinned dependency versions — so everyone starts from the same base.
 *Needs first:* nothing.
 *Done when:* `pip install -r requirements.txt` works on all four laptops and the folders match the layout in ARCHITECTURE §6.
 
-**P0-2 · Freeze the shared data shapes** *(was P0-2)* — Powel — 7h
+**P0-2 · Freeze the shared data shapes** *(was P0-2)* — Powel — 7h ✅
 *What:* Agree and lock the core data structures everyone shares — Record, key-wrapping, transition event, audit entry, credential, facility, policy tree, plus the emergency-assertion and request-envelope shapes. Once frozen, these only change by a PR all four approve.
 *Needs first:* P0-1.
 *Done when:* all the shapes are defined, type-hinted, and signed off by all four.
 
-**P0-3 · Get answers from faculty** *(was P0-3)* — Powel — 2h
+**P0-3 · Get answers from faculty** *(was P0-3)* — Powel — 2h ✅
 *What:* Ask the two questions that could change the whole plan: how it's graded, and whether they want the cryptography approach or the FHIR/standards approach. *(Done — crypto lane confirmed, report = 10 marks.)*
 *Needs first:* nothing.
 *Done when:* answers are written into PROJECT §3. (Complete.)
 
-**P0-4 · Write the threat model** *(was P0-4)* — Ojas — 8h
+**P0-4 · Write the threat model** *(was P0-4)* — Ojas — 8h ✅
 *What:* Describe who the attackers are and what each could do — treating the shared store, a hacked hospital node, a rogue authority, and colluding doctors as four *separate* threats with different consequences.
 *Needs first:* nothing.
 *Done when:* `docs/threat-model.md` covers all four attacker types distinctly.
 
-**P0-5 · Set up automated checks (CI)** *(was P0-5)* — Nandini — 4h
+**P0-5 · Set up automated checks (CI)** *(was P0-5)* — Nandini — 4h ✅
 *What:* Make every pull request automatically run the tests and style checks, so broken or messy code can't be merged.
 *Needs first:* P0-1.
 *Done when:* CI runs on every PR and blocks merging if anything fails.
 
-**P0-6 · Crypto sanity check on every machine** *(was P0-6)* — Avaneeth — 5h
+**P0-6 · Crypto sanity check on every machine** *(was P0-6)* — Avaneeth — 5h ✅
 *What:* Prove the core crypto tools (AES, signatures, key-derivation, a toy proxy re-encryption) actually run in plain Python on all four laptops — before anyone builds on them.
 *Needs first:* nothing.
 *Done when:* a throwaway test script runs cleanly on all four machines; findings noted in an ADR.
 
-**P0-7 · Map out the pretend federation** *(was P0-7)* — Powel — 4h
+**P0-7 · Map out the pretend federation** *(was P0-7)* — Powel — 4h ✅
 *What:* Decide the make-believe setup — two hospitals (matching ARCHITECTURE §7; reconciled from "three" per ADR-0019), two attribute authorities, one shared trust root — and which authority hands out which attributes.
 *Needs first:* nothing.
 *Done when:* a topology diagram and the attribute-ownership list are in `docs/` (`docs/federation-topology.md`, ADR-0019). ✅
 
-**P0-8 · Build the database schema** *(was P0-8)* — Avaneeth — 8h
+**P0-8 · Build the database schema** *(was P0-8)* — Avaneeth — 8h ✅
 *What:* Create the **PostgreSQL** database structure — all the tables the system needs. Postgres holds only ciphertext, wrapped keys, and coded index — it **stores** data but never **decides** access; keys and the threshold gate do that (ADR-0014).
 *Needs first:* P0-2.
 *Done when:* all tables exist per ARCHITECTURE §2, basic read/write is tested, and there's a migration script.
@@ -296,32 +296,32 @@ everyone has switched over.
 
 ### Phase 1 — Crypto and data foundations
 
-**P1-1 · Core crypto: encryption + hashing** *(was P1-1)* — Powel — 6h
+**P1-1 · Core crypto: encryption + hashing** *(was P1-1)* — Powel — 6h ✅
 *What:* The central toolbox everyone else calls for AES-256-GCM encryption, key-derivation, and SHA-256. No other module is allowed to touch raw crypto directly.
 *Needs first:* P0-2.
 *Done when:* known-answer test vectors pass, a fresh nonce is used every time, and nothing else imports raw crypto.
 
-**P1-2 · Core crypto: signatures** *(was P1-2)* — Powel — 5h
+**P1-2 · Core crypto: signatures** *(was P1-2)* — Powel — 5h ✅
 *What:* Add signing and verifying (ECDSA) to the toolbox, plus saving/loading keys.
 *Needs first:* P1-1.
 *Done when:* sign-then-verify works and a tampered message fails verification.
 
-**P1-3 · Secret sharing (Shamir)** *(was P1-3)* — Powel — 8h
+**P1-3 · Secret sharing (Shamir)** *(was P1-3)* — Powel — 8h ✅
 *What:* Split a secret into three shares where any two rebuild it and any one reveals nothing. Used by both break-glass and the policy engine.
 *Needs first:* P0-2.
 *Done when:* any 2 of 3 shares reconstruct the secret, 1 gives nothing, tested over many random secrets.
 
-**P1-4 · Record encryption + key wrapping** *(was P1-4)* — Avaneeth — 8h
+**P1-4 · Record encryption + key wrapping** *(was P1-4)* — Avaneeth — 8h ✅
 *What:* Give each record its own encryption key, encrypt the record, and wrap that key for whoever's allowed to read it.
 *Needs first:* P1-1, P0-8.
 *Done when:* encrypt → store → retrieve → decrypt round-trips, with exactly one key per record.
 
-**P1-5 · Proxy re-encryption** *(was P1-5)* — Ojas — 7h
+**P1-5 · Proxy re-encryption** *(was P1-5)* — Ojas — 7h ✅
 *What:* A tool to re-wrap a record's key to a new person (the emergency doctor) without ever decrypting it. One direction only — no hospital-to-hospital handoff, since everything lives in one store now.
 *Needs first:* P1-1.
 *Done when:* a key can be re-wrapped to a new recipient and the tool provably never sees plaintext.
 
-**P1-6 · Policy engine stub** *(was P1-6)* — Powel — 2h
+**P1-6 · Policy engine stub** *(was P1-6)* — Powel — 2h ✅
 *What:* A fake stand-in for the access-policy engine that returns predictable answers, so other people can build against it before the real one exists.
 *Needs first:* P0-2.
 *Done when:* other modules can call the real interface and get sensible fake results.
@@ -331,32 +331,32 @@ everyone has switched over.
 
 ### Phase 2 — Federation and policy
 
-**P2-1 · Identity and cross-certification** *(was P2-1)* — Ojas *(swapped from Avaneeth, ADR-0025)* — 12h
+**P2-1 · Identity and cross-certification** *(was P2-1)* — Ojas *(swapped from Avaneeth, ADR-0025)* — 12h ✅
 *What:* Build the trust setup — a root authority, per-hospital certificate authorities, and cross-certification so an out-of-network doctor can be verified.
 *Needs first:* P1-2, P0-8.
 *Done when:* an out-of-network doctor's certificate validates back to the shared root, and a forged one is rejected. ✅ *(`src/identity/`: `root_anchor.py`, `certificates.py`, `chain.py`, `trust_registry.py`; see ADR-0024 for the single-root cross-certification design; negative tests in `tests/security/test_phase2_security.py`.)*
 
-**P2-2 · Attribute issuing** *(was P2-2)* — Ojas *(swapped from Avaneeth, ADR-0025)* — 8h
+**P2-2 · Attribute issuing** *(was P2-2)* — Ojas *(swapped from Avaneeth, ADR-0025)* — 8h ✅
 *What:* Let the authorities hand out signed "attribute" credentials (like role:doctor, specialty:cardiology) that the policy engine checks. **A patient's home authority also issues that patient their own `owner:<patient_id>` attribute** (ADR-0016), which is what lets a patient self-decrypt their records; it follows the same credential lifecycle (validity window, revocation status) as any other attribute.
 *Needs first:* P2-1.
 *Done when:* two independent authorities issue valid credentials and a forged credential is rejected; a patient's home authority can issue an `owner:<patient_id>` attribute credential. ✅ *(`src/authority/`: `issuance.py`, `certification.py`; live revocation registry deferred to P2-6 per the module's docstring; negative tests in `tests/security/test_phase2_security.py`.)*
 
-**P2-3 · The real policy engine** *(was P2-3)* — Powel — 12h
+**P2-3 · The real policy engine** *(was P2-3)* — Powel — 12h ✅
 *What:* Replace the stub with the real thing: an AND/OR policy tree that lets someone unlock a record only if their attributes satisfy the policy. In standard terms this is the **Policy Decision Point (PDP)**; the check that enforces it in front of the record/key services is the **Policy Enforcement Point (PEP)**. This is our stand-in for full attribute-based encryption. **Policy-authoring convention (ADR-0016):** every record's tree is authored with a root-level `OR` whose branches are the clinical policy and an `owner:<patient_id>` leaf, so the patient can always reconstruct their own record via the same path. This is a convention on how trees are built, not a schema change — the `Attribute`/`PolicyTree` contracts already express it.
 *Needs first:* P1-3, P2-2.
 *Done when:* a doctor whose attributes satisfy the policy unlocks the record, one who doesn't is refused, a patient holding only their `owner` attribute unlocks their own record, and it drops in without changing any code that called the stub. ✅ *(`src/policy/engine.py`: Shamir over attribute keys per ADR-0026; `evaluate_policy` (PDP) kept from the stub, `reconstruct_root_secret`/`unwrap_dek_via_policy` (PEP) added; `author_policy_with_owner` stamps the ADR-0016 owner leaf; negative tests in `tests/security/test_phase2_policy.py`. Attribute-key material is issued by `authority` (`attribute_key` / `get_attribute_key`, completing P2-2's §8-C6 half) and consumed end-to-end in `tests/policy/test_authority_integration.py` — that `authority` edit is a cross-owner change flagged for Ojas's review per ADR-0026.)*
 
-**P2-4 · Find a patient's records** *(was P2-4)* — Nandini — 8h
+**P2-4 · Find a patient's records** *(was P2-4)* — Nandini — 8h ✅
 *What:* Given a patient, locate their encrypted records in the shared store — without the store or the asking hospital learning what's inside.
 *Needs first:* P0-8, P2-1.
 *Done when:* one hospital can find a patient's records in the shared store by patient index, learning nothing about contents. ✅ *(`src/storage/repositories.py`: `find_record_ids_by_patient`; negative security tests in `tests/security/test_phase2_discovery.py`.)*
 
-**P2-5 · Searchable encrypted index** *(was P2-5)* — Nandini — 12h
+**P2-5 · Searchable encrypted index** *(was P2-5)* — Nandini — 12h ✅
 *What:* Build the coded index that lets someone search records without the server ever seeing the search words or the contents. Built against a fixed test key until break-glass exists.
 *Needs first:* P1-4.
 *Done when:* the index is searchable but the server learns no plaintext words. ✅ *(`src/search/service.py`: `derive_search_token`, `index_search_term`, `search_records`; see ADR-0027; tests in `tests/search/test_service.py` and `tests/security/test_phase2_search.py`.)*
 
-**P2-6 · Credential lifecycle** *(was P2-6)* — Avaneeth — 6h
+**P2-6 · Credential lifecycle** *(was P2-6)* — Avaneeth — 6h ✅
 *What:* Give every credential a serial number, a validity window, and a status — so credentials can expire and be revoked. (A project about revocation shouldn't issue credentials that never expire.)
 *Needs first:* P2-1, P2-2.
 *Done when:* expired or revoked credentials are rejected at check time. ✅ *(`src/authority/`: `revocation.py`, `issuance.py`, `exceptions.py`; see ADR-0028; unit tests in `tests/authority/test_lifecycle.py` and negative security tests in `tests/security/test_phase2_lifecycle.py`.)*
@@ -365,12 +365,12 @@ everyone has switched over.
 
 ### Phase 3 — The state machine and the core contributions
 
-**P3-1 · The state machine** *(was P3-1)* — Powel — 12h
+**P3-1 · The state machine** *(was P3-1)* — Powel — 12h ✅
 *What:* The heart of the project — the four states (Granted, Revoked, Emergency-open, Expired) and the signed events for every legal move between them. Illegal moves are refused.
 *Needs first:* P1-2, P1-4.
 *Done when:* all four states work, illegal transitions are rejected, and every transition produces a verifiable signed event. ✅ *(`src/lifecycle/`: `state_machine.py`, `exceptions.py`; six legal transitions per ADR-0030; unit tests in `tests/lifecycle/test_state_machine.py`; negative security tests in `tests/security/test_phase3_security.py` cover illegal transitions, invalid signatures, field tampering, missing reason code, state mismatch, and event-id replay.)*
 
-**P3-2 · Patient consent + granting access** *(was P3-2)* — Powel — 8h
+**P3-2 · Patient consent + granting access** *(was P3-2)* — Powel — 8h ✅
 *What:* The full consent path. The patient issues a **signed, scoped, expiring grant** — naming the hospital, the clinician/role, the purpose, the records, and the time window — via a request-then-approve flow (hospital requests, patient approves or denies). Only the patient can create or revoke it. The grant then wraps the record's key to a policy so the approved doctor can read it. This makes "the patient grants access" a real, defined action, not an assumption.
 *Needs first:* P3-1, P2-3.
 *Done when:* a patient-issued grant is signed and scoped; an approved doctor reads within scope; an unauthorized one can't; and only the patient can revoke it. ✅ *(`src/consent/`: `service.py`, `exceptions.py`; consent is a read-time gate over the already-wrapped record per ADR-0031; revocation is a fresh patient-signed grant with `status=REVOKED`; unit tests in `tests/consent/test_consent.py`; end-to-end + negative security tests in `tests/security/test_phase3_consent_security.py` cover approved read, unauthorized doctor denied, out-of-scope denied, expired/denied/revoked denied, forged signature denied, non-patient revocation denied.)*
@@ -424,6 +424,15 @@ positive control: `test_share_released_only_after_successful_commit`.)*
 *Needs first:* P2-5, P3-7.
 *Done when:* after rotation, stale search keys match nothing and no plaintext leaks during re-indexing.
 
+**P3-9a · Post-merge cleanup: ingest negative tests + federation move + hazmat aliases** *(new)* — Nandini — 5h
+*What:* Consolidated code-only fixes on already-merged Phase-3 work:
+- Add `tests/security/test_phase3_ingest_security.py` proving `records/ingest.py` fails closed on: missing owner leaf on the policy tree (ADR-0016 invariant), `search_terms` provided without an `emergency_key`, wrong `owner_authority_id`, and tampered-plaintext / cross-record-DEK-reuse attempts. Closes the biggest negative-test gap on the tree — P3-14 shipped with happy-path tests only.
+- Move `find_record_ids_by_patient` from `src/storage/repositories.py` to a new `src/federation/discovery.py` so C13 lives in the module ARCHITECTURE.md §2 assigns it to; update call sites; re-export from `src/federation/__init__.py`.
+- Add `src/crypto_core/types.py` exporting `ECPrivateKey` / `ECPublicKey` aliases, then swap the 7 non-`crypto_core` files off direct `cryptography.hazmat` imports: `src/breakglass/{assertion,envelopes}.py`, `src/consent/service.py`, `src/lifecycle/state_machine.py`, `src/authority/issuance.py`, `src/identity/{certificates,root_anchor}.py`. Enforces the CLAUDE.md "no direct hazmat outside `crypto_core`" rule without a carve-out ADR.
+- Fix ADR mis-citation in `src/contracts/audit.py:31,42` (0014 → 0017).
+*Needs first:* P3-1, P3-2, P3-10, P3-14 (all done). Independent of P3-8 and P3-9, so it can run in parallel with them or immediately after.
+*Done when:* the new negative tests pass; no direct `cryptography.hazmat` imports outside `src/crypto_core/` (verified by grep); federated discovery lives under `src/federation/`; ruff, black, and full pytest are green.
+
 **P3-10 · Emergency assertion** *(was P3-10)* — Tejas *(taken from Powel)* — 6h
 *What:* Define what "declaring an emergency" actually is — a signed statement binding the patient, doctor, hospital, time, reason, and an expiry. Break-glass won't start without a valid one.
 *Needs first:* P3-1, P2-1.
@@ -473,12 +482,12 @@ positive control: `test_share_released_only_after_successful_commit`.)*
 *Needs first:* P4-1, P4-2, P3-8.
 *Done when:* the full scenario runs from a clean clone across all processes.
 
-**P4-5 · Demo driver + fake data** *(was P4-5)* — Avaneeth — 8h
+**P4-5 · Demo driver + fake data** *(was P4-5)* — Nandini — 8h
 *What:* A one-command script that seeds realistic fake patient data and runs the demo scenario with readable output. No real patient data, ever.
 *Needs first:* P4-4.
 *Done when:* one command seeds and runs the scenario with clear output.
 
-**P4-6 · Traffic capture setup** *(was P4-6)* — Ojas — 6h
+**P4-6 · Traffic capture setup** *(was P4-6)* — Nandini — 6h
 *What:* The capture harness and the two modes (plain-HTTP and TLS) that record network traffic for the required traffic-analysis module.
 *Needs first:* P4-3.
 *Done when:* both modes produce a capture file per scenario.
