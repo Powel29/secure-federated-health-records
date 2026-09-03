@@ -6,8 +6,15 @@ key rotation re-wrapping, and the full record upload pipeline (P3-14).
 
 from __future__ import annotations
 
-from records.exceptions import DecryptionError, RecordError, UnwrappingError
+from records.exceptions import (
+    DecryptionError,
+    RecordError,
+    RevocationError,
+    UnauthorizedRevocationError,
+    UnwrappingError,
+)
 from records.ingest import IngestResult, ingest_record
+from records.revocation import RevocationResult, revoke_record_access
 from records.service import (
     decrypt_record,
     encrypt_record,
@@ -20,10 +27,14 @@ __all__ = [
     "DecryptionError",
     "IngestResult",
     "RecordError",
+    "RevocationError",
+    "RevocationResult",
+    "UnauthorizedRevocationError",
     "UnwrappingError",
     "decrypt_record",
     "encrypt_record",
     "ingest_record",
+    "revoke_record_access",
     "rewrap_dek",
     "unwrap_dek",
     "wrap_dek",

@@ -48,6 +48,7 @@ Each row links to a one-file ADR with the full context.
 | [0033](0033-emergency-patient-identification.md) | Emergency patient identification is a name + DOB search in the clinician portal (PII stays in portal DB, never in the crypto store); slot as P4-11a | Proposed | 2026-09-02 | Team (Powel, Nandini, Ojas, Avaneeth) | Gap against §8 / P3-10 |
 | [0034](0034-audit-hash-chain-and-share-release.md) | Audit hash-chain field-separator encoding, full-entry signing, and savepoint-based log-before-release | Proposed | 2026-09-03 | Ojas → all four | P3-3, P3-4 |
 | [0035](0035-time-boxed-emergency-access-and-auto-expiry.md) | Time-boxed emergency access with forced auto-expiry: simulated-timer dual signed transitions, forced key rotation, Phase-4 audit-callback seam | Proposed | 2026-09-03 | Powel → all four | P3-6 |
+| [0036](0036-revocation-by-key-rotation.md) | Revocation is full DEK re-generation + record re-encryption + policy re-compilation with generation++ + signed GRANTED→REVOKED event; not a status flag | Proposed | 2026-09-03 | Powel → all four | P3-7 |
 
 ## Owed, not yet written
 
