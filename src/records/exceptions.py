@@ -21,6 +21,5 @@ class RevocationError(RecordError):
 
 class UnauthorizedRevocationError(RevocationError):
     """The actor attempting revocation is not the record's owner or its home
-    authority. Reserved for the P3-12 authorization check — the P3-7 rotation
-    pipeline does not itself enforce this, since who-can-revoke is a policy
-    concern layered above the crypto rotation."""
+    authority (P3-12). Raised when an unauthorized party (e.g. a clinician,
+    foreign authority, or another patient) attempts to revoke a record."""

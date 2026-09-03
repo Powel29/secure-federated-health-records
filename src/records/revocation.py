@@ -44,6 +44,7 @@ from crypto_core.symmetric import generate_key
 from cryptography.hazmat.primitives.asymmetric import ec
 from lifecycle.state_machine import create_transition_event
 
+from records.exceptions import UnauthorizedRevocationError
 from records.service import decrypt_record, encrypt_record, wrap_dek
 
 AttributeKeyring = Mapping[tuple[str, str, str], bytes]
@@ -91,6 +92,38 @@ class RevocationResult:
     new_root_secret: bytes
     transition_event: TransitionEvent
     audit_payload: dict[str, Any]
+
+
+def check_revocation_authorization(
+    *,
+    actor_id: str,
+    record: Record,
+    owner_authority_id: str,
+) -> None:
+    """Verify that ``actor_id`` is authorized to revoke access to ``record`` (P3-12).
+
+    Only the record's owner (the patient, ``record.patient_id``) or the
+    patient's home authority (``owner_authority_id``) is authorized to
+    revoke access. Any other party (clinicians, hospitals, foreign authorities,
+    or other patients) is rejected, even if they hold a valid cryptographic key
+    and signature.
+
+    Args:
+        actor_id: The identifier of the party attempting revocation.
+        record: The :class:`~contracts.Record` being revoked.
+        owner_authority_id: The identifier of the patient's home authority
+            (ADR-0019; owns the ``owner`` attribute namespace).
+
+    Raises:
+        UnauthorizedRevocationError: ``actor_id`` is neither the record's
+            patient nor its home authority.
+    """
+    if actor_id not in ( record.patient_id,owner_authority_id):
+        raise UnauthorizedRevocationError(
+            f"actor '{actor_id}' is not authorized to revoke record "
+            f"'{record.record_id}'; only patient '{record.patient_id}' or home "
+            f"authority '{owner_authority_id}' may revoke"
+        )
 
 
 def revoke_record_access(
@@ -163,6 +196,8 @@ def revoke_record_access(
         audit payload dict.
 
     Raises:
+        UnauthorizedRevocationError: ``actor_id`` is neither the record's
+            patient nor its home authority (P3-12).
         DecryptionError: ``old_dek`` does not decrypt ``current_record`` —
             wrong key or tampered ciphertext.
         PolicyCompileError: ``attribute_keyring`` is incomplete for
@@ -182,6 +217,8 @@ def revoke_record_access(
           distinguishable from the current one at the storage boundary.
         - Owner leaf preserved (ADR-0016): the patient's access survives
           rotation by construction, not by policy discipline.
+        - Revocation authorization enforced (P3-12): only the patient or
+          home authority can trigger key rotation.
     """
     # Lazy imports match records.ingest.py — policy.engine imports records
     # (for unwrap_dek in unwrap_dek_via_policy), so importing at module
@@ -195,6 +232,13 @@ def revoke_record_access(
 
     patient_id = current_record.patient_id
     old_generation = current_wrapping.generation
+
+    # --- Step 0: Check who's allowed to revoke (P3-12) ---
+    check_revocation_authorization(
+        actor_id=actor_id,
+        record=current_record,
+        owner_authority_id=owner_authority_id,
+    )
 
     # --- Step 1: Recover the plaintext under the old DEK ---
     plaintext = decrypt_record(current_record, old_dek)
