@@ -118,8 +118,8 @@ def check_revocation_authorization(
         UnauthorizedRevocationError: ``actor_id`` is neither the record's
             patient nor its home authority.
     """
-    if actor_id not in ( record.patient_id,owner_authority_id):
-        
+    if actor_id not in ( record.patient_id, owner_authority_id):
+
         raise UnauthorizedRevocationError(
             f"actor '{actor_id}' is not authorized to revoke record "
             f"'{record.record_id}'; only patient '{record.patient_id}' or home "
