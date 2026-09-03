@@ -403,12 +403,26 @@ everyone has switched over.
 **P3-3 · The tamper-proof audit log** *(was P3-3)* — Ojas — 10h
 *What:* A hash-chained, signed log where each entry locks in the one before it, so tampering is detectable.
 *Needs first:* P1-2, P0-8.
-*Done when:* the full chain verifies and any tampered entry is caught.
+*Done when:* the full chain verifies and any tampered entry is caught. ✅
+*(`src/audit/chain.py`: `create_genesis_entry`, `append_entry`, `verify_chain`,
+`verify_full_chain` per the ARCHITECTURE §2 C10 formula; see ADR-0034 for the
+canonical-encoding and full-entry-signing decisions; unit tests in
+`tests/audit/test_chain.py`; negative tests in
+`tests/security/test_phase3_audit_security.py` cover tampered event_data,
+a broken prev_hash link, and a replayed chain position.)*
 
 **P3-4 · Log-before-release (the headline)** *(was P3-4)* — Ojas — 8h
 *What:* Make the audit service hand over its emergency key-share *only after* it has committed the log entry. No log, no share — this is what makes logging a hard precondition of emergency access.
 *Needs first:* P3-3, P1-3.
-*Done when:* the share is released only after the log commits, and a failed log-write means no share (proven by a negative test).
+*Done when:* the share is released only after the log commits, and a failed log-write means no share (proven by a negative test). ✅
+*(`src/audit/share_custody.py`: `release_share_after_commit` wraps
+`audit.chain.append_entry` in a psycopg3 savepoint (`conn.transaction()`) and
+only returns the caller's share once it has released; any failure raises
+`AuditCommitFailedError` before the share is ever constructed as a return
+value — see ADR-0034 for why a real cross-connection race was not used for
+the negative test. Negative test:
+`tests/security/test_phase3_audit_security.py::test_breakglass_share_not_released_when_log_commit_fails`;
+positive control: `test_share_released_only_after_successful_commit`.)*
 
 **P3-5 · Break-glass emergency access** *(was P3-5)* — Powel — 14h
 *What:* The emergency unlock. Three parties each hold a share (doctor, patient's home authority, audit service); any two rebuild the emergency key. One share alone is never enough — not even the audit service's. On unlock, the record key is re-wrapped to the emergency doctor without decrypting it in the open.

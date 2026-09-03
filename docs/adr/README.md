@@ -46,6 +46,7 @@ Each row links to a one-file ADR with the full context.
 | [0031](0031-consent-as-gate.md) | Patient consent is a read-time gate over an already-wrapped record, not a wrap-time re-policy; revocation is a fresh patient-signed grant with `status=REVOKED` | Proposed | 2026-08-31 | Powel → all four | P3-2 |
 | [0032](0032-emergency-assertion-and-anti-replay.md) | Emergency assertion five-point validation and thread-safe anti-replay consumed-ID stores | Proposed | 2026-08-31 | Tejas → all four | P3-10, P3-11 |
 | [0033](0033-emergency-patient-identification.md) | Emergency patient identification is a name + DOB search in the clinician portal (PII stays in portal DB, never in the crypto store); slot as P4-11a | Proposed | 2026-09-02 | Team (Powel, Nandini, Ojas, Avaneeth) | Gap against §8 / P3-10 |
+| [0034](0034-audit-hash-chain-and-share-release.md) | Audit hash-chain field-separator encoding, full-entry signing, and savepoint-based log-before-release | Proposed | 2026-09-03 | Ojas → all four | P3-3, P3-4 |
 
 ## Owed, not yet written
 

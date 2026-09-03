@@ -199,6 +199,40 @@ def get_audit_entry(conn: psycopg.Connection, seq: int) -> AuditEntry | None:
     return AuditEntry(**row)
 
 
+def get_chain_head(conn: psycopg.Connection) -> AuditEntry | None:
+    """Fetch the highest-``seq`` audit entry (the current chain head).
+
+    Cross-owner addition for P3-3/P3-4 (``audit``, C10) -- flagged for
+    review the same way P2-3's cross-owner ``authority`` edit was (see
+    WORKFLOW.md P2-3). Returns ``None`` only before genesis has been
+    appended.
+    """
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("SELECT * FROM audit_log ORDER BY seq DESC LIMIT 1")
+        row = cur.fetchone()
+    if not row:
+        return None
+    row["timestamp"] = row.pop("recorded_at")
+    return AuditEntry(**row)
+
+
+def list_audit_entries(conn: psycopg.Connection) -> list[AuditEntry]:
+    """Fetch the full audit chain in ``seq`` order, genesis first.
+
+    Cross-owner addition for P3-3 (``audit``, C10) -- same flag as
+    :func:`get_chain_head`. Used for full-chain verification
+    (ARCHITECTURE.md §7 boot check).
+    """
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("SELECT * FROM audit_log ORDER BY seq ASC")
+        rows = cur.fetchall()
+    entries = []
+    for row in rows:
+        row["timestamp"] = row.pop("recorded_at")
+        entries.append(AuditEntry(**row))
+    return entries
+
+
 # --- registry tables (no frozen contract) ------------------------------------
 
 
