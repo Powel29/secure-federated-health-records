@@ -39,3 +39,39 @@ class ReplayedEventError(LifecycleError):
     Without this check a captured signed event could be re-fired the next time
     the record cycles back into the matching ``from_state``.
     """
+
+
+# ---------------------------------------------------------------------------
+# Time-boxed emergency access (P3-6)
+# ---------------------------------------------------------------------------
+
+
+class EmergencySessionExpiredError(LifecycleError):
+    """An emergency session was used at or after its ``expires_at``.
+
+    ``EmergencyExpiryManager.get_active_emergency_key`` raises this instead of
+    returning the emergency key once ``now >= expires_at`` -- fail closed, per
+    the time-boxing requirement in ARCHITECTURE.md §5 step 7. A session past
+    its expiry is not a standing permission, even if it has not yet been swept
+    by :meth:`~lifecycle.expiry.EmergencyExpiryManager.expire_session`.
+    """
+
+
+class SessionNotFoundError(LifecycleError):
+    """No emergency session is registered for the given ``record_id``.
+
+    Raised by both :meth:`~lifecycle.expiry.EmergencyExpiryManager.expire_session`
+    and :meth:`~lifecycle.expiry.EmergencyExpiryManager.get_active_emergency_key`
+    when the caller names a record with no active (or ever-registered) session.
+    """
+
+
+class SessionNotExpiredError(LifecycleError):
+    """``expire_session`` was called before ``expires_at`` without ``force=True``.
+
+    The timer sweep
+    (:meth:`~lifecycle.expiry.EmergencyExpiryManager.check_and_expire_due`)
+    never triggers this -- it only expires sessions already past their deadline.
+    This guards the manual/administrative path from short-circuiting the
+    time-box a clinician was granted.
+    """

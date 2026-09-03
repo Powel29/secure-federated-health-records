@@ -47,6 +47,7 @@ Each row links to a one-file ADR with the full context.
 | [0032](0032-emergency-assertion-and-anti-replay.md) | Emergency assertion five-point validation and thread-safe anti-replay consumed-ID stores | Proposed | 2026-08-31 | Tejas → all four | P3-10, P3-11 |
 | [0033](0033-emergency-patient-identification.md) | Emergency patient identification is a name + DOB search in the clinician portal (PII stays in portal DB, never in the crypto store); slot as P4-11a | Proposed | 2026-09-02 | Team (Powel, Nandini, Ojas, Avaneeth) | Gap against §8 / P3-10 |
 | [0034](0034-audit-hash-chain-and-share-release.md) | Audit hash-chain field-separator encoding, full-entry signing, and savepoint-based log-before-release | Proposed | 2026-09-03 | Ojas → all four | P3-3, P3-4 |
+| [0035](0035-time-boxed-emergency-access-and-auto-expiry.md) | Time-boxed emergency access with forced auto-expiry: simulated-timer dual signed transitions, forced key rotation, Phase-4 audit-callback seam | Proposed | 2026-09-03 | Powel → all four | P3-6 |
 
 ## Owed, not yet written
 
