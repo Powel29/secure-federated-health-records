@@ -78,3 +78,18 @@ class EnvelopeRecipientMismatchError(BreakglassError):
     ARCHITECTURE.md §8: the envelope is bound to its destination so a
     captured envelope at one service cannot be presented to another.
     """
+
+
+# ---------------------------------------------------------------------------
+# Emergency unlock gate (P3-5)
+# ---------------------------------------------------------------------------
+
+
+class InsufficientSharesError(BreakglassError):
+    """Fewer than ``THRESHOLD`` unique shares presented -- break-glass fails closed.
+
+    Uniqueness is by share x-coordinate: presenting the same share twice (or
+    any single custodian's share alone -- including the audit service's) does
+    not satisfy the 2-of-3 threshold. No single party can open a record
+    unilaterally (ARCHITECTURE.md §8).
+    """
