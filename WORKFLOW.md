@@ -444,9 +444,11 @@ positive control: `test_share_released_only_after_successful_commit`.)*
 *Done when:* a replayed request is rejected, not re-run. ✅ *(`src/breakglass/`: `replay.py` (thread-safe `ConsumedAssertionIds`, `ConsumedRequestIds`), `envelopes.py` (signed `RequestEnvelope` creation and verification with recipient binding); ADR-0032; unit tests in `tests/breakglass/test_replay.py` and `tests/breakglass/test_envelopes.py`; negative security tests in `tests/security/test_phase3_assertion_security.py` cover replay rejection and the ordering invariant that forged messages cannot burn legitimate IDs.)*
 
 **P3-12 · Check who's allowed to revoke** *(was P3-12)* — Avaneeth — 3h ✅
+*What:* Make sure a revocation actually comes from the record's owner (patient) or its home authority — a valid signature from the wrong person isn't enough.
 *Needs first:* P3-7.
 *Done when:* a correctly-signed but unauthorized revocation is rejected. ✅ *(`records.revocation.check_revocation_authorization` enforces patient owner or home authority check at step 0 of `revoke_record_access`; `UnauthorizedRevocationError` in `records.exceptions`; ADR-0037; unit tests in `tests/records/test_revocation.py`; negative security tests in `tests/security/test_phase3_revocation_security.py` prove correctly-signed requests from unauthorized clinicians or foreign authorities fail closed).*
 
+**P3-13 · Log denials and federation events** *(was P3-13)* — Ojas — 3h
 *What:* Record access-denials and federation actions (policy checks, discovery, re-wraps) in the audit chain — identifiers and hashes only, never key material. This is what makes the admin portal's denial view possible.
 *Needs first:* P3-3.
 *Done when:* denials and federation events appear in the chain with no sensitive data leaked.
