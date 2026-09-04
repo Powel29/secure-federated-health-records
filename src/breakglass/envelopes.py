@@ -18,7 +18,7 @@ from uuid import uuid4
 
 from contracts import RequestEnvelope
 from crypto_core import sign, verify
-from cryptography.hazmat.primitives.asymmetric import ec
+from crypto_core.types import ECPrivateKey, ECPublicKey
 
 from breakglass.exceptions import EnvelopeRecipientMismatchError
 from breakglass.replay import ConsumedRequestIds
@@ -71,7 +71,7 @@ def create_request_envelope(
     recipient_id: str,
     operation: str,
     body: bytes,
-    signing_key: ec.EllipticCurvePrivateKey,
+    signing_key: ECPrivateKey,
     issued_at: datetime.datetime | None = None,
 ) -> RequestEnvelope:
     """Build and sign a ``RequestEnvelope``.
@@ -125,7 +125,7 @@ def create_request_envelope(
 
 def verify_request_envelope(
     envelope: RequestEnvelope,
-    caller_public_key: ec.EllipticCurvePublicKey,
+    caller_public_key: ECPublicKey,
     expected_recipient_id: str,
     consumed_store: ConsumedRequestIds | None = None,
 ) -> None:

@@ -26,7 +26,7 @@ from uuid import UUID, uuid4
 from contracts import EmergencyAssertion
 from contracts.enums import ReasonCode
 from crypto_core import certificate_public_key, sign, verify
-from cryptography.hazmat.primitives.asymmetric import ec
+from crypto_core.types import ECPrivateKey, ECPublicKey
 from cryptography.x509 import Certificate
 from cryptography.x509.oid import NameOID
 from identity.chain import validate_chain
@@ -93,7 +93,7 @@ def create_emergency_assertion(
     clinician_id: str,
     facility_id: str,
     reason_code: ReasonCode,
-    signing_key: ec.EllipticCurvePrivateKey,
+    signing_key: ECPrivateKey,
     issued_at: datetime.datetime | None = None,
     expires_at: datetime.datetime | None = None,
     ttl: datetime.timedelta | None = None,
@@ -158,7 +158,7 @@ def create_emergency_assertion(
 
 def verify_emergency_assertion_signature(
     assertion: EmergencyAssertion,
-    clinician_public_key: ec.EllipticCurvePublicKey,
+    clinician_public_key: ECPublicKey,
 ) -> None:
     """Verify the assertion's ECDSA signature against ``clinician_public_key``.
 

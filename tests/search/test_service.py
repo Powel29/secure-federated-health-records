@@ -89,7 +89,6 @@ def test_search_records_delegates_to_repository(monkeypatch) -> None:
     assert captured == {"conn": conn_sentinel, "coded_term": b"opaque"}
 
 
-
 def test_rekey_search_index_rebuilds_tokens_under_new_key(monkeypatch) -> None:
     """Rekeying replaces the index with tokens derived from the new key."""
     captured: dict[str, object] = {}

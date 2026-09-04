@@ -9,7 +9,7 @@ set, and the default validity window.
 from __future__ import annotations
 
 from crypto_core import build_certificate
-from cryptography.hazmat.primitives.asymmetric import ec
+from crypto_core.types import ECPrivateKey, ECPublicKey
 from cryptography.x509 import Certificate
 from cryptography.x509.oid import NameOID
 
@@ -29,9 +29,9 @@ DEFAULT_CLINICIAN_VALID_DAYS = 365  # ARCHITECTURE.md §8: credentials must expi
 
 def issue_certificate(
     *,
-    issuer_private_key: ec.EllipticCurvePrivateKey,
+    issuer_private_key: ECPrivateKey,
     issuer_certificate: Certificate,
-    subject_public_key: ec.EllipticCurvePublicKey,
+    subject_public_key: ECPublicKey,
     subject_common_name: str,
     valid_days: int,
     is_ca: bool = False,
@@ -65,7 +65,7 @@ def issue_certificate(
 def issue_facility_ca_certificate(
     root: RootAnchor,
     facility_id: str,
-    facility_public_key: ec.EllipticCurvePublicKey,
+    facility_public_key: ECPublicKey,
     valid_days: int = DEFAULT_FACILITY_VALID_DAYS,
 ) -> Certificate:
     """Issue a facility CA certificate signed by the root anchor.
@@ -100,7 +100,7 @@ def issue_facility_ca_certificate(
 def issue_authority_certificate(
     root: RootAnchor,
     authority_id: str,
-    authority_public_key: ec.EllipticCurvePublicKey,
+    authority_public_key: ECPublicKey,
     valid_days: int = DEFAULT_AUTHORITY_VALID_DAYS,
 ) -> Certificate:
     """Issue an attribute authority's identity certificate, signed by the root.
@@ -132,10 +132,10 @@ def issue_authority_certificate(
 
 
 def issue_clinician_certificate(
-    facility_ca_private_key: ec.EllipticCurvePrivateKey,
+    facility_ca_private_key: ECPrivateKey,
     facility_ca_certificate: Certificate,
     clinician_id: str,
-    clinician_public_key: ec.EllipticCurvePublicKey,
+    clinician_public_key: ECPublicKey,
     valid_days: int = DEFAULT_CLINICIAN_VALID_DAYS,
 ) -> Certificate:
     """Issue a clinician certificate, signed by their enrolling facility's CA.

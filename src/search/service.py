@@ -64,10 +64,7 @@ def rekey_search_index(
     search_terms: list[str],
 ) -> list[bytes]:
     """Rebuild one record's search index under a new search key."""
-    coded_terms = [
-        derive_search_token(new_search_key, term)
-        for term in search_terms
-    ]
+    coded_terms = [derive_search_token(new_search_key, term) for term in search_terms]
     replace_search_index(conn, record_id, coded_terms)
     return coded_terms
 
