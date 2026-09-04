@@ -14,7 +14,12 @@ from __future__ import annotations
 
 import secrets
 
-from search.service import derive_search_token
+import pytest
+
+from lifecycle.exceptions import EmergencySessionExpiredError
+from lifecycle.expiry import EmergencyExpiryManager
+from crypto_core import generate_ec_keypair
+from search.service import derive_search_token, search_records_with_emergency
 
 
 def test_sec_search_token_from_wrong_emergency_key_does_not_match() -> None:
@@ -81,3 +86,60 @@ def test_sec_documented_leakage_same_term_same_key_yields_equal_tokens() -> None
     token_b = derive_search_token(key, "diabetes")
 
     assert token_a == token_b
+
+
+def test_sec_emergency_search_stops_after_expiry(monkeypatch) -> None:
+    """P3-8: emergency search works before expiry and fails after expiry."""
+    from datetime import datetime, timedelta, timezone
+
+    class FakeClock:
+        def __init__(self):
+            self.now = datetime.now(timezone.utc)
+
+        def __call__(self):
+            return self.now
+
+        def advance(self, seconds):
+            self.now += timedelta(seconds=seconds)
+
+    clock = FakeClock()
+    manager = EmergencyExpiryManager(
+        signing_key=generate_ec_keypair()[0],
+        clock=clock,
+    )
+
+    record_id = "rec-p3-8"
+    emergency_key = secrets.token_bytes(32)
+
+    manager._sessions[record_id] = type(
+        "Session",
+        (),
+        {
+            "emergency_key": emergency_key,
+            "expires_at": clock.now + timedelta(seconds=5),
+            "is_expired": lambda self, now: now >= self.expires_at,
+        },
+    )()
+
+    monkeypatch.setattr(
+        "search.service.find_records_by_search_term",
+        lambda conn, coded_term: ["rec-p3-8"],
+    )
+
+    result = search_records_with_emergency(
+        None,
+        manager,
+        record_id,
+        "diabetes",
+    )
+    assert result == ["rec-p3-8"]
+
+    clock.advance(5)
+
+    with pytest.raises(EmergencySessionExpiredError):
+        search_records_with_emergency(
+            None,
+            manager,
+            record_id,
+            "diabetes",
+        )

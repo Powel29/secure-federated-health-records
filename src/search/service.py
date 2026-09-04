@@ -59,3 +59,15 @@ def index_search_term(
 def search_records(conn: psycopg.Connection, coded_term: bytes) -> list[str]:
     """Return record IDs whose search_index row matches the coded token."""
     return find_records_by_search_term(conn, coded_term)
+
+
+def search_records_with_emergency(
+    conn: psycopg.Connection,
+    expiry_manager,
+    record_id: str,
+    search_term: str,
+) -> list[str]:
+    """Search using the currently active emergency session."""
+    emergency_key = expiry_manager.get_active_emergency_key(record_id)
+    coded_term = derive_search_token(emergency_key, search_term)
+    return find_records_by_search_term(conn, coded_term)
