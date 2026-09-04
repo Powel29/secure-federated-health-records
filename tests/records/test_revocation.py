@@ -16,8 +16,13 @@ from crypto_core import generate_ec_keypair
 from lifecycle.state_machine import LifecycleStateMachine, create_transition_event
 from policy import reconstruct_root_secret
 from policy.exceptions import PolicyDeniedError
+from records.exceptions import UnauthorizedRevocationError
 from records.ingest import ingest_record
-from records.revocation import RevocationResult, revoke_record_access
+from records.revocation import (
+    RevocationResult,
+    check_revocation_authorization,
+    revoke_record_access,
+)
 from records.service import decrypt_record, unwrap_dek
 
 MED_AUTHORITY_ID = "authority-med"
@@ -241,3 +246,118 @@ class TestOwnerLeafPreserved:
         recovered_dek = unwrap_dek(result.rotated_wrapping, recovered_root)
         recovered_plaintext = decrypt_record(result.rotated_record, recovered_dek)
         assert recovered_plaintext == plaintext
+
+
+class TestRevocationAuthorization:
+    """Authorization checks for who is allowed to revoke (P3-12)."""
+
+    def test_patient_authorized_to_revoke(self) -> None:
+        """The record's owner (patient) is authorized to revoke."""
+        patient_id = "pat-auth-701"
+        ingested, _, _, _, _ = _fresh_ingest(patient_id, b"auth test payload")
+        # Should not raise:
+        check_revocation_authorization(
+            actor_id=patient_id,
+            record=ingested.record,
+            owner_authority_id=NET_AUTHORITY_ID,
+        )
+
+    def test_home_authority_authorized_to_revoke(self) -> None:
+        """The record's home authority is authorized to revoke."""
+        patient_id = "pat-auth-702"
+        ingested, _, _, _, _ = _fresh_ingest(patient_id, b"auth test payload")
+        # Should not raise:
+        check_revocation_authorization(
+            actor_id=NET_AUTHORITY_ID,
+            record=ingested.record,
+            owner_authority_id=NET_AUTHORITY_ID,
+        )
+
+    def test_clinician_unauthorized_to_revoke(self) -> None:
+        """A clinician is unauthorized to revoke a patient's record."""
+        patient_id = "pat-auth-703"
+        ingested, _, _, _, _ = _fresh_ingest(patient_id, b"auth test payload")
+        with pytest.raises(
+            UnauthorizedRevocationError, match="not authorized to revoke"
+        ):
+            check_revocation_authorization(
+                actor_id="clinician-dr-smith",
+                record=ingested.record,
+                owner_authority_id=NET_AUTHORITY_ID,
+            )
+
+    def test_foreign_authority_unauthorized_to_revoke(self) -> None:
+        """A foreign authority (not the patient's home authority) is unauthorized."""
+        patient_id = "pat-auth-704"
+        ingested, _, _, _, _ = _fresh_ingest(patient_id, b"auth test payload")
+        with pytest.raises(
+            UnauthorizedRevocationError, match="not authorized to revoke"
+        ):
+            check_revocation_authorization(
+                actor_id=MED_AUTHORITY_ID,
+                record=ingested.record,
+                owner_authority_id=NET_AUTHORITY_ID,
+            )
+
+    def test_another_patient_unauthorized_to_revoke(self) -> None:
+        """Another patient is unauthorized to revoke a different patient's record."""
+        patient_id = "pat-auth-705"
+        ingested, _, _, _, _ = _fresh_ingest(patient_id, b"auth test payload")
+        with pytest.raises(
+            UnauthorizedRevocationError, match="not authorized to revoke"
+        ):
+            check_revocation_authorization(
+                actor_id="pat-stranger-999",
+                record=ingested.record,
+                owner_authority_id=NET_AUTHORITY_ID,
+            )
+
+    def test_revoke_record_access_by_home_authority_succeeds(self) -> None:
+        """Revocation executed by the home authority succeeds and rotates the DEK."""
+        patient_id = "pat-auth-706"
+        plaintext = b"home authority revocation test"
+        ingested, keyring, _, net, clinical = _fresh_ingest(patient_id, plaintext)
+        old_root = reconstruct_root_secret(ingested.compiled_policy, keyring)
+        old_dek = unwrap_dek(ingested.dek_wrapping, old_root)
+
+        result = revoke_record_access(
+            current_record=ingested.record,
+            current_wrapping=ingested.dek_wrapping,
+            old_dek=old_dek,
+            new_clinical_policy=clinical,
+            owner_authority_id=NET_AUTHORITY_ID,
+            attribute_keyring=keyring,
+            actor_id=NET_AUTHORITY_ID,
+            actor_signing_key=net.private_key,
+            correlation_id="rev-home-auth-706",
+        )
+
+        assert isinstance(result, RevocationResult)
+        assert result.transition_event.actor_id == NET_AUTHORITY_ID
+        assert (
+            result.rotated_wrapping.generation == ingested.dek_wrapping.generation + 1
+        )
+
+    def test_revoke_record_access_by_unauthorized_actor_fails_closed(self) -> None:
+        """Revocation attempted by an unauthorized clinician fails closed."""
+        patient_id = "pat-auth-707"
+        plaintext = b"clinician unauthorized revocation test"
+        ingested, keyring, _, _, clinical = _fresh_ingest(patient_id, plaintext)
+        old_root = reconstruct_root_secret(ingested.compiled_policy, keyring)
+        old_dek = unwrap_dek(ingested.dek_wrapping, old_root)
+
+        clinician_priv, _ = generate_ec_keypair()
+        with pytest.raises(
+            UnauthorizedRevocationError, match="not authorized to revoke"
+        ):
+            revoke_record_access(
+                current_record=ingested.record,
+                current_wrapping=ingested.dek_wrapping,
+                old_dek=old_dek,
+                new_clinical_policy=clinical,
+                owner_authority_id=NET_AUTHORITY_ID,
+                attribute_keyring=keyring,
+                actor_id="clinician-dr-mallory",
+                actor_signing_key=clinician_priv,
+                correlation_id="rev-malicious-707",
+            )

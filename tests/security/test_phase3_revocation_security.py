@@ -34,7 +34,11 @@ from lifecycle.exceptions import (
 from lifecycle.state_machine import LifecycleStateMachine, create_transition_event
 from policy import reconstruct_root_secret
 from policy.exceptions import PolicyDeniedError
-from records.exceptions import DecryptionError, UnwrappingError
+from records.exceptions import (
+    DecryptionError,
+    UnauthorizedRevocationError,
+    UnwrappingError,
+)
 from records.ingest import ingest_record
 from records.revocation import revoke_record_access
 from records.service import decrypt_record, unwrap_dek
@@ -321,3 +325,126 @@ class TestIllegalRevocationTransitions:
                 event=event,
                 actor_public_key=signing_pub,
             )
+
+
+class TestRevocationAuthorizationSecurity:
+    """Negative security tests for who-may-revoke authorization (P3-12).
+
+    Claim: Revocation is restricted to the record owner (patient) or its home
+    authority. A correctly-signed request from an unauthorized party (e.g. a
+    clinician or foreign authority) fails closed and rotates nothing.
+    """
+
+    def test_sec_clinician_cannot_revoke_patient_record(self) -> None:
+        """A clinician holding a valid ECDSA key pair cannot revoke a patient's
+        record. The call fails closed with UnauthorizedRevocationError."""
+        patient_id = "pat-sec-auth-1"
+        plaintext = b"sensitive medical history"
+        ingested = ingest_record(
+            plaintext=plaintext,
+            patient_id=patient_id,
+            facility_id="fac-central",
+            owner_authority_id=NET_AUTHORITY_ID,
+            clinical_policy=PolicyTree(
+                node_type=PolicyNodeType.LEAF,
+                attribute=Attribute(name="role", value="physician"),
+                authority_id=MED_AUTHORITY_ID,
+            ),
+            attribute_keyring={
+                (MED_AUTHORITY_ID, "role", "physician"): b"k" * 32,
+                (NET_AUTHORITY_ID, "owner", patient_id): b"o" * 32,
+            },
+        )
+        old_dek = b"d" * 32  # caller holding old dek
+
+        clinician_priv, _ = generate_ec_keypair()
+        # Negative test: Clinician signs with valid ECDSA key,
+        # but actor_id is clinician.
+        with pytest.raises(
+            UnauthorizedRevocationError, match="not authorized to revoke"
+        ):
+            revoke_record_access(
+                current_record=ingested.record,
+                current_wrapping=ingested.dek_wrapping,
+                old_dek=old_dek,
+                new_clinical_policy=ingested.policy_tree,
+                owner_authority_id=NET_AUTHORITY_ID,
+                attribute_keyring={
+                    (MED_AUTHORITY_ID, "role", "physician"): b"k" * 32,
+                    (NET_AUTHORITY_ID, "owner", patient_id): b"o" * 32,
+                },
+                actor_id="clinician-dr-mallory",
+                actor_signing_key=clinician_priv,
+                correlation_id="rev-sec-clinician",
+            )
+
+    def test_sec_foreign_authority_cannot_revoke_patient_record(self) -> None:
+        """A foreign attribute authority (e.g. authority-med) cannot revoke a
+        record whose home authority is authority-net."""
+        patient_id = "pat-sec-auth-2"
+        plaintext = b"foreign authority revocation test"
+        ingested = ingest_record(
+            plaintext=plaintext,
+            patient_id=patient_id,
+            facility_id="fac-central",
+            owner_authority_id=NET_AUTHORITY_ID,
+            clinical_policy=PolicyTree(
+                node_type=PolicyNodeType.LEAF,
+                attribute=Attribute(name="role", value="physician"),
+                authority_id=MED_AUTHORITY_ID,
+            ),
+            attribute_keyring={
+                (MED_AUTHORITY_ID, "role", "physician"): b"k" * 32,
+                (NET_AUTHORITY_ID, "owner", patient_id): b"o" * 32,
+            },
+        )
+        old_dek = b"d" * 32
+
+        foreign_auth_priv, _ = generate_ec_keypair()
+
+        with pytest.raises(
+            UnauthorizedRevocationError, match="not authorized to revoke"
+        ):
+            revoke_record_access(
+                current_record=ingested.record,
+                current_wrapping=ingested.dek_wrapping,
+                old_dek=old_dek,
+                new_clinical_policy=ingested.policy_tree,
+                owner_authority_id=NET_AUTHORITY_ID,
+                attribute_keyring={
+                    (MED_AUTHORITY_ID, "role", "physician"): b"k" * 32,
+                    (NET_AUTHORITY_ID, "owner", patient_id): b"o" * 32,
+                },
+                actor_id=MED_AUTHORITY_ID,
+                actor_signing_key=foreign_auth_priv,
+                correlation_id="rev-sec-foreign",
+            )
+
+    def test_sec_positive_control_patient_and_home_authority_can_revoke(self) -> None:
+        """Positive control: The patient or their home authority with valid keys
+        successfully revokes the record."""
+        patient_id = "pat-sec-auth-3"
+        plaintext = b"positive control revocation payload"
+        fix = _revoked_fixture(patient_id, plaintext)
+
+        # In _revoked_fixture, actor_id was patient_id -> success!
+        assert fix["revoked"].transition_event.actor_id == patient_id
+        assert fix["revoked"].rotated_wrapping.generation == 1
+
+        # Now test home authority as actor:
+        net_priv, _ = generate_ec_keypair()
+        second_revocation = revoke_record_access(
+            current_record=fix["revoked"].rotated_record,
+            current_wrapping=fix["revoked"].rotated_wrapping,
+            old_dek=unwrap_dek(
+                fix["revoked"].rotated_wrapping, fix["revoked"].new_root_secret
+            ),
+            new_clinical_policy=fix["revoked"].policy_tree,
+            owner_authority_id=NET_AUTHORITY_ID,
+            attribute_keyring=fix["keyring"],
+            actor_id=NET_AUTHORITY_ID,
+            actor_signing_key=net_priv,
+            correlation_id="rev-sec-home-auth-positive",
+        )
+        assert second_revocation.transition_event.actor_id == NET_AUTHORITY_ID
+        assert second_revocation.rotated_wrapping.generation == 2

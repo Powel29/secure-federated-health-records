@@ -14,7 +14,11 @@ from records.exceptions import (
     UnwrappingError,
 )
 from records.ingest import IngestResult, ingest_record
-from records.revocation import RevocationResult, revoke_record_access
+from records.revocation import (
+    RevocationResult,
+    check_revocation_authorization,
+    revoke_record_access,
+)
 from records.service import (
     decrypt_record,
     encrypt_record,
@@ -31,6 +35,7 @@ __all__ = [
     "RevocationResult",
     "UnauthorizedRevocationError",
     "UnwrappingError",
+    "check_revocation_authorization",
     "decrypt_record",
     "encrypt_record",
     "ingest_record",
