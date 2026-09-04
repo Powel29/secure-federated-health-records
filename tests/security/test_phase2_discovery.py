@@ -13,7 +13,7 @@ projection over ``record_id``.
 
 from __future__ import annotations
 
-from storage.repositories import find_record_ids_by_patient
+from federation import find_record_ids_by_patient
 
 
 class _CaptureCursor:

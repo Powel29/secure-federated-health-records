@@ -87,3 +87,64 @@ def test_search_records_delegates_to_repository(monkeypatch) -> None:
 
     assert result == ["rec-1", "rec-2"]
     assert captured == {"conn": conn_sentinel, "coded_term": b"opaque"}
+
+
+def test_rekey_search_index_rebuilds_tokens_under_new_key(monkeypatch) -> None:
+    """Rekeying replaces the index with tokens derived from the new key."""
+    captured: dict[str, object] = {}
+
+    def fake_replace(conn, record_id, coded_terms):
+        captured["conn"] = conn
+        captured["record_id"] = record_id
+        captured["coded_terms"] = coded_terms
+
+    monkeypatch.setattr("search.service.replace_search_index", fake_replace)
+
+    new_key = secrets.token_bytes(32)
+    conn_sentinel = object()
+    terms = ["diabetes", "troponin"]
+
+    result = service.rekey_search_index(
+        conn_sentinel,
+        "rec-123",
+        new_key,
+        terms,
+    )
+
+    expected = [
+        service.derive_search_token(new_key, "diabetes"),
+        service.derive_search_token(new_key, "troponin"),
+    ]
+
+    assert result == expected
+    assert captured == {
+        "conn": conn_sentinel,
+        "record_id": "rec-123",
+        "coded_terms": expected,
+    }
+
+
+def test_rekey_search_index_uses_new_key_not_old_key(monkeypatch) -> None:
+    """Rekeying must invalidate tokens derived from the previous key."""
+    stored: dict[str, object] = {}
+
+    def fake_replace(conn, record_id, coded_terms):
+        stored["coded_terms"] = coded_terms
+
+    monkeypatch.setattr("search.service.replace_search_index", fake_replace)
+
+    old_key = secrets.token_bytes(32)
+    new_key = secrets.token_bytes(32)
+
+    service.rekey_search_index(
+        object(),
+        "rec-123",
+        new_key,
+        ["diabetes"],
+    )
+
+    new_token = service.derive_search_token(new_key, "diabetes")
+    old_token = service.derive_search_token(old_key, "diabetes")
+
+    assert stored["coded_terms"] == [new_token]
+    assert stored["coded_terms"] != [old_token]

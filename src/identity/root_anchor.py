@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from crypto_core import build_certificate, generate_ec_keypair
-from cryptography.hazmat.primitives.asymmetric import ec
+from crypto_core.types import ECPrivateKey, ECPublicKey
 from cryptography.x509 import Certificate
 
 DEFAULT_ROOT_VALID_DAYS = 3650  # a decade -- this is the anchor, not a leaf cert
@@ -28,8 +28,8 @@ class RootAnchor:
     public key itself, never the private key (ARCHITECTURE.md §7 step 1).
     """
 
-    private_key: ec.EllipticCurvePrivateKey
-    public_key: ec.EllipticCurvePublicKey
+    private_key: ECPrivateKey
+    public_key: ECPublicKey
     certificate: Certificate
 
 

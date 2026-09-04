@@ -21,7 +21,7 @@ from uuid import UUID, uuid4
 from contracts import ConsentGrant, ConsentRequest, DEKWrapping, Record
 from contracts.enums import ConsentStatus
 from crypto_core import aes_gcm_decrypt, sign, verify
-from cryptography.hazmat.primitives.asymmetric import ec
+from crypto_core.types import ECPrivateKey, ECPublicKey
 from policy.engine import AttributeKeyring, CompiledPolicy, unwrap_dek_via_policy
 
 from consent.exceptions import (
@@ -114,7 +114,7 @@ def create_consent_request(
     requester_id: str,
     scope: tuple[str, ...],
     purpose: str,
-    requester_signing_key: ec.EllipticCurvePrivateKey,
+    requester_signing_key: ECPrivateKey,
     requested_at: datetime.datetime | None = None,
     ttl: datetime.timedelta = DEFAULT_REQUEST_TTL,
 ) -> ConsentRequest:
@@ -170,7 +170,7 @@ def create_consent_request(
 
 def verify_consent_request(
     request: ConsentRequest,
-    requester_public_key: ec.EllipticCurvePublicKey,
+    requester_public_key: ECPublicKey,
     at: datetime.datetime | None = None,
 ) -> None:
     """Verify a request's signature and that it has not already lapsed.
@@ -203,7 +203,7 @@ def create_consent_grant(
     request: ConsentRequest,
     status: ConsentStatus,
     grantee_id: str,
-    patient_signing_key: ec.EllipticCurvePrivateKey,
+    patient_signing_key: ECPrivateKey,
     scope: tuple[str, ...] | None = None,
     decided_at: datetime.datetime | None = None,
     ttl: datetime.timedelta = DEFAULT_GRANT_TTL,
@@ -280,7 +280,7 @@ def create_consent_grant(
 
 def verify_consent_grant(
     grant: ConsentGrant,
-    patient_public_key: ec.EllipticCurvePublicKey,
+    patient_public_key: ECPublicKey,
 ) -> None:
     """Verify the grant's patient signature.
 
@@ -305,7 +305,7 @@ def verify_consent_grant(
 def revoke_consent_grant(
     *,
     prior_grant: ConsentGrant,
-    patient_signing_key: ec.EllipticCurvePrivateKey,
+    patient_signing_key: ECPrivateKey,
     decided_at: datetime.datetime | None = None,
     ttl: datetime.timedelta = DEFAULT_GRANT_TTL,
 ) -> ConsentGrant:
@@ -374,7 +374,7 @@ def authorize_read(
     *,
     record_id: str,
     grantee_id: str,
-    patient_public_key: ec.EllipticCurvePublicKey,
+    patient_public_key: ECPublicKey,
     at: datetime.datetime | None = None,
 ) -> None:
     """Predicate the caller runs before invoking the policy/crypto read path.
@@ -446,7 +446,7 @@ def read_record_under_consent(
     compiled_policy: CompiledPolicy,
     grant: ConsentGrant,
     grantee_id: str,
-    patient_public_key: ec.EllipticCurvePublicKey,
+    patient_public_key: ECPublicKey,
     holder_keyring: AttributeKeyring,
     at: datetime.datetime | None = None,
 ) -> bytes:

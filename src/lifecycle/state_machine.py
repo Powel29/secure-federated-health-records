@@ -23,7 +23,7 @@ from uuid import UUID, uuid4
 from contracts import TransitionEvent
 from contracts.enums import LifecycleState, ReasonCode
 from crypto_core import sign, verify
-from cryptography.hazmat.primitives.asymmetric import ec
+from crypto_core.types import ECPrivateKey, ECPublicKey
 
 from lifecycle.exceptions import (
     IllegalTransitionError,
@@ -133,7 +133,7 @@ def create_transition_event(
     from_state: LifecycleState,
     to_state: LifecycleState,
     actor_id: str,
-    signing_key: ec.EllipticCurvePrivateKey,
+    signing_key: ECPrivateKey,
     reason_code: ReasonCode | None = None,
     issued_at: datetime.datetime | None = None,
 ) -> TransitionEvent:
@@ -193,7 +193,7 @@ def create_transition_event(
 
 def verify_transition_event(
     event: TransitionEvent,
-    actor_public_key: ec.EllipticCurvePublicKey,
+    actor_public_key: ECPublicKey,
 ) -> None:
     """Verify the event's signature and re-check that the transition is legal.
 
@@ -281,7 +281,7 @@ class LifecycleStateMachine:
         self,
         current_state: LifecycleState,
         event: TransitionEvent,
-        actor_public_key: ec.EllipticCurvePublicKey,
+        actor_public_key: ECPublicKey,
     ) -> LifecycleState:
         """Verify, check state, mark event consumed, and return the new state.
 

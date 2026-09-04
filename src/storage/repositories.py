@@ -49,25 +49,6 @@ def get_record(conn: psycopg.Connection, record_id: str) -> Record | None:
     return Record(**row) if row else None
 
 
-def find_record_ids_by_patient(conn: psycopg.Connection, patient_id: str) -> list[str]:
-    """Return record IDs for a patient (discovery projection for P2-4 / C13).
-
-    Deliberately a projection, not ``SELECT *``: P2-4's done-when requires
-    that discovery "learn nothing about contents." Returning ``Record`` objects
-    here would hand the querying facility the ciphertext, nonce, and aad --
-    exactly what ARCHITECTURE §5 forbids for the discovery path. A caller with
-    legitimate access fetches the full record via ``get_record(conn, id)``.
-    """
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT record_id FROM records WHERE patient_id = %s",
-            (patient_id,),
-        )
-        rows = cur.fetchall()
-
-    return [row[0] for row in rows]
-
-
 # --- dek_wrappings -----------------------------------------------------------
 
 
@@ -321,6 +302,22 @@ def insert_search_term(
             "INSERT INTO search_index (record_id, coded_term) VALUES (%s, %s)",
             (record_id, coded_term),
         )
+
+
+def replace_search_index(
+    conn: psycopg.Connection, record_id: str, coded_terms: list[bytes]
+) -> None:
+    """Replace all search tokens for one record atomically."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM search_index WHERE record_id = %s",
+            (record_id,),
+        )
+        for coded_term in coded_terms:
+            cur.execute(
+                "INSERT INTO search_index (record_id, coded_term) VALUES (%s, %s)",
+                (record_id, coded_term),
+            )
 
 
 def find_records_by_search_term(

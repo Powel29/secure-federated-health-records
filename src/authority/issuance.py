@@ -26,7 +26,7 @@ import secrets
 
 from contracts import Attribute, AttributeCredential, CredentialStatus
 from crypto_core import generate_ec_keypair, generate_key, sign, verify
-from cryptography.hazmat.primitives.asymmetric import ec
+from crypto_core.types import ECPrivateKey, ECPublicKey
 
 from authority.exceptions import (
     CredentialExpiredError,
@@ -58,8 +58,8 @@ class AttributeAuthority:
     def __init__(
         self,
         authority_id: str,
-        private_key: ec.EllipticCurvePrivateKey,
-        public_key: ec.EllipticCurvePublicKey,
+        private_key: ECPrivateKey,
+        public_key: ECPublicKey,
         owned_attribute_names: frozenset[str],
     ) -> None:
         self.authority_id = authority_id
@@ -363,7 +363,7 @@ def issue_owner_credential(
 
 def verify_credential(
     credential: AttributeCredential,
-    issuer_public_key: ec.EllipticCurvePublicKey,
+    issuer_public_key: ECPublicKey,
     at: datetime.datetime | None = None,
     revocation_registry: RevocationRegistry | None = None,
 ) -> None:
