@@ -323,6 +323,22 @@ def insert_search_term(
         )
 
 
+def replace_search_index(
+    conn: psycopg.Connection, record_id: str, coded_terms: list[bytes]
+) -> None:
+    """Replace all search tokens for one record atomically."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM search_index WHERE record_id = %s",
+            (record_id,),
+        )
+        for coded_term in coded_terms:
+            cur.execute(
+                "INSERT INTO search_index (record_id, coded_term) VALUES (%s, %s)",
+                (record_id, coded_term),
+            )
+
+
 def find_records_by_search_term(
     conn: psycopg.Connection, coded_term: bytes
 ) -> list[str]:

@@ -18,6 +18,7 @@ from crypto_core.symmetric import hkdf_derive
 from storage.repositories import (
     find_records_by_search_term,
     insert_search_term,
+    replace_search_index,
 )
 
 # Versioned per ADR-0027 so a future construction change is a bytes-level
@@ -54,6 +55,21 @@ def index_search_term(
     coded_term = derive_search_token(emergency_key, search_term)
     insert_search_term(conn, record_id, coded_term)
     return coded_term
+
+
+def rekey_search_index(
+    conn: psycopg.Connection,
+    record_id: str,
+    new_search_key: bytes,
+    search_terms: list[str],
+) -> list[bytes]:
+    """Rebuild one record's search index under a new search key."""
+    coded_terms = [
+        derive_search_token(new_search_key, term)
+        for term in search_terms
+    ]
+    replace_search_index(conn, record_id, coded_terms)
+    return coded_terms
 
 
 def search_records(conn: psycopg.Connection, coded_term: bytes) -> list[str]:
