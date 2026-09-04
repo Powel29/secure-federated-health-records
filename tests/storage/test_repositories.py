@@ -9,6 +9,7 @@ import psycopg
 import pytest
 from contracts import AuditEntry, DEKWrapping, Facility, Record, TransitionEvent
 from contracts.enums import FacilityStatus, LifecycleState, ReasonCode
+from federation import find_record_ids_by_patient
 from storage import repositories as repo
 
 
@@ -201,7 +202,7 @@ def test_find_record_ids_by_patient_returns_only_ids_for_that_patient(conn):
     repo.insert_record(conn, _make_record("rec-a-2", "pat-101"))
     repo.insert_record(conn, _make_record("rec-b-1", "pat-102"))
 
-    ids = repo.find_record_ids_by_patient(conn, "pat-101")
+    ids = find_record_ids_by_patient(conn, "pat-101")
 
     assert set(ids) == {"rec-a-1", "rec-a-2"}
     # Every element is a bare record-id string; there is no attribute path
