@@ -15,10 +15,9 @@ from __future__ import annotations
 import secrets
 
 import pytest
-
+from crypto_core import generate_ec_keypair
 from lifecycle.exceptions import EmergencySessionExpiredError
 from lifecycle.expiry import EmergencyExpiryManager
-from crypto_core import generate_ec_keypair
 from search.service import derive_search_token, search_records_with_emergency
 
 

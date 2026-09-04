@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import psycopg
 from crypto_core.symmetric import hkdf_derive
+from lifecycle.expiry import EmergencyExpiryManager
 from storage.repositories import (
     find_records_by_search_term,
     insert_search_term,
@@ -76,7 +77,7 @@ def search_records(conn: psycopg.Connection, coded_term: bytes) -> list[str]:
 
 def search_records_with_emergency(
     conn: psycopg.Connection,
-    expiry_manager,
+    expiry_manager: EmergencyExpiryManager,
     record_id: str,
     search_term: str,
 ) -> list[str]:
