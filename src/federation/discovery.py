@@ -2,6 +2,12 @@
 
 Discovery returns only record identifiers for a patient. It does not expose
 encrypted record contents or cryptographic material.
+
+Deliberately a projection over ``record_id``, not ``SELECT *``: P2-4's done-when
+requires that discovery "learn nothing about contents." Returning ``Record``
+objects here would hand the querying facility the ciphertext, nonce, and aad --
+exactly what ARCHITECTURE §5 forbids for the discovery path. A caller with
+legitimate access fetches the full record via ``storage.repositories.get_record``.
 """
 
 from __future__ import annotations
