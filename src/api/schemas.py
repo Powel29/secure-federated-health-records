@@ -70,7 +70,7 @@ class CreateConsentRequestPayload(BaseModel):
     requester_id: str
     scope: list[str]
     purpose: str
-    ttl_days: int = 7
+    ttl_days: int = Field(default=7, gt=0, le=365)
     requester_signing_key_pem: str = Field(
         ...,
         description="PEM-encoded ECDSA private key of the requester",
