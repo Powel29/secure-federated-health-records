@@ -18,6 +18,8 @@ Invariants:
 from __future__ import annotations
 
 import base64
+import binascii
+from datetime import timedelta
 from typing import Annotated
 from uuid import uuid4
 
@@ -71,8 +73,12 @@ from lifecycle.exceptions import (
 )
 from lifecycle.expiry import EmergencyExpiryManager
 from policy.engine import unwrap_dek_via_policy
-from policy.exceptions import PolicyDeniedError
-from records.exceptions import UnauthorizedRevocationError, UnwrappingError
+from policy.exceptions import PolicyCompileError, PolicyDeniedError
+from records.exceptions import (
+    RecordError,
+    UnauthorizedRevocationError,
+    UnwrappingError,
+)
 from records.ingest import ingest_record
 from records.revocation import (
     check_revocation_authorization,
@@ -81,7 +87,11 @@ from records.revocation import (
 from records.service import decrypt_record
 from search.service import search_records_with_emergency
 
-from api.repository import InMemoryStorageRepository, StorageRepository
+from api.repository import (
+    InMemoryStorageRepository,
+    PostgresStorageRepository,
+    StorageRepository,
+)
 from api.schemas import (
     BreakglassUnlockRequest,
     BreakglassUnlockResponse,
@@ -140,8 +150,8 @@ def _parse_attribute_keyring(
                 ),
             )
         try:
-            parsed[(parts[0], parts[1], parts[2])] = base64.b64decode(v)
-        except Exception as exc:
+            parsed[(parts[0], parts[1], parts[2])] = base64.b64decode(v, validate=True)
+        except (ValueError, binascii.Error) as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid base64 encoding for key {k!r}: {exc}",
@@ -269,7 +279,7 @@ def create_hospital_app(
                 ConsentScopeError,
                 ConsentSubjectError,
             ) as exc:
-                if hasattr(repo, "_conn") and audit_key:
+                if isinstance(repo, PostgresStorageRepository) and audit_key:
                     log_access_denied(
                         repo._conn,
                         record_id=record_id,
@@ -285,7 +295,7 @@ def create_hospital_app(
                     detail=f"Consent denied: {exc}",
                 ) from exc
             except PolicyDeniedError as exc:
-                if hasattr(repo, "_conn") and audit_key:
+                if isinstance(repo, PostgresStorageRepository) and audit_key:
                     log_access_denied(
                         repo._conn,
                         record_id=record_id,
@@ -312,7 +322,7 @@ def create_hospital_app(
                 dek = unwrap_dek_via_policy(compiled_policy, keyring, wrapping)
                 plaintext_bytes = decrypt_record(record, dek)
             except PolicyDeniedError as exc:
-                if hasattr(repo, "_conn") and audit_key:
+                if isinstance(repo, PostgresStorageRepository) and audit_key:
                     log_access_denied(
                         repo._conn,
                         record_id=record_id,
@@ -366,6 +376,7 @@ def create_hospital_app(
             scope=tuple(payload.scope),
             purpose=payload.purpose,
             requester_signing_key=req_priv,
+            ttl=timedelta(days=payload.ttl_days),
         )
         repo.store_consent_request(req)
         return ConsentResponse(
@@ -465,7 +476,7 @@ def create_hospital_app(
                 owner_authority_id=payload.owner_authority_id,
             )
         except UnauthorizedRevocationError as exc:
-            if hasattr(repo, "_conn") and audit_key:
+            if isinstance(repo, PostgresStorageRepository) and audit_key:
                 log_access_denied(
                     repo._conn,
                     record_id=record_id,
@@ -492,8 +503,8 @@ def create_hospital_app(
             ) from exc
 
         try:
-            old_dek = base64.b64decode(payload.old_dek_b64)
-        except Exception as exc:
+            old_dek = base64.b64decode(payload.old_dek_b64, validate=True)
+        except (ValueError, binascii.Error) as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid base64 encoding for old_dek: {exc}",
@@ -515,7 +526,12 @@ def create_hospital_app(
                 reason_code=payload.reason_code,
                 new_policy_id=payload.new_policy_id,
             )
-        except Exception as exc:
+        except (
+            RecordError,
+            PolicyDeniedError,
+            PolicyCompileError,
+            ValueError,
+        ) as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Revocation failed: {exc}",
@@ -595,7 +611,7 @@ def create_hospital_app(
             InvalidSignatureError,
             ReplayedAssertionError,
         ) as exc:
-            if hasattr(repo, "_conn") and audit_key:
+            if isinstance(repo, PostgresStorageRepository) and audit_key:
                 log_access_denied(
                     repo._conn,
                     record_id=record_id,
@@ -684,7 +700,7 @@ def create_hospital_app(
         )
         repo.insert_transition_event(unlock_result.transition_event)
 
-        if hasattr(repo, "_conn") and audit_key:
+        if isinstance(repo, PostgresStorageRepository) and audit_key:
             log_federation_rewrap(
                 repo._conn,
                 record_id=record_id,
@@ -714,7 +730,7 @@ def create_hospital_app(
     ) -> DiscoveryResponse:
         """Federated discovery: find record IDs for a patient (C13)."""
         record_ids = repo.find_record_ids_by_patient(patient_id)
-        if hasattr(repo, "_conn") and audit_key:
+        if isinstance(repo, PostgresStorageRepository) and audit_key:
             log_federation_discovery(
                 repo._conn,
                 patient_id=patient_id,
@@ -767,8 +783,13 @@ def create_hospital_app(
                 detail="Emergency expiry manager not configured on this facility node",
             )
 
+        # NOTE: CONVENTIONS.md §2 rule 10 forbids crypto in api/. The Postgres
+        # path stays clean because search.service does the HKDF internally; the
+        # in-memory fallback still calls derive_search_token from here so tests
+        # without a DB run end-to-end. A repo-agnostic helper in search.service
+        # would close this — cross-owner change, tracked separately.
         try:
-            if hasattr(repo, "_conn"):
+            if isinstance(repo, PostgresStorageRepository):
                 matches = search_records_with_emergency(
                     conn=repo._conn,
                     expiry_manager=exp_manager,
@@ -805,19 +826,25 @@ def create_hospital_app(
     ) -> IngestRecordResponse:
         """Ingest, encrypt, compile policy, wrap DEK, and index a record (P3-14)."""
         try:
-            plaintext = base64.b64decode(payload.plaintext_b64)
-        except Exception as exc:
+            plaintext = base64.b64decode(payload.plaintext_b64, validate=True)
+        except (ValueError, binascii.Error) as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid base64 plaintext: {exc}",
             ) from exc
 
         keyring = _parse_attribute_keyring(payload.attribute_keyring)
-        em_key = (
-            base64.b64decode(payload.emergency_key_b64)
-            if payload.emergency_key_b64
-            else None
-        )
+        try:
+            em_key = (
+                base64.b64decode(payload.emergency_key_b64, validate=True)
+                if payload.emergency_key_b64
+                else None
+            )
+        except (ValueError, binascii.Error) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid base64 emergency_key: {exc}",
+            ) from exc
 
         try:
             result = ingest_record(
@@ -832,7 +859,7 @@ def create_hospital_app(
                 content_type=payload.content_type,
                 record_id=payload.record_id,
             )
-        except Exception as exc:
+        except (ValueError, PolicyCompileError, RecordError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Ingest failed: {exc}",

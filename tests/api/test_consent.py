@@ -9,6 +9,8 @@ Verifies:
 
 from __future__ import annotations
 
+import datetime
+
 from consent.service import create_consent_grant, create_consent_request
 from contracts.enums import ConsentStatus
 from crypto_core import (
@@ -46,6 +48,35 @@ class TestHospitalConsentEndpoints:
         assert data["request"]["patient_id"] == "patient-001"
         assert data["request"]["requester_id"] == "dr-alice"
         assert data["request"]["scope"] == ["rec-001"]
+
+    def test_create_consent_request_honors_ttl_days(self, test_setup):
+        """`ttl_days` on the payload must shape the request's expiry window."""
+        client = test_setup["client"]
+        pki = test_setup["pki"]
+
+        alice_priv_pem = private_key_to_pem(pki["alice_priv"]).decode("ascii")
+
+        response = client.post(
+            "/consent/requests",
+            json={
+                "patient_id": "patient-001",
+                "requester_id": "dr-alice",
+                "scope": ["rec-001"],
+                "purpose": "Consultation",
+                "ttl_days": 3,
+                "requester_signing_key_pem": alice_priv_pem,
+            },
+        )
+
+        assert response.status_code == 200
+        req = response.json()["request"]
+        requested_at = datetime.datetime.fromisoformat(req["requested_at"])
+        expires_at = datetime.datetime.fromisoformat(req["expires_at"])
+        window = expires_at - requested_at
+        # Signed request must reflect the caller's 3-day window, not the 7-day default.
+        assert window == datetime.timedelta(
+            days=3
+        ), f"ttl_days=3 not honored: window was {window}"
 
     def test_submit_valid_consent_grant(self, test_setup):
         """Patient submits a valid signed grant."""
