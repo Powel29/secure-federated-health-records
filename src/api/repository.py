@@ -1,0 +1,349 @@
+"""Storage repository abstraction for the Hospital Node API (P4-1, C14).
+
+Decouples API orchestration routes from underlying storage engines. Provides:
+- ``StorageRepository`` protocol defining the operations needed by the hospital node.
+- ``InMemoryStorageRepository``: Complete, thread-safe in-memory implementation for
+  fast, zero-dependency unit tests and standalone mock environments.
+- ``PostgresStorageRepository``: Production database implementation that delegates
+  to ``storage.repositories`` and ``federation.discovery``.
+"""
+
+from __future__ import annotations
+
+import threading
+from typing import Protocol
+from uuid import UUID
+
+import psycopg
+from contracts.audit import AuditEntry
+from contracts.consent import ConsentGrant, ConsentRequest
+from contracts.enums import LifecycleState
+from contracts.lifecycle import TransitionEvent
+from contracts.records import DEKWrapping, Record
+from federation.discovery import find_record_ids_by_patient
+from policy.engine import CompiledPolicy
+from storage.repositories import (
+    find_records_by_search_term,
+    get_chain_head,
+    get_dek_wrapping,
+    get_lifecycle_state,
+    get_record,
+    get_transition_event,
+    insert_audit_entry,
+    insert_dek_wrapping,
+    insert_record,
+    insert_search_term,
+    insert_transition_event,
+    upsert_lifecycle_state,
+)
+
+
+class StorageRepository(Protocol):
+    """Protocol for data-plane storage access in the hospital node service."""
+
+    def get_record(self, record_id: str) -> Record | None:
+        """Fetch a Record by identifier."""
+        ...
+
+    def insert_record(self, record: Record) -> None:
+        """Persist an encrypted Record."""
+        ...
+
+    def get_dek_wrapping(self, wrapping_id: str) -> DEKWrapping | None:
+        """Fetch a DEKWrapping by wrapping identifier."""
+        ...
+
+    def get_wrapping_for_record(
+        self, record_id: str, wrapped_for: str | None = None
+    ) -> DEKWrapping | None:
+        """Fetch the most recent DEKWrapping for a record."""
+        ...
+
+    def insert_dek_wrapping(self, wrapping: DEKWrapping) -> None:
+        """Persist a DEKWrapping."""
+        ...
+
+    def get_lifecycle_state(self, record_id: str) -> LifecycleState | None:
+        """Get the current lifecycle state of a record."""
+        ...
+
+    def upsert_lifecycle_state(
+        self,
+        record_id: str,
+        state: LifecycleState,
+        last_event_id: str | None = None,
+    ) -> None:
+        """Update or insert lifecycle state for a record."""
+        ...
+
+    def insert_transition_event(self, event: TransitionEvent) -> None:
+        """Persist a signed transition event."""
+        ...
+
+    def get_transition_event(self, event_id: str) -> TransitionEvent | None:
+        """Fetch a transition event by UUID string."""
+        ...
+
+    def insert_audit_entry(self, entry: AuditEntry) -> None:
+        """Append an entry to the audit log."""
+        ...
+
+    def get_chain_head(self) -> AuditEntry | None:
+        """Get the current head of the audit chain."""
+        ...
+
+    def insert_search_term(self, record_id: str, coded_term: bytes) -> None:
+        """Index a coded search term for a record."""
+        ...
+
+    def find_records_by_search_term(self, coded_term: bytes) -> list[str]:
+        """Find record identifiers matching a coded search token."""
+        ...
+
+    def find_record_ids_by_patient(self, patient_id: str) -> list[str]:
+        """Find all record identifiers belonging to a patient."""
+        ...
+
+    def store_compiled_policy(
+        self, policy_id: str, compiled_policy: CompiledPolicy
+    ) -> None:
+        """Cache or persist a compiled policy structure."""
+        ...
+
+    def get_compiled_policy(self, policy_id: str) -> CompiledPolicy | None:
+        """Retrieve a cached compiled policy structure."""
+        ...
+
+    def store_consent_request(self, request: ConsentRequest) -> None:
+        """Persist an incoming or outgoing ConsentRequest."""
+        ...
+
+    def get_consent_request(self, request_id: UUID) -> ConsentRequest | None:
+        """Fetch a ConsentRequest by UUID."""
+        ...
+
+    def store_consent_grant(self, grant: ConsentGrant) -> None:
+        """Persist a signed ConsentGrant."""
+        ...
+
+    def get_consent_grant(self, grant_id: UUID) -> ConsentGrant | None:
+        """Fetch a ConsentGrant by UUID."""
+        ...
+
+
+class InMemoryStorageRepository:
+    """Thread-safe, fully in-memory repository implementation."""
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self.records: dict[str, Record] = {}
+        self.wrappings: dict[str, DEKWrapping] = {}
+        self.record_wrappings: dict[str, list[DEKWrapping]] = {}
+        self.lifecycle_states: dict[str, LifecycleState] = {}
+        self.transition_events: dict[str, TransitionEvent] = {}
+        self.audit_log: list[AuditEntry] = []
+        self.search_index: list[tuple[str, bytes]] = []
+        self.compiled_policies: dict[str, CompiledPolicy] = {}
+        self.consent_requests: dict[UUID, ConsentRequest] = {}
+        self.consent_grants: dict[UUID, ConsentGrant] = {}
+
+    def get_record(self, record_id: str) -> Record | None:
+        with self._lock:
+            return self.records.get(record_id)
+
+    def insert_record(self, record: Record) -> None:
+        with self._lock:
+            self.records[record.record_id] = record
+
+    def get_dek_wrapping(self, wrapping_id: str) -> DEKWrapping | None:
+        with self._lock:
+            return self.wrappings.get(wrapping_id)
+
+    def get_wrapping_for_record(
+        self, record_id: str, wrapped_for: str | None = None
+    ) -> DEKWrapping | None:
+        with self._lock:
+            wraps = self.record_wrappings.get(record_id, [])
+            if not wraps:
+                return None
+            if wrapped_for is not None:
+                matching = [w for w in wraps if w.wrapped_for == wrapped_for]
+                return matching[-1] if matching else None
+            return wraps[-1]
+
+    def insert_dek_wrapping(self, wrapping: DEKWrapping) -> None:
+        with self._lock:
+            self.wrappings[wrapping.wrapping_id] = wrapping
+            self.record_wrappings.setdefault(wrapping.record_id, []).append(wrapping)
+
+    def get_lifecycle_state(self, record_id: str) -> LifecycleState | None:
+        with self._lock:
+            return self.lifecycle_states.get(record_id)
+
+    def upsert_lifecycle_state(
+        self,
+        record_id: str,
+        state: LifecycleState,
+        last_event_id: str | None = None,
+    ) -> None:
+        with self._lock:
+            self.lifecycle_states[record_id] = state
+
+    def insert_transition_event(self, event: TransitionEvent) -> None:
+        with self._lock:
+            self.transition_events[str(event.event_id)] = event
+
+    def get_transition_event(self, event_id: str) -> TransitionEvent | None:
+        with self._lock:
+            return self.transition_events.get(event_id)
+
+    def insert_audit_entry(self, entry: AuditEntry) -> None:
+        with self._lock:
+            self.audit_log.append(entry)
+
+    def get_chain_head(self) -> AuditEntry | None:
+        with self._lock:
+            return self.audit_log[-1] if self.audit_log else None
+
+    def insert_search_term(self, record_id: str, coded_term: bytes) -> None:
+        with self._lock:
+            self.search_index.append((record_id, coded_term))
+
+    def find_records_by_search_term(self, coded_term: bytes) -> list[str]:
+        with self._lock:
+            results: list[str] = []
+            for rec_id, term in self.search_index:
+                if term == coded_term and rec_id not in results:
+                    results.append(rec_id)
+            return results
+
+    def find_record_ids_by_patient(self, patient_id: str) -> list[str]:
+        with self._lock:
+            return [
+                rec.record_id
+                for rec in self.records.values()
+                if rec.patient_id == patient_id
+            ]
+
+    def store_compiled_policy(
+        self, policy_id: str, compiled_policy: CompiledPolicy
+    ) -> None:
+        with self._lock:
+            self.compiled_policies[policy_id] = compiled_policy
+
+    def get_compiled_policy(self, policy_id: str) -> CompiledPolicy | None:
+        with self._lock:
+            return self.compiled_policies.get(policy_id)
+
+    def store_consent_request(self, request: ConsentRequest) -> None:
+        with self._lock:
+            self.consent_requests[request.request_id] = request
+
+    def get_consent_request(self, request_id: UUID) -> ConsentRequest | None:
+        with self._lock:
+            return self.consent_requests.get(request_id)
+
+    def store_consent_grant(self, grant: ConsentGrant) -> None:
+        with self._lock:
+            self.consent_grants[grant.grant_id] = grant
+
+    def get_consent_grant(self, grant_id: UUID) -> ConsentGrant | None:
+        with self._lock:
+            return self.consent_grants.get(grant_id)
+
+
+class PostgresStorageRepository:
+    """PostgreSQL storage repository backed by ``storage.repositories``."""
+
+    def __init__(self, conn: psycopg.Connection) -> None:
+        self._conn = conn
+        self._compiled_policies: dict[str, CompiledPolicy] = {}
+        self._consent_requests: dict[UUID, ConsentRequest] = {}
+        self._consent_grants: dict[UUID, ConsentGrant] = {}
+
+    def get_record(self, record_id: str) -> Record | None:
+        return get_record(self._conn, record_id)
+
+    def insert_record(self, record: Record) -> None:
+        insert_record(self._conn, record)
+
+    def get_dek_wrapping(self, wrapping_id: str) -> DEKWrapping | None:
+        return get_dek_wrapping(self._conn, wrapping_id)
+
+    def get_wrapping_for_record(
+        self, record_id: str, wrapped_for: str | None = None
+    ) -> DEKWrapping | None:
+        with self._conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+            if wrapped_for is not None:
+                cur.execute(
+                    "SELECT * FROM dek_wrappings "
+                    "WHERE record_id = %s AND wrapped_for = %s "
+                    "ORDER BY generation DESC, created_at DESC LIMIT 1",
+                    (record_id, wrapped_for),
+                )
+            else:
+                cur.execute(
+                    "SELECT * FROM dek_wrappings WHERE record_id = %s "
+                    "ORDER BY generation DESC, created_at DESC LIMIT 1",
+                    (record_id,),
+                )
+            row = cur.fetchone()
+        return DEKWrapping(**row) if row else None
+
+    def insert_dek_wrapping(self, wrapping: DEKWrapping) -> None:
+        insert_dek_wrapping(self._conn, wrapping)
+
+    def get_lifecycle_state(self, record_id: str) -> LifecycleState | None:
+        row = get_lifecycle_state(self._conn, record_id)
+        if not row:
+            return None
+        return LifecycleState(row["state"])
+
+    def upsert_lifecycle_state(
+        self,
+        record_id: str,
+        state: LifecycleState,
+        last_event_id: str | None = None,
+    ) -> None:
+        upsert_lifecycle_state(self._conn, record_id, state, last_event_id)
+
+    def insert_transition_event(self, event: TransitionEvent) -> None:
+        insert_transition_event(self._conn, event)
+
+    def get_transition_event(self, event_id: str) -> TransitionEvent | None:
+        return get_transition_event(self._conn, event_id)
+
+    def insert_audit_entry(self, entry: AuditEntry) -> None:
+        insert_audit_entry(self._conn, entry)
+
+    def get_chain_head(self) -> AuditEntry | None:
+        return get_chain_head(self._conn)
+
+    def insert_search_term(self, record_id: str, coded_term: bytes) -> None:
+        insert_search_term(self._conn, record_id, coded_term)
+
+    def find_records_by_search_term(self, coded_term: bytes) -> list[str]:
+        return find_records_by_search_term(self._conn, coded_term)
+
+    def find_record_ids_by_patient(self, patient_id: str) -> list[str]:
+        return find_record_ids_by_patient(self._conn, patient_id)
+
+    def store_compiled_policy(
+        self, policy_id: str, compiled_policy: CompiledPolicy
+    ) -> None:
+        self._compiled_policies[policy_id] = compiled_policy
+
+    def get_compiled_policy(self, policy_id: str) -> CompiledPolicy | None:
+        return self._compiled_policies.get(policy_id)
+
+    def store_consent_request(self, request: ConsentRequest) -> None:
+        self._consent_requests[request.request_id] = request
+
+    def get_consent_request(self, request_id: UUID) -> ConsentRequest | None:
+        return self._consent_requests.get(request_id)
+
+    def store_consent_grant(self, grant: ConsentGrant) -> None:
+        self._consent_grants[grant.grant_id] = grant
+
+    def get_consent_grant(self, grant_id: UUID) -> ConsentGrant | None:
+        return self._consent_grants.get(grant_id)
