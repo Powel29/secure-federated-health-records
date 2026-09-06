@@ -1,4 +1,4 @@
-"""Admin / audit portal (P4-12). Read-only over the store; review registrations.
+"""Admin / audit portal (P4-9). Read-only over the store; review registrations.
 
 This is the one portal that shows *real* data now -- it reads the P0-8 store
 through the read-only `store` alias (audit log, records, lifecycle). It can view

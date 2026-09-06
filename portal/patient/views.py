@@ -1,4 +1,4 @@
-"""Patient portal shell (P4-10). Manage access + view own records.
+"""Patient portal shell (P4-7). Manage access + view own records.
 
 Upload and record-viewing are stubbed until the ingest/crypto path exists; the
 page works, the actions raise NotWiredYet rather than faking success.

@@ -28,7 +28,7 @@ Each row links to a one-file ADR with the full context.
 | [0013](0013-dashboard-early-shell.md) | Dashboard built as an early shell that grows per phase | Superseded by ADR-0014 | 2026-08-18 | Team | ARCHITECTURE §2 C16 |
 | [0014](0014-web-portals-and-postgres.md) | Three web portals replace the dashboard; PostgreSQL as storage | Accepted | 2026-08-18 | Team | PROJECT §5A |
 | [0015](0015-strictness-pass-cuts.md) | Strictness-pass cuts (service-signing, plain-HTTP guard, BOLA middleware) | Accepted | 2026-08-18 | Team | PROJECT §4B |
-| [0016](0016-patient-self-access-as-attribute.md) | Patient self-access via an owner attribute, not a dual-wrapped DEK | Accepted | 2026-08-21 | Powel → all four | P4-10 |
+| [0016](0016-patient-self-access-as-attribute.md) | Patient self-access via an owner attribute, not a dual-wrapped DEK | Accepted | 2026-08-21 | Powel → all four | P4-7 |
 | [0017](0017-contract-additions-consent-correlation.md) | Contract additions for consent + correlation; RequestEnvelope reconciliation | Accepted | 2026-08-21 | Powel → all four | ADR-0014/0015/0016 |
 | [0018](0018-crypto-spike-findings.md) | Crypto sanity-spike findings | Accepted | 2026-08-21 | Avaneeth → all four | P0-6 |
 | [0019](0019-federation-topology-and-attributes.md) | Federation at two facilities; attribute-authority ownership | Accepted | 2026-08-21 | Powel (team) | P0-7 |
@@ -45,7 +45,7 @@ Each row links to a one-file ADR with the full context.
 | [0030](0030-lifecycle-state-machine.md) | Lifecycle state machine: six-transition legal set, signature-before-legality on verify, in-memory consumed-id store consumed after signature check | Accepted | 2026-08-31 | Powel → all four | P3-1 |
 | [0031](0031-consent-as-gate.md) | Patient consent is a read-time gate over an already-wrapped record, not a wrap-time re-policy; revocation is a fresh patient-signed grant with `status=REVOKED` | Accepted | 2026-08-31 | Powel → all four | P3-2 |
 | [0032](0032-emergency-assertion-and-anti-replay.md) | Emergency assertion five-point validation and thread-safe anti-replay consumed-ID stores | Accepted | 2026-08-31 | Avaneeth → all four | P3-10, P3-11 |
-| [0033](0033-emergency-patient-identification.md) | Emergency patient identification is a name + DOB search in the clinician portal (PII stays in portal DB, never in the crypto store); slot as P4-11a | Proposed | 2026-09-02 | Team (Powel, Nandini, Ojas, Avaneeth) | Gap against §8 / P3-10 |
+| [0033](0033-emergency-patient-identification.md) | Emergency patient identification is a name + DOB search in the clinician portal (PII stays in portal DB, never in the crypto store); slot as P4-8a | Proposed | 2026-09-02 | Team (Powel, Nandini, Ojas, Avaneeth) | Gap against §8 / P3-10 |
 | [0034](0034-audit-hash-chain-and-share-release.md) | Audit hash-chain field-separator encoding, full-entry signing, and savepoint-based log-before-release | Accepted | 2026-09-03 | Ojas → all four | P3-3, P3-4 |
 | [0035](0035-time-boxed-emergency-access-and-auto-expiry.md) | Time-boxed emergency access with forced auto-expiry: simulated-timer dual signed transitions, forced key rotation, Phase-4 audit-callback seam | Accepted | 2026-09-03 | Powel → all four | P3-6 |
 | [0036](0036-revocation-by-key-rotation.md) | Revocation is full DEK re-generation + record re-encryption + policy re-compilation with generation++ + signed GRANTED→REVOKED event; not a status flag | Accepted | 2026-09-03 | Powel → all four | P3-7 |

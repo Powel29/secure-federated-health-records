@@ -1,4 +1,4 @@
-"""Clinician portal shell (P4-11). Request access, search, declare break-glass.
+"""Clinician portal shell (P4-8). Request access, search, declare break-glass.
 
 All actions are stubbed until their backends exist (lifecycle/breakglass). The
 clinician's own registration status is shown so they can see they hold no issued

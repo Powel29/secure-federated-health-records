@@ -6,11 +6,11 @@
 - **Task / source:** Gap surfaced against ARCHITECTURE.md §8 and P3-10 — the
   `EmergencyAssertion` is bound to a `patient_id`, but nothing in the plan
   said how the clinician at Facility B obtains that `patient_id` for an
-  unconscious patient. New task **P4-11a** slotted under Nandini's clinician
-  portal (P4-11).
+  unconscious patient. New task **P4-8a** slotted under Nandini's clinician
+  portal (P4-8).
 - **Affects:** `portal/clinician/` (new patient-search view), a new
   `PatientDirectory` model in the portal, ARCHITECTURE.md §8 (break-glass
-  sequence gains an explicit step 0), WORKFLOW.md (new P4-11a row), and the
+  sequence gains an explicit step 0), WORKFLOW.md (new P4-8a row), and the
   audit chain (P3-13 gains a `patient.lookup` event type).
 
 ## Context
@@ -69,7 +69,7 @@ Load-bearing rules:
 - A new `PatientDirectory` model in the portal (given_name, family_name,
   date_of_birth, subject_id) and the seeding of it alongside the crypto
   store's synthetic patients.
-- A new clinician-portal search view (P4-11a, ~4h under Nandini) and an
+- A new clinician-portal search view (P4-8a, ~4h under Nandini) and an
   update to the existing break-glass declaration flow to accept a
   pre-populated `patient_id`.
 - A new `patient.lookup` audit event type — Ojas needs to add this to the

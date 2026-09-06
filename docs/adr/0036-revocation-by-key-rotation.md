@@ -87,7 +87,7 @@ the authorization layer above it decides whether it should run.
 
 - P3-9 (re-key search index on rotation) can consume `RevocationResult`
   to rotate index tokens.
-- P4-10 patient portal's "revoke" button has a real backend.
+- P4-7 patient portal's "revoke" button has a real backend.
 
 ## Alternatives considered
 
