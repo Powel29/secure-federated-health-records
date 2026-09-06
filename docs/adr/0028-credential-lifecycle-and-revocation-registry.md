@@ -1,6 +1,6 @@
 # ADR-0028: Credential Lifecycle and Revocation Registry
 
-- **Status:** Proposed
+- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping)
 - **Date:** 2026-08-30
 - **Deciders:** Avaneeth (author), Ojas, Powel → all four for ratification
 - **Task / source:** P2-6 (WORKFLOW.md); ARCHITECTURE §8 "Credential lifecycle"

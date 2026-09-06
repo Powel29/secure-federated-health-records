@@ -1,6 +1,6 @@
 # ADR-0016: Patient self-access via an owner attribute, not a dual-wrapped DEK
 
-- **Status:** Proposed
+- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping)
 - **Date:** 2026-08-21
 - **Deciders:** Powel → all four (patient-key custody touches `authority` and `ui`)
 - **Task / source:** P4-10 (patient portal), ARCHITECTURE §3 / §5; PROJECT §5A, ADR-0014

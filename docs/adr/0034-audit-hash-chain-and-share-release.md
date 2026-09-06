@@ -1,6 +1,6 @@
 # ADR-0034: Audit hash-chain encoding, full-entry signing, and savepoint-based log-before-release
 
-- **Status:** Proposed
+- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping)
 - **Date:** 2026-09-03
 - **Deciders:** Ojas (P3-3/P3-4 owner) → all four for ratification
 - **Task / source:** P3-3, P3-4 (WORKFLOW.md); ARCHITECTURE §2 C10, §5 step 3, §7

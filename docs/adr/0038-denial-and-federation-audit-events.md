@@ -1,6 +1,6 @@
 # ADR-0038: Denial and federation audit events as fixed-shape helpers, not call-site edits
 
-- **Status:** Proposed
+- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping)
 - **Date:** 2026-09-06
 - **Deciders:** Ojas (P3-13 owner) → all four for ratification
 - **Task / source:** P3-13 (WORKFLOW.md); ARCHITECTURE §2 C10, §5 steps 0/3/5

@@ -1,6 +1,6 @@
 # ADR-0017: Contract additions for consent and correlation, and RequestEnvelope reconciliation
 
-- **Status:** Proposed — this is a `contract:` change and needs **all four**
+- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping)
   members' approval before merge (CONVENTIONS.md §3).
 - **Date:** 2026-08-21
 - **Deciders:** Powel → all four

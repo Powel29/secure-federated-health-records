@@ -1,6 +1,6 @@
 # ADR-0029: Simplify revocation registry to serial-keyed O(1) lookup
 
-- **Status:** Proposed
+- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping)
 - **Date:** 2026-08-30
 - **Deciders:** Avaneeth (author), Powel, Ojas → all four for ratification
 - **Task / source:** P2-6 review pass; ADR-0028 follow-up

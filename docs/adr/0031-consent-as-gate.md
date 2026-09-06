@@ -1,6 +1,6 @@
 # ADR-0031: Patient consent is a read-time gate, not a wrap-time re-policy
 
-- **Status:** Proposed
+- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping)
 - **Date:** 2026-08-31
 - **Deciders:** Powel (P3-2 owner) → all four for ratification
 - **Task / source:** P3-2 (WORKFLOW.md); ADR-0014 (consent model); ADR-0016

@@ -1,6 +1,6 @@
 # ADR-0036: Revocation by key-rotation, not by policy flag
 
-- **Status:** Proposed
+- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping)
 - **Date:** 2026-09-03
 - **Deciders:** Powel → all four
 - **Task / source:** P3-7 (`WORKFLOW.md`)

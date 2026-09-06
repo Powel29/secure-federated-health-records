@@ -1,6 +1,6 @@
 # ADR-0027: Search-token construction for the encrypted index (C12)
 
-- **Status:** Proposed
+- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping)
 - **Date:** 2026-08-30
 - **Deciders:** Nandini (author), Powel (reviewer) → all four for ratification
 - **Task / source:** P2-5 (WORKFLOW.md); ARCHITECTURE §2 C12

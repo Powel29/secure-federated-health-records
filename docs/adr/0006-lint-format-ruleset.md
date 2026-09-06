@@ -1,6 +1,6 @@
 # ADR-0006: Lint/format ruleset that enforces the crypto conventions in CI
 
-- **Status:** Proposed (needs Nandini's sign-off as T05/CI owner)
+- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping)
 - **Date:** 2026-08-12
 - **Deciders:** Powel (proposed) → Nandini (T05)
 - **Task / source:** T01, ratified under T05

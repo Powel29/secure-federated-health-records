@@ -1,6 +1,6 @@
 # ADR-0032: Emergency assertion validation and anti-replay stores
 
-- **Status:** Proposed
+- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping)
 - **Date:** 2026-08-31
 - **Deciders:** Tejas → all four for ratification
 - **Task / source:** P3-10, P3-11 (WORKFLOW.md); ARCHITECTURE §8

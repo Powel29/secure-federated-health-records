@@ -18,39 +18,39 @@ Each row links to a one-file ADR with the full context.
 | [0003](0003-simulated-hsm-timer.md) | Simulate the HSM/KMS emergency timer | Accepted | 2026-08-12 | Team | ARCHITECTURE §7, PROJECT §5 |
 | [0004](0004-src-layout-imports.md) | Python src-layout, bare-name imports, editable install | Accepted | 2026-08-12 | Powel | T01 |
 | [0005](0005-pinned-deps-single-source.md) | Pin runtime deps once in requirements.txt | Accepted | 2026-08-12 | Powel | T01 |
-| [0006](0006-lint-format-ruleset.md) | Lint/format ruleset enforcing crypto rules in CI | Proposed | 2026-08-12 | Powel → Nandini | T01 / T05 |
-| [0007](0007-pydantic-v2-contracts.md) | Pydantic v2 for the contract schemas | Proposed | 2026-08-12 | Powel → all four | T02 |
-| [0008](0008-contract-set-nine-schemas.md) | Freeze the contract set at nine schemas, not seven | Proposed | 2026-08-12 | Powel → all four | T02 |
-| [0009](0009-transitionevent-no-expiry-ts.md) | TransitionEvent carries no expiry_ts in v1 | Proposed | 2026-08-12 | Powel → all four | T02 |
+| [0006](0006-lint-format-ruleset.md) | Lint/format ruleset enforcing crypto rules in CI | Accepted | 2026-08-12 | Powel → Nandini | T01 / T05 |
+| [0007](0007-pydantic-v2-contracts.md) | Pydantic v2 for the contract schemas | Accepted | 2026-08-12 | Powel → all four | T02 |
+| [0008](0008-contract-set-nine-schemas.md) | Freeze the contract set at nine schemas, not seven | Accepted | 2026-08-12 | Powel → all four | T02 |
+| [0009](0009-transitionevent-no-expiry-ts.md) | TransitionEvent carries no expiry_ts in v1 | Accepted | 2026-08-12 | Powel → all four | T02 |
 | [0010](0010-crypto-federation-over-fhir.md) | Default to cryptographic-federation model over FHIR | Accepted | 2026-08-13 | Team (faculty-confirmed) | T03 |
 | [0011](0011-single-shared-store.md) | Single shared encrypted store, not per-facility storage | Accepted | 2026-08-18 | Team | ARCHITECTURE §5 |
 | [0012](0012-shrink-proxy-reencryption.md) | Shrink proxy re-encryption to one-direction re-wrap | Accepted | 2026-08-18 | Team | ARCHITECTURE §5 (pre) |
 | [0013](0013-dashboard-early-shell.md) | Dashboard built as an early shell that grows per phase | Superseded by ADR-0014 | 2026-08-18 | Team | ARCHITECTURE §2 C16 |
 | [0014](0014-web-portals-and-postgres.md) | Three web portals replace the dashboard; PostgreSQL as storage | Accepted | 2026-08-18 | Team | PROJECT §5A |
 | [0015](0015-strictness-pass-cuts.md) | Strictness-pass cuts (service-signing, plain-HTTP guard, BOLA middleware) | Accepted | 2026-08-18 | Team | PROJECT §4B |
-| [0016](0016-patient-self-access-as-attribute.md) | Patient self-access via an owner attribute, not a dual-wrapped DEK | Proposed | 2026-08-21 | Powel → all four | P4-10 |
-| [0017](0017-contract-additions-consent-correlation.md) | Contract additions for consent + correlation; RequestEnvelope reconciliation | Proposed (`contract:`) | 2026-08-21 | Powel → all four | ADR-0014/0015/0016 |
-| [0018](0018-crypto-spike-findings.md) | Crypto sanity-spike findings | Proposed | 2026-08-21 | Avaneeth → all four | P0-6 |
+| [0016](0016-patient-self-access-as-attribute.md) | Patient self-access via an owner attribute, not a dual-wrapped DEK | Accepted | 2026-08-21 | Powel → all four | P4-10 |
+| [0017](0017-contract-additions-consent-correlation.md) | Contract additions for consent + correlation; RequestEnvelope reconciliation | Accepted | 2026-08-21 | Powel → all four | ADR-0014/0015/0016 |
+| [0018](0018-crypto-spike-findings.md) | Crypto sanity-spike findings | Accepted | 2026-08-21 | Avaneeth → all four | P0-6 |
 | [0019](0019-federation-topology-and-attributes.md) | Federation at two facilities; attribute-authority ownership | Accepted | 2026-08-21 | Powel (team) | P0-7 |
 | [0020](0020-psycopg3-raw-sql-storage.md) | psycopg3 + raw SQL migrations for the store (no ORM) | Accepted | 2026-08-21 | Avaneeth (team) | P0-8 |
 | [0021](0021-early-portal-shells-and-registration.md) | Early portal shells + self-service registration (request-then-issue) | Accepted | 2026-08-21 | Team | portal shells |
-| [0022](0022-aes-gcm-no-caller-nonce.md) | Remove caller-supplied nonce from `aes_gcm_encrypt` | Proposed | 2026-08-25 | Phase-1 review → Powel | P1-1 review |
-| [0023](0023-pre-subgroup-validation.md) | Validate order-q subgroup membership in the ElGamal PRE | Proposed | 2026-08-25 | Phase-1 review → Ojas | P1-5 review |
+| [0022](0022-aes-gcm-no-caller-nonce.md) | Remove caller-supplied nonce from `aes_gcm_encrypt` | Accepted | 2026-08-25 | Phase-1 review → Powel | P1-1 review |
+| [0023](0023-pre-subgroup-validation.md) | Validate order-q subgroup membership in the ElGamal PRE | Accepted | 2026-08-25 | Phase-1 review → Ojas | P1-5 review |
 | [0024](0024-single-root-cross-certification.md) | Cross-certification via a single shared root, not a peer CA mesh | Accepted | 2026-08-30 | Avaneeth | P2-1, P2-2 |
 | [0025](0025-p2-1-p2-2-ownership-swap.md) | Swap ownership of P2-1/P2-2 from Avaneeth to Ojas | Accepted | 2026-08-30 | Ojas, Avaneeth | P2-1, P2-2 |
 | [0026](0026-policy-engine-cryptographic-enforcement.md) | Policy engine enforces access cryptographically (Shamir over attribute keys), not by boolean check alone | Accepted | 2026-08-30 | Powel | P2-3 |
-| [0027](0027-search-token-construction.md) | Search-token construction: deterministic HKDF over emergency key with versioned salt; per-record binding and normalisation deferred | Proposed | 2026-08-30 | Nandini, Powel → all four | P2-5 |
-| [0028](0028-credential-lifecycle-and-revocation-registry.md) | Credential lifecycle and revocation registry | Proposed | 2026-08-30 | Avaneeth (team) | P2-6 |
-| [0029](0029-simplify-revocation-registry.md) | Simplify revocation registry to serial-keyed O(1) lookup | Proposed | 2026-08-30 | Avaneeth (team) | P2-6 review |
-| [0030](0030-lifecycle-state-machine.md) | Lifecycle state machine: six-transition legal set, signature-before-legality on verify, in-memory consumed-id store consumed after signature check | Proposed | 2026-08-31 | Powel → all four | P3-1 |
-| [0031](0031-consent-as-gate.md) | Patient consent is a read-time gate over an already-wrapped record, not a wrap-time re-policy; revocation is a fresh patient-signed grant with `status=REVOKED` | Proposed | 2026-08-31 | Powel → all four | P3-2 |
-| [0032](0032-emergency-assertion-and-anti-replay.md) | Emergency assertion five-point validation and thread-safe anti-replay consumed-ID stores | Proposed | 2026-08-31 | Tejas → all four | P3-10, P3-11 |
+| [0027](0027-search-token-construction.md) | Search-token construction: deterministic HKDF over emergency key with versioned salt; per-record binding and normalisation deferred | Accepted | 2026-08-30 | Nandini, Powel → all four | P2-5 |
+| [0028](0028-credential-lifecycle-and-revocation-registry.md) | Credential lifecycle and revocation registry | Accepted | 2026-08-30 | Avaneeth (team) | P2-6 |
+| [0029](0029-simplify-revocation-registry.md) | Simplify revocation registry to serial-keyed O(1) lookup | Accepted | 2026-08-30 | Avaneeth (team) | P2-6 review |
+| [0030](0030-lifecycle-state-machine.md) | Lifecycle state machine: six-transition legal set, signature-before-legality on verify, in-memory consumed-id store consumed after signature check | Accepted | 2026-08-31 | Powel → all four | P3-1 |
+| [0031](0031-consent-as-gate.md) | Patient consent is a read-time gate over an already-wrapped record, not a wrap-time re-policy; revocation is a fresh patient-signed grant with `status=REVOKED` | Accepted | 2026-08-31 | Powel → all four | P3-2 |
+| [0032](0032-emergency-assertion-and-anti-replay.md) | Emergency assertion five-point validation and thread-safe anti-replay consumed-ID stores | Accepted | 2026-08-31 | Tejas → all four | P3-10, P3-11 |
 | [0033](0033-emergency-patient-identification.md) | Emergency patient identification is a name + DOB search in the clinician portal (PII stays in portal DB, never in the crypto store); slot as P4-11a | Proposed | 2026-09-02 | Team (Powel, Nandini, Ojas, Avaneeth) | Gap against §8 / P3-10 |
-| [0034](0034-audit-hash-chain-and-share-release.md) | Audit hash-chain field-separator encoding, full-entry signing, and savepoint-based log-before-release | Proposed | 2026-09-03 | Ojas → all four | P3-3, P3-4 |
-| [0035](0035-time-boxed-emergency-access-and-auto-expiry.md) | Time-boxed emergency access with forced auto-expiry: simulated-timer dual signed transitions, forced key rotation, Phase-4 audit-callback seam | Proposed | 2026-09-03 | Powel → all four | P3-6 |
-| [0036](0036-revocation-by-key-rotation.md) | Revocation is full DEK re-generation + record re-encryption + policy re-compilation with generation++ + signed GRANTED→REVOKED event; not a status flag | Proposed | 2026-09-03 | Powel → all four | P3-7 |
-| [0037](0037-revocation-authorization.md) | Revocation authorization check: only patient owner or home authority may revoke access; fails closed on unauthorized actor | Proposed | 2026-09-03 | Avaneeth → all four | P3-12 |
-| [0038](0038-denial-and-federation-audit-events.md) | Denial/federation audit events as fixed-shape `audit.events` helpers (not call-site edits into other owners' modules); patient_id hashed in discovery events | Proposed | 2026-09-06 | Ojas → all four | P3-13 |
+| [0034](0034-audit-hash-chain-and-share-release.md) | Audit hash-chain field-separator encoding, full-entry signing, and savepoint-based log-before-release | Accepted | 2026-09-03 | Ojas → all four | P3-3, P3-4 |
+| [0035](0035-time-boxed-emergency-access-and-auto-expiry.md) | Time-boxed emergency access with forced auto-expiry: simulated-timer dual signed transitions, forced key rotation, Phase-4 audit-callback seam | Accepted | 2026-09-03 | Powel → all four | P3-6 |
+| [0036](0036-revocation-by-key-rotation.md) | Revocation is full DEK re-generation + record re-encryption + policy re-compilation with generation++ + signed GRANTED→REVOKED event; not a status flag | Accepted | 2026-09-03 | Powel → all four | P3-7 |
+| [0037](0037-revocation-authorization.md) | Revocation authorization check: only patient owner or home authority may revoke access; fails closed on unauthorized actor | Accepted | 2026-09-03 | Avaneeth → all four | P3-12 |
+| [0038](0038-denial-and-federation-audit-events.md) | Denial/federation audit events as fixed-shape `audit.events` helpers (not call-site edits into other owners' modules); patient_id hashed in discovery events | Accepted | 2026-09-06 | Ojas → all four | P3-13 |
 
 ## Owed, not yet written
 
