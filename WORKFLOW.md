@@ -448,10 +448,10 @@ positive control: `test_share_released_only_after_successful_commit`.)*
 *Needs first:* P3-7.
 *Done when:* a correctly-signed but unauthorized revocation is rejected. ✅ *(`records.revocation.check_revocation_authorization` enforces patient owner or home authority check at step 0 of `revoke_record_access`; `UnauthorizedRevocationError` in `records.exceptions`; ADR-0037; unit tests in `tests/records/test_revocation.py`; negative security tests in `tests/security/test_phase3_revocation_security.py` prove correctly-signed requests from unauthorized clinicians or foreign authorities fail closed).*
 
-**P3-13 · Log denials and federation events** *(was P3-13)* — Ojas — 3h
+**P3-13 · Log denials and federation events** *(was P3-13)* — Ojas — 3h ✅
 *What:* Record access-denials and federation actions (policy checks, discovery, re-wraps) in the audit chain — identifiers and hashes only, never key material. This is what makes the admin portal's denial view possible.
 *Needs first:* P3-3.
-*Done when:* denials and federation events appear in the chain with no sensitive data leaked.
+*Done when:* denials and federation events appear in the chain with no sensitive data leaked. ✅ *(`src/audit/events.py`: `log_access_denied`, `log_federation_discovery` (hashes `patient_id`, never stores it raw), `log_federation_rewrap` — fixed-shape wrappers over `audit.chain.append_entry`, deliberately not call-site edits into `policy`/`consent`/`authority`/`records`/`breakglass`/`federation` per one-owner-per-module and those modules' own "caller logs" design; ADR-0038; unit tests in `tests/audit/test_events.py`; negative security tests in `tests/security/test_phase3_denial_federation_audit_security.py` drive real denials from `policy`, `consent`, and `records.revocation`, and real federation discovery/re-wrap results, into the chain and prove no attribute key, DEK, signature, or raw `patient_id` is ever persisted — plus a structural test that `append_entry` itself refuses raw key bytes in `event_data` before anything is written.)*
 
 **P3-14 · Record upload path** *(was P3-14)* — Avaneeth — 4h
 *What:* The ingest flow — a submitted record gets its keys minted, gets encrypted, gets indexed, gets a policy attached, and gets logged. **The policy attached at ingest carries the `owner:<patient_id>` OR-leaf** (ADR-0016 convention from P2-3) so every record is patient-readable from the moment it is created — this must be baked in here, not retrofitted in Phase 4.
