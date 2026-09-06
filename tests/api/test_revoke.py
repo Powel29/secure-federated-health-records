@@ -12,11 +12,9 @@ from __future__ import annotations
 
 import base64
 
-import pytest
 from contracts.enums import LifecycleState, PolicyNodeType
 from contracts.policy import Attribute, PolicyTree
 from crypto_core import (
-    generate_ec_keypair,
     private_key_to_pem,
 )
 
@@ -37,9 +35,7 @@ class TestHospitalRevocationEndpoint:
         from policy.engine import unwrap_dek_via_policy
 
         compiled = repo.get_compiled_policy(test_setup["record"].policy_id)
-        old_dek = unwrap_dek_via_policy(
-            compiled, attrs["attr_keyring"], old_wrapping
-        )
+        old_dek = unwrap_dek_via_policy(compiled, attrs["attr_keyring"], old_wrapping)
 
         pat_priv_pem = private_key_to_pem(pki["pat_priv"]).decode("ascii")
 
@@ -56,9 +52,7 @@ class TestHospitalRevocationEndpoint:
                 "actor_id": "patient-001",
                 "actor_signing_key_pem": pat_priv_pem,
                 "old_dek_b64": base64.b64encode(old_dek).decode("ascii"),
-                "new_clinical_policy": new_clinical_policy.model_dump(
-                    mode="json"
-                ),
+                "new_clinical_policy": new_clinical_policy.model_dump(mode="json"),
                 "owner_authority_id": "authority-net",
                 "attribute_keyring": attrs["b64_keyring"],
                 "correlation_id": "corr-rev-001",
@@ -69,14 +63,8 @@ class TestHospitalRevocationEndpoint:
         data = response.json()
         assert data["record_id"] == "rec-001"
         assert data["new_generation"] == old_wrapping.generation + 1
-        assert (
-            data["transition_event"]["from_state"]
-            == LifecycleState.GRANTED.value
-        )
-        assert (
-            data["transition_event"]["to_state"]
-            == LifecycleState.REVOKED.value
-        )
+        assert data["transition_event"]["from_state"] == LifecycleState.GRANTED.value
+        assert data["transition_event"]["to_state"] == LifecycleState.REVOKED.value
 
         # In-storage state must now be REVOKED
         current_state = repo.get_lifecycle_state("rec-001")
@@ -96,9 +84,7 @@ class TestHospitalRevocationEndpoint:
                 "actor_id": "dr-alice",  # Not patient and not home authority
                 "actor_signing_key_pem": alice_priv_pem,
                 "old_dek_b64": base64.b64encode(b"0" * 32).decode("ascii"),
-                "new_clinical_policy": attrs["clinical_policy"].model_dump(
-                    mode="json"
-                ),
+                "new_clinical_policy": attrs["clinical_policy"].model_dump(mode="json"),
                 "owner_authority_id": "authority-net",
                 "attribute_keyring": attrs["b64_keyring"],
             },
@@ -122,9 +108,7 @@ class TestHospitalRevocationEndpoint:
                 "actor_id": "patient-001",
                 "actor_signing_key_pem": pat_priv_pem,
                 "old_dek_b64": bad_dek_b64,
-                "new_clinical_policy": attrs["clinical_policy"].model_dump(
-                    mode="json"
-                ),
+                "new_clinical_policy": attrs["clinical_policy"].model_dump(mode="json"),
                 "owner_authority_id": "authority-net",
                 "attribute_keyring": attrs["b64_keyring"],
             },

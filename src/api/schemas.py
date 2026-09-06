@@ -8,13 +8,12 @@ payloads.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
-
 from contracts.consent import ConsentGrant, ConsentRequest
 from contracts.enums import LifecycleState, ReasonCode
 from contracts.lifecycle import TransitionEvent
 from contracts.messaging import EmergencyAssertion
 from contracts.policy import PolicyTree
+from pydantic import BaseModel, Field
 
 
 class HealthResponse(BaseModel):
@@ -281,4 +280,3 @@ class ErrorResponse(BaseModel):
     error: str
     detail: str
     denied_by: str | None = None
-

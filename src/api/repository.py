@@ -347,3 +347,4 @@ class PostgresStorageRepository:
 
     def get_consent_grant(self, grant_id: UUID) -> ConsentGrant | None:
         return self._consent_grants.get(grant_id)
+

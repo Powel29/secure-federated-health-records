@@ -462,11 +462,9 @@ positive control: `test_share_released_only_after_successful_commit`.)*
 
 ### Phase 4 — Integration and deployment
 
-**P4-1 · Hospital node service (API)** *(was P4-1)* — Avaneeth — 10h
 **P4-1 · Hospital node service (API)** *(was P4-1)* — Avaneeth — 10h ✅
 *What:* The web service for a hospital — endpoints for read, grant, revoke, break-glass, and search. No crypto in the route handlers; it just orchestrates.
 *Needs first:* P3-2, P3-7, P3-5.
-*Done when:* all endpoints work and no cryptography lives in a route handler.
 *Done when:* all endpoints work and no cryptography lives in a route handler. ✅ *(`src/api/`: `hospital.py` FastAPI app factory `create_hospital_app`, `schemas.py`, `repository.py` StorageRepository Protocol with InMemory and Postgres adapters; endpoints for read, consent, revoke, break-glass, discovery, search, emergency search, and ingest; AST-based negative invariant tests in `tests/api/test_no_crypto_invariant.py` prove 0 direct crypto imports or cipher calls; 26 tests in `tests/api/`).*
 
 **P4-2 · Audit + authority services** *(was P4-2)* — Ojas — 8h

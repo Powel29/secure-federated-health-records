@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import base64
 
-import pytest
 from contracts.enums import LifecycleState
 
 
@@ -38,9 +37,7 @@ class TestHospitalIngestEndpoint:
                 "plaintext_b64": plaintext_b64,
                 "patient_id": "patient-002",
                 "owner_authority_id": "authority-net",
-                "clinical_policy": attrs["clinical_policy"].model_dump(
-                    mode="json"
-                ),
+                "clinical_policy": attrs["clinical_policy"].model_dump(mode="json"),
                 "attribute_keyring": ingest_keyring,
                 "search_terms": ["hypertension", "systolic"],
                 "emergency_key_b64": em_key_b64,
@@ -61,9 +58,7 @@ class TestHospitalIngestEndpoint:
         assert rec.patient_id == "patient-002"
         assert rec.ciphertext != plaintext
 
-    def test_ingest_missing_emergency_key_for_search_terms_fails(
-        self, test_setup
-    ):
+    def test_ingest_missing_emergency_key_for_search_terms_fails(self, test_setup):
         """Providing search terms without an emergency key fails (400)."""
         client = test_setup["client"]
         attrs = test_setup["attrs"]
@@ -77,9 +72,7 @@ class TestHospitalIngestEndpoint:
                 "plaintext_b64": plaintext_b64,
                 "patient_id": "patient-003",
                 "owner_authority_id": "authority-net",
-                "clinical_policy": attrs["clinical_policy"].model_dump(
-                    mode="json"
-                ),
+                "clinical_policy": attrs["clinical_policy"].model_dump(mode="json"),
                 "attribute_keyring": attrs["b64_keyring"],
                 "search_terms": ["cardiac"],
                 # Missing emergency_key_b64

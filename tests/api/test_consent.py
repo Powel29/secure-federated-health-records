@@ -9,7 +9,6 @@ Verifies:
 
 from __future__ import annotations
 
-import pytest
 from consent.service import create_consent_grant, create_consent_request
 from contracts.enums import ConsentStatus
 from crypto_core import (

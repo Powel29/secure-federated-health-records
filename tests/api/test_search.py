@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import base64
 
-import pytest
-from contracts.enums import LifecycleState
 from search.service import derive_search_token
 
 
@@ -101,4 +99,3 @@ class TestHospitalSearchEndpoints:
 
         assert response.status_code == 403
         assert "Emergency search unavailable" in response.json()["detail"]
-
