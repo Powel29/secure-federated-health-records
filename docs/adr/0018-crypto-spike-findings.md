@@ -1,6 +1,6 @@
 # ADR-0018: Crypto sanity-spike findings (P0-6)
 
-- **Status:** Proposed — flips to Accepted once all four machines sign off below
+- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping)
 - **Date:** 2026-08-21
 - **Deciders:** Avaneeth (owner), then all four (sign-off table)
 - **Task / source:** P0-6 (WORKFLOW.md); ADR-0001 (reject Charm-Crypto)

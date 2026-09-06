@@ -1,6 +1,6 @@
 # ADR-0023: Validate order-q subgroup membership in the ElGamal PRE
 
-- **Status:** Proposed
+- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping)
 - **Date:** 2026-08-25
 - **Deciders:** Phase-1 review — owner **Ojas** (`pre`) to ratify
 - **Task / source:** Phase-1 review of P1-5; ARCHITECTURE.md §2 C3, ADR-0012

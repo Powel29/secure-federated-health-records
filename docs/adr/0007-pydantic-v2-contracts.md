@@ -1,6 +1,6 @@
 # ADR-0007: Pydantic v2 for the contract schemas
 
-- **Status:** Proposed (part of the all-four contract-freeze PR)
+- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping)
 - **Date:** 2026-08-12
 - **Deciders:** Powel (proposed) → all four (CONVENTIONS §3 freeze)
 - **Task / source:** T02

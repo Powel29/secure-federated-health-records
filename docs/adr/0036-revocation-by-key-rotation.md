@@ -1,6 +1,6 @@
 # ADR-0036: Revocation by key-rotation, not by policy flag
 
-- **Status:** Proposed
+- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping)
 - **Date:** 2026-09-03
 - **Deciders:** Powel → all four
 - **Task / source:** P3-7 (`WORKFLOW.md`)
@@ -87,7 +87,7 @@ the authorization layer above it decides whether it should run.
 
 - P3-9 (re-key search index on rotation) can consume `RevocationResult`
   to rotate index tokens.
-- P4-10 patient portal's "revoke" button has a real backend.
+- P4-7 patient portal's "revoke" button has a real backend.
 
 ## Alternatives considered
 

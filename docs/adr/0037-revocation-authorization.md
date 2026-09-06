@@ -1,6 +1,6 @@
 # ADR-0037: Revocation authorization check: only patient owner or home authority may revoke access
 
-- **Status:** Proposed
+- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping)
 - **Date:** 2026-09-03
 - **Deciders:** Avaneeth → all four
 - **Task / source:** P3-12 (`WORKFLOW.md`)

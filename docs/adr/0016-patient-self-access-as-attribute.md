@@ -1,10 +1,10 @@
 # ADR-0016: Patient self-access via an owner attribute, not a dual-wrapped DEK
 
-- **Status:** Proposed
+- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping)
 - **Date:** 2026-08-21
 - **Deciders:** Powel → all four (patient-key custody touches `authority` and `ui`)
-- **Task / source:** P4-10 (patient portal), ARCHITECTURE §3 / §5; PROJECT §5A, ADR-0014
-- **Affects:** `policy` (C7), `authority` (C6), `records` (C8 ingest), `ui` patient portal (P4-10); relates to ADR-0014
+- **Task / source:** P4-7 (patient portal), ARCHITECTURE §3 / §5; PROJECT §5A, ADR-0014
+- **Affects:** `policy` (C7), `authority` (C6), `records` (C8 ingest), `ui` patient portal (P4-7); relates to ADR-0014
 
 ## Context
 
@@ -14,7 +14,7 @@ per record, the DEK wrapped to the root secret of an access-policy tree
 unwrap the DEK (ARCHITECTURE §5, normal read).
 
 Nothing in the design says how a **patient reads their own record**. The patient
-portal (P4-10) currently only lets a patient approve/deny/revoke grants and view
+portal (P4-7) currently only lets a patient approve/deny/revoke grants and view
 access history — it has no decrypt-and-view path, and per ADR-0014 the portal
 *identifies* the patient but must never *decide* access or hold keys. So for a
 patient to see their own uploaded PDF, they must be a party that can satisfy the
@@ -59,11 +59,11 @@ unwrap — which is the project's central unification claim (PROJECT §1).
   every rotation — an easy fail-*open* bug if forgotten.
 - **ADR-0014 boundary holds.** Login says who is asking; the home authority's
   release of the owner attribute (not the portal) is what enables the unwrap.
-- **Scope grows for P4-10.** A decrypt-and-render (stream) view is added to the
+- **Scope grows for P4-7.** A decrypt-and-render (stream) view is added to the
   patient portal; the matching `WORKFLOW.md` line records it so it is not
   smuggled in past the task's "Done when."
 - **Sequencing — this is not only a Phase 4 change.** Although the *view* is
-  P4-10, the owner-leaf convention must be honored where policies are authored
+  P4-7, the owner-leaf convention must be honored where policies are authored
   and records are ingested: attribute issuance (P2-2), policy-engine authoring
   (P2-3), and the record upload path (P3-14). If records are ingested in Phase
   2–3 without the `owner` leaf, the Phase 4 view has nothing to reconstruct

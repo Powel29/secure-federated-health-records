@@ -1,6 +1,6 @@
 # ADR-0038: Denial and federation audit events as fixed-shape helpers, not call-site edits
 
-- **Status:** Proposed
+- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping)
 - **Date:** 2026-09-06
 - **Deciders:** Ojas (P3-13 owner) → all four for ratification
 - **Task / source:** P3-13 (WORKFLOW.md); ARCHITECTURE §2 C10, §5 steps 0/3/5
@@ -66,7 +66,7 @@ Three event types, three fixed schemas:
 - `federation.rewrap`: `record_id`, `source_facility_id`, `target_actor_id`.
 
 Fixing the shape (rather than letting each future caller invent its own
-dict) is what makes the admin/audit portal's denial view (P4-12) a query
+dict) is what makes the admin/audit portal's denial view (P4-9) a query
 over a known schema instead of an ad hoc scan of free-form JSON.
 
 ### 3. `patient_id` is hashed, not stored raw, in federation discovery events
@@ -112,7 +112,7 @@ redundant bytes-scanning guard on top of a check that already exists.
 **What this makes work.** Any current or future caller (tests today; the
 Phase 4 API layer once it exists) can log a denial or federation event with
 three lines of code and a documented, minimal-leakage shape. The admin/audit
-portal (P4-12) has a fixed schema to query for its denial view.
+portal (P4-9) has a fixed schema to query for its denial view.
 
 **What this does not do.** It does not make production denials in
 `policy`/`consent`/`authority`/`records` or federation actions in

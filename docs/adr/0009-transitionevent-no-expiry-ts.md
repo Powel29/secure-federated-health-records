@@ -1,6 +1,6 @@
 # ADR-0009: TransitionEvent carries no expiry_ts in the v1 freeze
 
-- **Status:** Proposed (part of the all-four contract-freeze PR)
+- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping)
 - **Date:** 2026-08-12
 - **Deciders:** Powel (proposed) → all four (CONVENTIONS §3 freeze)
 - **Task / source:** T02

@@ -1,6 +1,6 @@
 # ADR-0030: Key-lifecycle state machine — transition set and consumed-id defense
 
-- **Status:** Proposed
+- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping)
 - **Date:** 2026-08-31
 - **Deciders:** Powel (P3-1 owner) → all four for ratification
 - **Task / source:** P3-1 (WORKFLOW.md); ARCHITECTURE §2 C9, §5 flows

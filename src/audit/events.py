@@ -1,6 +1,6 @@
 """Typed audit events for access denials and federation actions (P3-13,
 ARCHITECTURE.md §5 step 1 "log-before-release" family; admin/audit portal
-read surface, WORKFLOW.md P4-12).
+read surface, WORKFLOW.md P4-9).
 
 ``audit.chain.append_entry`` accepts any ``event_type`` string and an
 arbitrary ``event_data`` dict -- correct by design (ADR-0034), since it lets
@@ -56,7 +56,7 @@ EVENT_FEDERATION_REWRAP = "federation.rewrap"
 # Suggested, non-exhaustive values for ``log_access_denied``'s ``denied_by`` --
 # free text is still accepted (a future denial source needs no contract
 # change), but callers that match one of these should use the constant so the
-# admin portal's denial view (P4-12) can filter reliably.
+# admin portal's denial view (P4-9) can filter reliably.
 DENIED_BY_POLICY = "policy"
 DENIED_BY_CONSENT = "consent"
 DENIED_BY_CREDENTIAL = "credential_authority"

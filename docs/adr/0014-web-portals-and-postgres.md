@@ -21,7 +21,10 @@ Team preference for a role-based web UI over the terminal dashboard.
 
 ## Consequences — and the guardrail that keeps novelty intact
 - The dashboard tasks (old P0-9, P1-7) are removed; new portal tasks P4-10/11/12
-  and a notification task P4-13 are added.
+  and a notification task P4-13 are added. *(These were later renumbered to
+  P4-7/8/9 and P4-10 at Phase-3 close to eliminate the P4-7..P4-9 gap; see the
+  current WORKFLOW.md. This paragraph keeps the original numbers as the
+  historical record of what this ADR authorised.)*
 - **Critical boundary:** the portals and Postgres **store data and identify
   users; they never decide access.** Decryption is still gated by the Shamir
   threshold and the policy/key wrappings. Django login answers "who is asking",

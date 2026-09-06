@@ -1,6 +1,6 @@
 # ADR-0031: Patient consent is a read-time gate, not a wrap-time re-policy
 
-- **Status:** Proposed
+- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping)
 - **Date:** 2026-08-31
 - **Deciders:** Powel (P3-2 owner) → all four for ratification
 - **Task / source:** P3-2 (WORKFLOW.md); ADR-0014 (consent model); ADR-0016
@@ -106,7 +106,7 @@ avoid stepping on the rekey path. Deferring it explicitly.
   gets the plaintext (the crypto succeeds). This is why
   `read_record_under_consent` exists as the composed helper: the paper's
   claim is "the *documented* read path enforces consent," and the tests
-  cover that path. Portal integration in P4-10 / P4-11 must route through
+  cover that path. Portal integration in P4-7 / P4-8 must route through
   the composed helper, not around it.
 - Grant `grant_id` uniqueness is not enforced by this module. `ConsentGrant`
   is a value object; whoever persists grants (the audit chain in P3-3, or a
