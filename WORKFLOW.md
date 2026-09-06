@@ -375,7 +375,7 @@ everyone has switched over.
 *Needs first:* P3-1, P2-3.
 *Done when:* a patient-issued grant is signed and scoped; an approved doctor reads within scope; an unauthorized one can't; and only the patient can revoke it. ✅ *(`src/consent/`: `service.py`, `exceptions.py`; consent is a read-time gate over the already-wrapped record per ADR-0031; revocation is a fresh patient-signed grant with `status=REVOKED`; unit tests in `tests/consent/test_consent.py`; end-to-end + negative security tests in `tests/security/test_phase3_consent_security.py` cover approved read, unauthorized doctor denied, out-of-scope denied, expired/denied/revoked denied, forged signature denied, non-patient revocation denied.)*
 
-**P3-3 · The tamper-proof audit log** *(was P3-3)* — Ojas — 10h
+**P3-3 · The tamper-proof audit log** *(was P3-3)* — Ojas — 10h ✅
 *What:* A hash-chained, signed log where each entry locks in the one before it, so tampering is detectable.
 *Needs first:* P1-2, P0-8.
 *Done when:* the full chain verifies and any tampered entry is caught. ✅
@@ -386,7 +386,7 @@ canonical-encoding and full-entry-signing decisions; unit tests in
 `tests/security/test_phase3_audit_security.py` cover tampered event_data,
 a broken prev_hash link, and a replayed chain position.)*
 
-**P3-4 · Log-before-release (the headline)** *(was P3-4)* — Ojas — 8h
+**P3-4 · Log-before-release (the headline)** *(was P3-4)* — Ojas — 8h ✅
 *What:* Make the audit service hand over its emergency key-share *only after* it has committed the log entry. No log, no share — this is what makes logging a hard precondition of emergency access.
 *Needs first:* P3-3, P1-3.
 *Done when:* the share is released only after the log commits, and a failed log-write means no share (proven by a negative test). ✅
@@ -399,32 +399,32 @@ the negative test. Negative test:
 `tests/security/test_phase3_audit_security.py::test_breakglass_share_not_released_when_log_commit_fails`;
 positive control: `test_share_released_only_after_successful_commit`.)*
 
-**P3-5 · Break-glass emergency access** *(was P3-5)* — Powel — 14h
+**P3-5 · Break-glass emergency access** *(was P3-5)* — Powel — 14h ✅
 *What:* The emergency unlock. Three parties each hold a share (doctor, patient's home authority, audit service); any two rebuild the emergency key. One share alone is never enough — not even the audit service's. On unlock, the record key is re-wrapped to the emergency doctor without decrypting it in the open.
 *Needs first:* P3-4, P3-1, P2-2, P1-5.
 *Done when:* two shares unlock, one fails, the audit service alone can't open a record, and the doctor gets a usable key that was never exposed.
 
-**P3-6 · Time-boxed access + auto-expiry** *(was P3-6)* — Powel — 10h
+**P3-6 · Time-boxed access + auto-expiry** *(was P3-6)* — Powel — 10h ✅
 *What:* Make emergency access expire on its own after a set time, closing via a forced key-rotation that needs no admin action. The timer length is adjustable (short for demos, realistic for the paper).
 *Needs first:* P3-5.
 *Done when:* emergency access expires with no admin action, and the expiry is itself a signed, logged event.
 
-**P3-7 · Revocation by key-rotation** *(was P3-7)* — Avaneeth — 8h
+**P3-7 · Revocation by key-rotation** *(was P3-7)* — Powel *(taken from Avaneeth)* — 8h ✅
 *What:* Taking access away — rotate the record's key and rebuild the wrappings so a revoked user can't read future versions.
 *Needs first:* P3-1, P1-4.
 *Done when:* after revocation the revoked user cannot decrypt (proven by a negative test).
 
-**P3-8 · Emergency-only search** *(was P3-8)* — Nandini — 10h
+**P3-8 · Emergency-only search** *(was P3-8)* — Nandini — 10h ✅
 *What:* Wire search so it only works during emergency access — the search key is derived from the emergency key, so it dies when the emergency expires.
 *Needs first:* P2-5, P3-6.
 *Done when:* search works while emergency access is open and stops working once it expires (negative test).
 
-**P3-9 · Re-key the search index on rotation** *(was P3-9)* — Nandini — 8h
+**P3-9 · Re-key the search index on rotation** *(was P3-9)* — Nandini — 8h ✅
 *What:* When a record's key rotates (revocation or expiry), rebuild its search index so old search keys stop working.
 *Needs first:* P2-5, P3-7.
 *Done when:* after rotation, stale search keys match nothing and no plaintext leaks during re-indexing.
 
-**P3-9a · Post-merge cleanup: ingest negative tests + federation move + hazmat aliases** *(new)* — Nandini — 5h
+**P3-9a · Post-merge cleanup: ingest negative tests + federation move + hazmat aliases** *(new)* — Nandini — 5h ✅
 *What:* Consolidated code-only fixes on already-merged Phase-3 work:
 - Add `tests/security/test_phase3_ingest_security.py` proving `records/ingest.py` fails closed on: missing owner leaf on the policy tree (ADR-0016 invariant), `search_terms` provided without an `emergency_key`, wrong `owner_authority_id`, and tampered-plaintext / cross-record-DEK-reuse attempts. Closes the biggest negative-test gap on the tree — P3-14 shipped with happy-path tests only.
 - Move `find_record_ids_by_patient` from `src/storage/repositories.py` to a new `src/federation/discovery.py` so C13 lives in the module ARCHITECTURE.md §2 assigns it to; update call sites; re-export from `src/federation/__init__.py`.
@@ -433,12 +433,12 @@ positive control: `test_share_released_only_after_successful_commit`.)*
 *Needs first:* P3-1, P3-2, P3-10, P3-14 (all done). Independent of P3-8 and P3-9, so it can run in parallel with them or immediately after.
 *Done when:* the new negative tests pass; no direct `cryptography.hazmat` imports outside `src/crypto_core/` (verified by grep); federated discovery lives under `src/federation/`; ruff, black, and full pytest are green.
 
-**P3-10 · Emergency assertion** *(was P3-10)* — Tejas *(taken from Powel)* — 6h
+**P3-10 · Emergency assertion** *(was P3-10)* — Avaneeth *(taken from Powel)* — 6h ✅
 *What:* Define what "declaring an emergency" actually is — a signed statement binding the patient, doctor, hospital, time, reason, and an expiry. Break-glass won't start without a valid one.
 *Needs first:* P3-1, P2-1.
 *Done when:* unsigned or unbound assertions are rejected and break-glass refuses to proceed without one. ✅ *(`src/breakglass/`: `assertion.py`, `exceptions.py`; five-point validation sequence per ARCHITECTURE §8 and ADR-0032; unit tests in `tests/breakglass/test_assertion.py`; negative security tests in `tests/security/test_phase3_assertion_security.py` cover field tampering, untrusted cert, clinician mismatch, facility mismatch, expiry, and replay.)*
 
-**P3-11 · Replay protection** *(was P3-11)* — Tejas *(taken from Powel)* — 3h
+**P3-11 · Replay protection** *(was P3-11)* — Avaneeth *(taken from Powel)* — 3h ✅
 *What:* Give emergency requests, share requests, and transition events one-time IDs so a captured request can't be replayed for repeat access.
 *Needs first:* P3-10.
 *Done when:* a replayed request is rejected, not re-run. ✅ *(`src/breakglass/`: `replay.py` (thread-safe `ConsumedAssertionIds`, `ConsumedRequestIds`), `envelopes.py` (signed `RequestEnvelope` creation and verification with recipient binding); ADR-0032; unit tests in `tests/breakglass/test_replay.py` and `tests/breakglass/test_envelopes.py`; negative security tests in `tests/security/test_phase3_assertion_security.py` cover replay rejection and the ordering invariant that forged messages cannot burn legitimate IDs.)*
@@ -453,7 +453,7 @@ positive control: `test_share_released_only_after_successful_commit`.)*
 *Needs first:* P3-3.
 *Done when:* denials and federation events appear in the chain with no sensitive data leaked. ✅ *(`src/audit/events.py`: `log_access_denied`, `log_federation_discovery` (hashes `patient_id`, never stores it raw), `log_federation_rewrap` — fixed-shape wrappers over `audit.chain.append_entry`, deliberately not call-site edits into `policy`/`consent`/`authority`/`records`/`breakglass`/`federation` per one-owner-per-module and those modules' own "caller logs" design; ADR-0038; unit tests in `tests/audit/test_events.py`; negative security tests in `tests/security/test_phase3_denial_federation_audit_security.py` drive real denials from `policy`, `consent`, and `records.revocation`, and real federation discovery/re-wrap results, into the chain and prove no attribute key, DEK, signature, or raw `patient_id` is ever persisted — plus a structural test that `append_entry` itself refuses raw key bytes in `event_data` before anything is written.)*
 
-**P3-14 · Record upload path** *(was P3-14)* — Avaneeth — 4h
+**P3-14 · Record upload path** *(was P3-14)* — Avaneeth — 4h ✅
 *What:* The ingest flow — a submitted record gets its keys minted, gets encrypted, gets indexed, gets a policy attached, and gets logged. **The policy attached at ingest carries the `owner:<patient_id>` OR-leaf** (ADR-0016 convention from P2-3) so every record is patient-readable from the moment it is created — this must be baked in here, not retrofitted in Phase 4.
 *Needs first:* P1-5, P2-5.
 *Done when:* uploading a record produces an encrypted, indexed, policy-attached record (with the owner leaf present) and a log entry.
@@ -491,6 +491,8 @@ positive control: `test_share_released_only_after_successful_commit`.)*
 *What:* The capture harness and the two modes (plain-HTTP and TLS) that record network traffic for the required traffic-analysis module.
 *Needs first:* P4-3.
 *Done when:* both modes produce a capture file per scenario.
+
+> **Numbering note — P4-7, P4-8, P4-9 are intentionally unused.** These slots were reserved during the portal-tasks restructure (ADR-0014, when the terminal dashboard was replaced by three web portals) and left free for late-Phase-4 insertions if any surface. P4-11a already occupies one such slot. Don't renumber P4-10..P4-13 down — cross-references in ADRs, commits, and dependency lines above rely on the current numbers.
 
 **P4-10 · Patient portal (web UI)** *(new — replaces dashboard)* — Avaneeth — 10h
 *What:* The patient's web page (Django + Bootstrap): see who has access to their records, approve or deny incoming access requests, revoke a grant, and view the history of who accessed what — including any break-glass. **Also view their own uploaded records:** the patient reads a record via the `owner:<patient_id>` attribute leaf on the record's policy tree (ADR-0016), served by the home authority; the decrypted PDF is streamed to the browser for that request only, never persisted or logged. This is the patient half of the three-portal UI that replaces the old terminal dashboard.
