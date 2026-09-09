@@ -20,7 +20,7 @@ from __future__ import annotations
 import base64
 import binascii
 from datetime import timedelta
-from typing import Annotated
+from typing import Annotated, Any, Callable
 from uuid import uuid4
 
 from audit.events import (
@@ -147,6 +147,40 @@ def get_audit_service_url(request: Request) -> str | None:
 AuditUrlDep = Annotated[str | None, Depends(get_audit_service_url)]
 
 
+def _log_event(
+    audit_url: str | None,
+    repo: StorageRepository,
+    audit_key: ECPrivateKey | None,
+    *,
+    event_type: str,
+    event_data: dict[str, Any],
+    actor_id: str,
+    correlation_id: str,
+    in_process_logger: Callable[..., Any] | None = None,
+    **in_process_kwargs: Any,
+) -> None:
+    """Log an event to the standalone Audit Service over HTTP or in-process fallback."""
+    if audit_url:
+        try:
+            append_entry(
+                audit_url,
+                event_type=event_type,
+                event_data=event_data,
+                actor_id=actor_id,
+                correlation_id=correlation_id,
+            )
+        except Exception:
+            pass
+    elif in_process_logger and isinstance(repo, PostgresStorageRepository) and audit_key:
+        in_process_logger(
+            repo._conn,
+            actor_id=actor_id,
+            correlation_id=correlation_id,
+            signing_key=audit_key,
+            **in_process_kwargs,
+        )
+
+
 def _log_denial(
     audit_url: str | None,
     repo: StorageRepository,
@@ -159,33 +193,25 @@ def _log_denial(
     actor_id: str,
     correlation_id: str,
 ) -> None:
-    if audit_url:
-        try:
-            append_entry(
-                audit_url,
-                event_type=EVENT_ACCESS_DENIED,
-                event_data={
-                    "record_id": record_id,
-                    "requester_id": requester_id,
-                    "denied_by": denied_by,
-                    "reason": reason,
-                },
-                actor_id=actor_id,
-                correlation_id=correlation_id,
-            )
-        except Exception:
-            pass
-    elif isinstance(repo, PostgresStorageRepository) and audit_key:
-        log_access_denied(
-            repo._conn,
-            record_id=record_id,
-            requester_id=requester_id,
-            denied_by=denied_by,
-            reason=reason,
-            actor_id=actor_id,
-            correlation_id=correlation_id,
-            signing_key=audit_key,
-        )
+    _log_event(
+        audit_url,
+        repo,
+        audit_key,
+        event_type=EVENT_ACCESS_DENIED,
+        event_data={
+            "record_id": record_id,
+            "requester_id": requester_id,
+            "denied_by": denied_by,
+            "reason": reason,
+        },
+        actor_id=actor_id,
+        correlation_id=correlation_id,
+        in_process_logger=log_access_denied,
+        record_id=record_id,
+        requester_id=requester_id,
+        denied_by=denied_by,
+        reason=reason,
+    )
 
 
 def _log_discovery(
@@ -199,32 +225,24 @@ def _log_discovery(
     actor_id: str,
     correlation_id: str,
 ) -> None:
-    if audit_url:
-        try:
-            append_entry(
-                audit_url,
-                event_type=EVENT_FEDERATION_DISCOVERY,
-                event_data={
-                    "patient_id_hash": sha256_digest(patient_id.encode("utf-8")).hex(),
-                    "requester_id": requester_id,
-                    "record_count": len(record_ids),
-                    "record_ids": list(record_ids),
-                },
-                actor_id=actor_id,
-                correlation_id=correlation_id,
-            )
-        except Exception:
-            pass
-    elif isinstance(repo, PostgresStorageRepository) and audit_key:
-        log_federation_discovery(
-            repo._conn,
-            patient_id=patient_id,
-            requester_id=requester_id,
-            record_ids=record_ids,
-            actor_id=actor_id,
-            correlation_id=correlation_id,
-            signing_key=audit_key,
-        )
+    _log_event(
+        audit_url,
+        repo,
+        audit_key,
+        event_type=EVENT_FEDERATION_DISCOVERY,
+        event_data={
+            "patient_id_hash": sha256_digest(patient_id.encode("utf-8")).hex(),
+            "requester_id": requester_id,
+            "record_count": len(record_ids),
+            "record_ids": list(record_ids),
+        },
+        actor_id=actor_id,
+        correlation_id=correlation_id,
+        in_process_logger=log_federation_discovery,
+        patient_id=patient_id,
+        requester_id=requester_id,
+        record_ids=record_ids,
+    )
 
 
 def _log_rewrap(
@@ -238,31 +256,23 @@ def _log_rewrap(
     actor_id: str,
     correlation_id: str,
 ) -> None:
-    if audit_url:
-        try:
-            append_entry(
-                audit_url,
-                event_type=EVENT_FEDERATION_REWRAP,
-                event_data={
-                    "record_id": record_id,
-                    "source_facility_id": source_facility_id,
-                    "target_actor_id": target_actor_id,
-                },
-                actor_id=actor_id,
-                correlation_id=correlation_id,
-            )
-        except Exception:
-            pass
-    elif isinstance(repo, PostgresStorageRepository) and audit_key:
-        log_federation_rewrap(
-            repo._conn,
-            record_id=record_id,
-            source_facility_id=source_facility_id,
-            target_actor_id=target_actor_id,
-            actor_id=actor_id,
-            correlation_id=correlation_id,
-            signing_key=audit_key,
-        )
+    _log_event(
+        audit_url,
+        repo,
+        audit_key,
+        event_type=EVENT_FEDERATION_REWRAP,
+        event_data={
+            "record_id": record_id,
+            "source_facility_id": source_facility_id,
+            "target_actor_id": target_actor_id,
+        },
+        actor_id=actor_id,
+        correlation_id=correlation_id,
+        in_process_logger=log_federation_rewrap,
+        record_id=record_id,
+        source_facility_id=source_facility_id,
+        target_actor_id=target_actor_id,
+    )
 
 
 def _parse_attribute_keyring(
@@ -848,26 +858,19 @@ def create_hospital_app(
                     repo.get_wrapping_for_record(
                         record_id, wrapped_for=record.policy_id
                     )
-                    or repo.get_wrapping_for_record(record_id)
-                )
-                emergency_wrapping = (
-                    repo.get_wrapping_for_record(
-                        record_id, wrapped_for="emergency"
-                    )
                     or wrapping
                 )
-                if baseline_wrapping and emergency_wrapping:
-                    exp_manager.register_session(
-                        record_id=record_id,
-                        actor_id=payload.assertion.clinician_id,
-                        correlation_id=corr_id,
-                        emergency_key=unlock_result.emergency_key,
-                        baseline_wrapping_key=base_wrapping_key,
-                        baseline_wrapping=baseline_wrapping,
-                        emergency_wrapping=emergency_wrapping,
-                        current_record=record,
-                        duration_seconds=payload.emergency_duration_seconds,
-                    )
+                exp_manager.register_session(
+                    record_id=record_id,
+                    actor_id=payload.assertion.clinician_id,
+                    correlation_id=corr_id,
+                    emergency_key=unlock_result.emergency_key,
+                    baseline_wrapping_key=base_wrapping_key,
+                    baseline_wrapping=baseline_wrapping,
+                    emergency_wrapping=wrapping,
+                    current_record=record,
+                    duration_seconds=payload.emergency_duration_seconds,
+                )
             except Exception as exc:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,

@@ -20,9 +20,8 @@ Usage::
     # Run against a running federation (local run_local.py or Docker Compose):
     python -m deploy.run_scenario
 
-    # Run against custom config or in-process:
+    # Run against custom config:
     python -m deploy.run_scenario --config deploy/pki/federation.json
-    python -m deploy.run_scenario --in-process
 """
 
 from __future__ import annotations
@@ -74,6 +73,16 @@ def _unwrap_rewrapped_dek(rewrapped_dek: bytes, pre_priv: int, record_id: str) -
         nonce=nonce,
         ciphertext=ciphertext,
         aad=record_id.encode("utf-8"),
+    )
+
+
+def _parse_ca_credentials(ca_data: Any) -> tuple[Any, Any]:
+    """Extract and parse private key and certificate from CA data object or dict."""
+    priv_pem = getattr(ca_data, "ca_private_key_pem", None) or ca_data["ca_private_key_pem"]
+    cert_pem = getattr(ca_data, "ca_certificate_pem", None) or ca_data["ca_certificate_pem"]
+    return (
+        private_key_from_pem(priv_pem.encode("ascii")),
+        certificate_from_pem(cert_pem.encode("ascii")),
     )
 
 
@@ -140,34 +149,22 @@ def run_scenario(
     # Load or generate facility CA and root material
     if config and "root_certificate_pem" in config:
         root_cert_pem = config["root_certificate_pem"]
-        fa_ca_priv = private_key_from_pem(
-            config["facilities"]["facility-a"]["ca_private_key_pem"].encode("ascii")
+        fa_ca_priv, fa_ca_cert = _parse_ca_credentials(
+            config["facilities"]["facility-a"]
         )
-        fa_ca_cert = certificate_from_pem(
-            config["facilities"]["facility-a"]["ca_certificate_pem"].encode("ascii")
-        )
-        fb_ca_priv = private_key_from_pem(
-            config["facilities"]["facility-b"]["ca_private_key_pem"].encode("ascii")
-        )
-        fb_ca_cert = certificate_from_pem(
-            config["facilities"]["facility-b"]["ca_certificate_pem"].encode("ascii")
+        fb_ca_priv, fb_ca_cert = _parse_ca_credentials(
+            config["facilities"]["facility-b"]
         )
     else:
         from deploy.bootstrap import generate_federation_pki
 
         root_anchor, fed_pki = generate_federation_pki(["facility-a", "facility-b"])
         root_cert_pem = fed_pki.root_certificate_pem
-        fa_ca_priv = private_key_from_pem(
-            fed_pki.facilities["facility-a"].ca_private_key_pem.encode("ascii")
+        fa_ca_priv, fa_ca_cert = _parse_ca_credentials(
+            fed_pki.facilities["facility-a"]
         )
-        fa_ca_cert = certificate_from_pem(
-            fed_pki.facilities["facility-a"].ca_certificate_pem.encode("ascii")
-        )
-        fb_ca_priv = private_key_from_pem(
-            fed_pki.facilities["facility-b"].ca_private_key_pem.encode("ascii")
-        )
-        fb_ca_cert = certificate_from_pem(
-            fed_pki.facilities["facility-b"].ca_certificate_pem.encode("ascii")
+        fb_ca_priv, fb_ca_cert = _parse_ca_credentials(
+            fed_pki.facilities["facility-b"]
         )
 
     # Dr. Bob @ Facility A (Cardiologist)
@@ -514,11 +511,6 @@ def main() -> int:
         type=float,
         default=5.0,
         help="Emergency duration time-box in seconds.",
-    )
-    parser.add_argument(
-        "--in-process",
-        action="store_true",
-        help="Run the scenario against in-process ephemeral test servers.",
     )
     args = parser.parse_args()
 
