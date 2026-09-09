@@ -70,7 +70,6 @@ from crypto_core import (
 from crypto_core.exceptions import InvalidSignatureError, KeyFormatError
 from crypto_core.types import ECPrivateKey
 from fastapi import Depends, FastAPI, HTTPException, Request, status
-from api.audit_client import append_entry
 from lifecycle.exceptions import (
     EmergencySessionExpiredError,
     IllegalTransitionError,
@@ -92,6 +91,7 @@ from records.revocation import (
 from records.service import decrypt_record
 from search.service import search_records_with_emergency
 
+from api.audit_client import append_entry
 from api.repository import (
     InMemoryStorageRepository,
     PostgresStorageRepository,
@@ -157,7 +157,7 @@ def _log_event(
     actor_id: str,
     correlation_id: str,
     in_process_logger: Callable[..., Any] | None = None,
-    **in_process_kwargs: Any,
+    **in_process_kwargs: object,
 ) -> None:
     """Log an event to the standalone Audit Service over HTTP or in-process fallback."""
     if audit_url:
@@ -169,9 +169,11 @@ def _log_event(
                 actor_id=actor_id,
                 correlation_id=correlation_id,
             )
-        except Exception:
+        except Exception:  # noqa: S110
             pass
-    elif in_process_logger and isinstance(repo, PostgresStorageRepository) and audit_key:
+    elif (
+        in_process_logger and isinstance(repo, PostgresStorageRepository) and audit_key
+    ):
         in_process_logger(
             repo._conn,
             actor_id=actor_id,

@@ -14,8 +14,10 @@ Verifies:
 4. In-network routine clinical read under attribute policy at Facility A.
 5. Out-of-network emergency access refusal (403 Policy Denied) at Facility B.
 6. Federated patient record discovery across the shared store.
-7. Log-before-release share custody: Audit Service commits log entry before releasing Share 3.
-8. 2-of-3 threshold break-glass unlock at Facility B: assertion validated, state -> EMERGENCY_OPEN.
+7. Log-before-release share custody: Audit Service commits log entry before
+   releasing Share 3.
+8. 2-of-3 threshold break-glass unlock at Facility B: assertion validated,
+   state -> EMERGENCY_OPEN.
 9. PRE decapsulation by emergency clinician & AES-256-GCM medical record decryption.
 10. Active emergency search capability while EMERGENCY_OPEN.
 11. Time-box session expiry, forced key rotation, and emergency search shutoff.
@@ -40,12 +42,13 @@ from api.repository import PostgresStorageRepository
 from contracts import Facility
 from contracts.enums import FacilityStatus
 from crypto_core import generate_ec_keypair
-from deploy import bootstrap
-from deploy.run_scenario import ScenarioEndpoints, run_scenario
 from fastapi import FastAPI
 from lifecycle.expiry import EmergencyExpiryManager
 from storage import repositories as repo_mod
 from storage.migrate import apply_migrations
+
+from deploy import bootstrap
+from deploy.run_scenario import ScenarioEndpoints, run_scenario
 
 _DATABASE_URL = os.environ.get("DATABASE_URL")
 
@@ -90,10 +93,6 @@ def postgres_federation():
     conn.autocommit = False
     apply_migrations(conn)
 
-    from contracts import Facility
-    from contracts.enums import FacilityStatus
-    from storage import repositories as repo_mod
-
     repo_mod.insert_authority(conn, "authority-med", "Medical Board", b"\x01")
     repo_mod.insert_authority(conn, "authority-net", "Regional Health Network", b"\x02")
     repo_mod.insert_facility(
@@ -133,8 +132,6 @@ def postgres_federation():
     app_audit = create_audit_app(conn, actor_id="audit-service-pg")
     server_audit = _LiveServer(app_audit)
     audit_url = server_audit.start()
-
-    from api.audit_client import make_lifecycle_audit_logger
 
     exp_mgr_a = EmergencyExpiryManager(
         signing_key=timer_priv_a,
@@ -230,7 +227,7 @@ def postgres_federation():
 
 
 def test_full_scenario_with_postgres(postgres_federation):
-    """Run full 9-step break-glass scenario against real PostgreSQL, then verify expiry shutoff."""
+    """Run full 9-step scenario on PostgreSQL and verify expiry shutoff."""
     endpoints = postgres_federation["endpoints"]
     config = postgres_federation["config"]
     exp_mgr_b = postgres_federation["exp_mgr_b"]

@@ -87,9 +87,10 @@ def test_sec_two_authorities_issue_valid_credentials_forgery_rejected() -> None:
     assertion cannot pass merely because the setup itself was broken.
     """
     now = datetime.datetime.now(datetime.timezone.utc)
-    valid_from, valid_until = now - datetime.timedelta(
-        days=1
-    ), now + datetime.timedelta(days=365)
+    valid_from, valid_until = (
+        now - datetime.timedelta(days=1),
+        now + datetime.timedelta(days=365),
+    )
 
     authority_med = generate_authority("authority-med", frozenset({"role"}))
     authority_net = generate_authority(

@@ -30,9 +30,7 @@ import argparse
 import base64
 import datetime
 import json
-import os
 import sys
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -52,8 +50,8 @@ from crypto_core import (
 )
 from crypto_core.symmetric import aes_gcm_decrypt
 from identity.certificates import issue_clinician_certificate
-from identity.root_anchor import RootAnchor
-from pre.elgamal import decapsulate_key, generate_keypair as generate_pre_keypair
+from pre.elgamal import decapsulate_key
+from pre.elgamal import generate_keypair as generate_pre_keypair
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = REPO_ROOT / "deploy" / "pki" / "federation.json"
@@ -76,10 +74,14 @@ def _unwrap_rewrapped_dek(rewrapped_dek: bytes, pre_priv: int, record_id: str) -
     )
 
 
-def _parse_ca_credentials(ca_data: Any) -> tuple[Any, Any]:
+def _parse_ca_credentials(ca_data: object) -> tuple[object, object]:
     """Extract and parse private key and certificate from CA data object or dict."""
-    priv_pem = getattr(ca_data, "ca_private_key_pem", None) or ca_data["ca_private_key_pem"]
-    cert_pem = getattr(ca_data, "ca_certificate_pem", None) or ca_data["ca_certificate_pem"]
+    if isinstance(ca_data, dict):
+        priv_pem = ca_data["ca_private_key_pem"]
+        cert_pem = ca_data["ca_certificate_pem"]
+    else:
+        priv_pem = ca_data.ca_private_key_pem  # type: ignore[attr-defined]
+        cert_pem = ca_data.ca_certificate_pem  # type: ignore[attr-defined]
     return (
         private_key_from_pem(priv_pem.encode("ascii")),
         certificate_from_pem(cert_pem.encode("ascii")),
@@ -138,7 +140,9 @@ def run_scenario(
     ]:
         res = client.get(f"{url}/health")
         if res.status_code != 200:
-            raise RuntimeError(f"Service {name} at {url} not healthy: {res.status_code}")
+            raise RuntimeError(
+                f"Service {name} at {url} not healthy: {res.status_code}"
+            )
         log(f"  * {name:14s} at {url} is healthy (HTTP 200)")
 
     # -------------------------------------------------------------------------
@@ -160,17 +164,12 @@ def run_scenario(
 
         root_anchor, fed_pki = generate_federation_pki(["facility-a", "facility-b"])
         root_cert_pem = fed_pki.root_certificate_pem
-        fa_ca_priv, fa_ca_cert = _parse_ca_credentials(
-            fed_pki.facilities["facility-a"]
-        )
-        fb_ca_priv, fb_ca_cert = _parse_ca_credentials(
-            fed_pki.facilities["facility-b"]
-        )
+        fa_ca_priv, fa_ca_cert = _parse_ca_credentials(fed_pki.facilities["facility-a"])
+        fb_ca_priv, fb_ca_cert = _parse_ca_credentials(fed_pki.facilities["facility-b"])
 
     # Dr. Bob @ Facility A (Cardiologist)
     bob_priv, bob_pub = generate_ec_keypair()
-    bob_cert = issue_clinician_certificate(fa_ca_priv, fa_ca_cert, "doc-201", bob_pub)
-    bob_cert_pem = certificate_to_pem(bob_cert).decode("ascii")
+    _ = issue_clinician_certificate(fa_ca_priv, fa_ca_cert, "doc-201", bob_pub)
 
     # Dr. Carol @ Facility B (Emergency Physician)
     carol_priv, carol_pub = generate_ec_keypair()
@@ -242,7 +241,9 @@ def run_scenario(
         "authority-med:role:emergency-physician": base64.b64encode(
             k_em_physician
         ).decode("ascii"),
-        "authority-net:specialty:cardiology": base64.b64encode(k_cardio).decode("ascii"),
+        "authority-net:specialty:cardiology": base64.b64encode(k_cardio).decode(
+            "ascii"
+        ),
         "authority-net:owner:pat-101": base64.b64encode(k_owner).decode("ascii"),
     }
 
@@ -277,7 +278,8 @@ def run_scenario(
 
     plaintext = (
         b'{"patient": "Alice", "diagnosis": "Acute Myocardial Infarction", '
-        b'"medications": ["Aspirin", "Ticagrelor", "Heparin"], "allergies": ["Penicillin"]}'
+        b'"medications": ["Aspirin", "Ticagrelor", "Heparin"], '
+        b'"allergies": ["Penicillin"]}'
     )
     record_id = "rec-001"
 
@@ -331,7 +333,9 @@ def run_scenario(
     log("[4/9] In-network routine clinical read by Dr. Bob at Facility A...")
     bob_keyring = {
         "authority-med:role:physician": base64.b64encode(k_physician).decode("ascii"),
-        "authority-net:specialty:cardiology": base64.b64encode(k_cardio).decode("ascii"),
+        "authority-net:specialty:cardiology": base64.b64encode(k_cardio).decode(
+            "ascii"
+        ),
     }
     read_bob_res = client.post(
         f"{endpoints.facility_a}/records/{record_id}/read",
@@ -418,8 +422,9 @@ def run_scenario(
     release_data = release_res.json()
     rel_x = release_data["x"]
     rel_share_hex = release_data["share_hex"]
+    new_seq = release_data["entry"]["seq"]
     log(
-        f"  * Audit Service committed entry to hash chain (new seq={release_data['entry']['seq']})\n"
+        f"  * Audit Service committed entry to hash chain (new seq={new_seq})\n"
         f"  * Share 3 released: x={rel_x}"
     )
 
@@ -471,8 +476,9 @@ def run_scenario(
         json={"search_term": "cardiac"},
     )
     if search_res.status_code == 200:
-        assert record_id in search_res.json()["record_ids"]
-        log(f"  * Emergency search for 'cardiac' matched: {search_res.json()['record_ids']}")
+        matched = search_res.json()["record_ids"]
+        assert record_id in matched
+        log(f"  * Emergency search for 'cardiac' matched: {matched}")
     else:
         log(f"  * Emergency search returned status {search_res.status_code}")
 
@@ -484,9 +490,11 @@ def run_scenario(
     if verify_res.status_code == 200:
         verify_data = verify_res.json()
         assert verify_data["verified"] is True
+        h_seq = verify_data["head_seq"]
+        v_status = verify_data["verified"]
         log(
             f"  * Full audit hash chain verified from genesis to head!\n"
-            f"  * Head Seq: {verify_data['head_seq']}, Verified: {verify_data['verified']}"
+            f"  * Head Seq: {h_seq}, Verified: {v_status}"
         )
 
     log("\n=======================================================================")
