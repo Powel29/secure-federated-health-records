@@ -467,15 +467,15 @@ positive control: `test_share_released_only_after_successful_commit`.)*
 *Needs first:* P3-2, P3-7, P3-5.
 *Done when:* all endpoints work and no cryptography lives in a route handler. ✅ *(`src/api/`: `hospital.py` FastAPI app factory `create_hospital_app`, `schemas.py`, `repository.py` StorageRepository Protocol with InMemory and Postgres adapters; endpoints for read, consent, revoke, break-glass, discovery, search, emergency search, and ingest; AST-based negative invariant tests in `tests/api/test_no_crypto_invariant.py` prove 0 direct crypto imports or cipher calls; 26 tests in `tests/api/`).*
 
-**P4-2 · Audit + authority services** *(was P4-2)* — Ojas — 8h
+**P4-2 · Audit + authority services** *(was P4-2)* — Ojas — 8h ✅
 *What:* Run the audit service and the authorities as their own separate processes that the hospitals talk to over HTTP.
 *Needs first:* P3-3, P2-2.
-*Done when:* they run as separate processes and a hospital can talk to them.
+*Done when:* they run as separate processes and a hospital can talk to them. ✅ *(`src/api/audit_service.py`: standalone Audit Service — `GET /health`, `/public-key`, `/chain/head`, `/chain/verify`, `POST /entries`, and the break-glass share-custody pair `POST /breakglass/shares` / `POST /breakglass/release` that makes ARCHITECTURE.md §7's "log-before-release must be a real process boundary" concrete over HTTP; `src/audit/share_registry.py` backs it. `src/api/authority_service.py`: standalone Attribute Authority Service — issuance, verification, revocation, credential-status, and both the holder-facing (`/attribute-keys/release`) and authoring-side (`/attribute-keys/author`) attribute-key paths. `src/api/audit_client.py` closes the ADR-0035 seam by wiring `lifecycle.expiry.EmergencyExpiryManager`'s `audit_logger` callback to the standalone service over HTTP. Also resolves ADR-0034's documented concurrent-`seq` liveness gap with a process-local lock. See ADR-0039. Tests: `tests/api/test_audit_service.py`, `tests/api/test_authority_service.py`, `tests/api/test_audit_client.py`.)*
 
-**P4-3 · Deployment + bootstrap** *(was P4-3)* — Ojas — 12h
+**P4-3 · Deployment + bootstrap** *(was P4-3)* — Ojas — 12h ✅
 *What:* Two ways to run the whole federation — a local launcher script and Docker Compose — plus the startup sequence that brings everything up in the right order. Includes the plain-HTTP capture mode for traffic analysis.
 *Needs first:* P4-1, P4-2.
-*Done when:* both run methods work, startup happens in order, and the audit chain verifies at boot or nothing starts.
+*Done when:* both run methods work, startup happens in order, and the audit chain verifies at boot or nothing starts. ✅ *(`deploy/`: `bootstrap.py` (the reusable bootstrap-sequence library — PKI generation, authority registration, the audit-chain hard boot precondition), `run_local.py` (Path A, no Docker required), `compose_bootstrap.py` + `docker-compose.yml` + `Dockerfile` (Path B), `entrypoint.py` + `asgi/{facility,authority,audit}.py` (one shared entrypoint dispatching on `SERVICE_ROLE`, used identically by both paths). Inter-service traffic is plain HTTP by default, which is the `capture-plain` profile PROJECT.md §4A's traffic-analysis module needs — TLS (`capture-tls`) is P4-6's addition. See ADR-0039. Tests: `tests/deploy/test_bootstrap.py` (PKI/root-chaining and authority-registration round trip against real sockets, plus the audit-chain check, skips cleanly without Postgres).)*
 
 **P4-4 · Full end-to-end run** *(was P4-4)* — Avaneeth — 10h
 *What:* Wire the whole cross-hospital break-glass story together so it runs start to finish across all the processes.

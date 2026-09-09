@@ -37,6 +37,7 @@ from audit.exceptions import (
     TamperedEntryError,
 )
 from audit.share_custody import Share, release_share_after_commit
+from audit.share_registry import ShareNotFoundError, ShareRegistry
 
 __all__ = [
     "GENESIS_PREV_HASH",
@@ -52,6 +53,8 @@ __all__ = [
     "ChainBreakError",
     "EmptyChainError",
     "Share",
+    "ShareNotFoundError",
+    "ShareRegistry",
     "TamperedEntryError",
     "append_entry",
     "compute_entry_hash",

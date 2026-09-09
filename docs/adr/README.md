@@ -51,6 +51,7 @@ Each row links to a one-file ADR with the full context.
 | [0036](0036-revocation-by-key-rotation.md) | Revocation is full DEK re-generation + record re-encryption + policy re-compilation with generation++ + signed GRANTED→REVOKED event; not a status flag | Accepted | 2026-09-03 | Powel → all four | P3-7 |
 | [0037](0037-revocation-authorization.md) | Revocation authorization check: only patient owner or home authority may revoke access; fails closed on unauthorized actor | Accepted | 2026-09-03 | Avaneeth → all four | P3-12 |
 | [0038](0038-denial-and-federation-audit-events.md) | Denial/federation audit events as fixed-shape `audit.events` helpers (not call-site edits into other owners' modules); patient_id hashed in discovery events | Accepted | 2026-09-06 | Ojas → all four | P3-13 |
+| [0039](0039-audit-authority-services-and-deployment.md) | Audit + authority services as standalone, ephemeral FastAPI processes; break-glass share release made a real HTTP call; ADR-0034's `seq`-race gap closed with a process lock; ADR-0035's lifecycle audit-callback seam closed via HTTP client; shared-entrypoint deployment for both Path A (local) and Path B (Compose) | Proposed | 2026-09-09 | Ojas → all four | P4-2, P4-3 |
 
 ## Owed, not yet written
 
