@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import logging
 from datetime import timedelta
 from typing import Annotated, Any, Callable
 from uuid import uuid4
@@ -70,6 +71,7 @@ from crypto_core import (
 from crypto_core.exceptions import InvalidSignatureError, KeyFormatError
 from crypto_core.types import ECPrivateKey
 from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from lifecycle.exceptions import (
     EmergencySessionExpiredError,
     IllegalTransitionError,
@@ -91,7 +93,7 @@ from records.revocation import (
 from records.service import decrypt_record
 from search.service import search_records_with_emergency
 
-from api.audit_client import append_entry
+from api.audit_client import AuditServiceError, append_entry
 from api.repository import (
     InMemoryStorageRepository,
     PostgresStorageRepository,
@@ -117,6 +119,8 @@ from api.schemas import (
     SearchRecordsResponse,
     SubmitConsentGrantPayload,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 def get_repo(request: Request) -> StorageRepository:
@@ -159,18 +163,23 @@ def _log_event(
     in_process_logger: Callable[..., Any] | None = None,
     **in_process_kwargs: object,
 ) -> None:
-    """Log an event to the standalone Audit Service over HTTP or in-process fallback."""
+    """Log an event to the standalone Audit Service over HTTP or in-process fallback.
+
+    Fails closed: if the audit service is unreachable or returns non-2xx,
+    ``AuditServiceError`` propagates. Callers whose semantics require the log
+    entry (log-before-release for discovery / break-glass rewrap) must let
+    it bubble; a denial-path caller that only wants to record an already-
+    refused attempt may catch it explicitly. Swallowing silently would
+    contradict audit_client.py's own contract and defeat the audit chain.
+    """
     if audit_url:
-        try:
-            append_entry(
-                audit_url,
-                event_type=event_type,
-                event_data=event_data,
-                actor_id=actor_id,
-                correlation_id=correlation_id,
-            )
-        except Exception:  # noqa: S110
-            pass
+        append_entry(
+            audit_url,
+            event_type=event_type,
+            event_data=event_data,
+            actor_id=actor_id,
+            correlation_id=correlation_id,
+        )
     elif (
         in_process_logger and isinstance(repo, PostgresStorageRepository) and audit_key
     ):
@@ -195,25 +204,44 @@ def _log_denial(
     actor_id: str,
     correlation_id: str,
 ) -> None:
-    _log_event(
-        audit_url,
-        repo,
-        audit_key,
-        event_type=EVENT_ACCESS_DENIED,
-        event_data={
-            "record_id": record_id,
-            "requester_id": requester_id,
-            "denied_by": denied_by,
-            "reason": reason,
-        },
-        actor_id=actor_id,
-        correlation_id=correlation_id,
-        in_process_logger=log_access_denied,
-        record_id=record_id,
-        requester_id=requester_id,
-        denied_by=denied_by,
-        reason=reason,
-    )
+    """Log a denied access attempt; tolerate audit outage without hiding the 403.
+
+    The denial is already decided by the domain layer; the caller will raise
+    the 403 either way. If the audit service is down, we surface a warning
+    (so an operator can see the audit gap) rather than converting the client's
+    denial into a confusing 500 — but a monitoring alert must still fire on
+    the log record. Success-path loggers must NOT use this — they need
+    log-before-release, i.e. propagate on failure.
+    """
+    try:
+        _log_event(
+            audit_url,
+            repo,
+            audit_key,
+            event_type=EVENT_ACCESS_DENIED,
+            event_data={
+                "record_id": record_id,
+                "requester_id": requester_id,
+                "denied_by": denied_by,
+                "reason": reason,
+            },
+            actor_id=actor_id,
+            correlation_id=correlation_id,
+            in_process_logger=log_access_denied,
+            record_id=record_id,
+            requester_id=requester_id,
+            denied_by=denied_by,
+            reason=reason,
+        )
+    except AuditServiceError as audit_exc:
+        _logger.warning(
+            "audit service unavailable while logging denial "
+            "(record_id=%s, requester_id=%s, correlation_id=%s): %s",
+            record_id,
+            requester_id,
+            correlation_id,
+            audit_exc,
+        )
 
 
 def _log_discovery(
@@ -341,6 +369,27 @@ def create_hospital_app(
     app.state.expiry_manager = expiry_manager
     app.state.audit_key = audit_key
     app.state.audit_service_url = audit_service_url
+
+    @app.exception_handler(AuditServiceError)
+    def _audit_unavailable_handler(  # noqa: ARG001
+        request: Request, exc: AuditServiceError
+    ) -> JSONResponse:
+        """Log-before-release path lost the audit chain; fail closed with 503.
+
+        Only success-path _log_* calls (discovery, break-glass rewrap) let
+        this propagate. Denial-path logging swallows it inside _log_denial
+        with a warning, so a real 403 is never masked by an audit outage.
+        """
+        _logger.error("audit service unavailable, refusing release path: %s", exc)
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "detail": (
+                    "audit service unavailable; refusing to release without a log "
+                    "entry (log-before-release, ARCHITECTURE.md §5)"
+                )
+            },
+        )
 
     # --- Health Check ---------------------------------------------------------
 
@@ -810,7 +859,7 @@ def create_hospital_app(
         for x, share_hex in payload.shares:
             try:
                 shares_list.append((x, bytes.fromhex(share_hex)))
-            except Exception as exc:
+            except ValueError as exc:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid hex share for x={x}: {exc}",
@@ -856,6 +905,12 @@ def create_hospital_app(
                 base_wrapping_key = base64.b64decode(
                     payload.baseline_wrapping_key_b64, validate=True
                 )
+            except (ValueError, binascii.Error) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid base64 baseline_wrapping_key: {exc}",
+                ) from exc
+            try:
                 baseline_wrapping = (
                     repo.get_wrapping_for_record(
                         record_id, wrapped_for=record.policy_id
@@ -873,7 +928,7 @@ def create_hospital_app(
                     current_record=record,
                     duration_seconds=payload.emergency_duration_seconds,
                 )
-            except Exception as exc:
+            except ValueError as exc:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Failed to register emergency session: {exc}",
@@ -933,8 +988,8 @@ def create_hospital_app(
     ) -> SearchRecordsResponse:
         """Search coded index via equality check on token."""
         try:
-            coded_term = base64.b64decode(payload.coded_term_b64)
-        except Exception as exc:
+            coded_term = base64.b64decode(payload.coded_term_b64, validate=True)
+        except (ValueError, binascii.Error) as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid base64 token: {exc}",
