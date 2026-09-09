@@ -27,6 +27,9 @@ from audit.events import (
     DENIED_BY_CONSENT,
     DENIED_BY_POLICY,
     DENIED_BY_REVOCATION_AUTHZ,
+    EVENT_ACCESS_DENIED,
+    EVENT_FEDERATION_DISCOVERY,
+    EVENT_FEDERATION_REWRAP,
     log_access_denied,
     log_federation_discovery,
     log_federation_rewrap,
@@ -62,10 +65,12 @@ from crypto_core import (
     certificate_from_pem,
     private_key_from_pem,
     public_key_from_pem,
+    sha256_digest,
 )
 from crypto_core.exceptions import InvalidSignatureError, KeyFormatError
 from crypto_core.types import ECPrivateKey
 from fastapi import Depends, FastAPI, HTTPException, Request, status
+from api.audit_client import append_entry
 from lifecycle.exceptions import (
     EmergencySessionExpiredError,
     IllegalTransitionError,
@@ -134,6 +139,132 @@ ConsumedDep = Annotated[ConsumedAssertionIds, Depends(get_consumed_store)]
 AuditKeyDep = Annotated[ECPrivateKey | None, Depends(get_audit_signing_key)]
 
 
+def get_audit_service_url(request: Request) -> str | None:
+    """Extract optional standalone audit service URL from application state."""
+    return getattr(request.app.state, "audit_service_url", None)
+
+
+AuditUrlDep = Annotated[str | None, Depends(get_audit_service_url)]
+
+
+def _log_denial(
+    audit_url: str | None,
+    repo: StorageRepository,
+    audit_key: ECPrivateKey | None,
+    *,
+    record_id: str,
+    requester_id: str,
+    denied_by: str,
+    reason: str,
+    actor_id: str,
+    correlation_id: str,
+) -> None:
+    if audit_url:
+        try:
+            append_entry(
+                audit_url,
+                event_type=EVENT_ACCESS_DENIED,
+                event_data={
+                    "record_id": record_id,
+                    "requester_id": requester_id,
+                    "denied_by": denied_by,
+                    "reason": reason,
+                },
+                actor_id=actor_id,
+                correlation_id=correlation_id,
+            )
+        except Exception:
+            pass
+    elif isinstance(repo, PostgresStorageRepository) and audit_key:
+        log_access_denied(
+            repo._conn,
+            record_id=record_id,
+            requester_id=requester_id,
+            denied_by=denied_by,
+            reason=reason,
+            actor_id=actor_id,
+            correlation_id=correlation_id,
+            signing_key=audit_key,
+        )
+
+
+def _log_discovery(
+    audit_url: str | None,
+    repo: StorageRepository,
+    audit_key: ECPrivateKey | None,
+    *,
+    patient_id: str,
+    requester_id: str,
+    record_ids: list[str],
+    actor_id: str,
+    correlation_id: str,
+) -> None:
+    if audit_url:
+        try:
+            append_entry(
+                audit_url,
+                event_type=EVENT_FEDERATION_DISCOVERY,
+                event_data={
+                    "patient_id_hash": sha256_digest(patient_id.encode("utf-8")).hex(),
+                    "requester_id": requester_id,
+                    "record_count": len(record_ids),
+                    "record_ids": list(record_ids),
+                },
+                actor_id=actor_id,
+                correlation_id=correlation_id,
+            )
+        except Exception:
+            pass
+    elif isinstance(repo, PostgresStorageRepository) and audit_key:
+        log_federation_discovery(
+            repo._conn,
+            patient_id=patient_id,
+            requester_id=requester_id,
+            record_ids=record_ids,
+            actor_id=actor_id,
+            correlation_id=correlation_id,
+            signing_key=audit_key,
+        )
+
+
+def _log_rewrap(
+    audit_url: str | None,
+    repo: StorageRepository,
+    audit_key: ECPrivateKey | None,
+    *,
+    record_id: str,
+    source_facility_id: str,
+    target_actor_id: str,
+    actor_id: str,
+    correlation_id: str,
+) -> None:
+    if audit_url:
+        try:
+            append_entry(
+                audit_url,
+                event_type=EVENT_FEDERATION_REWRAP,
+                event_data={
+                    "record_id": record_id,
+                    "source_facility_id": source_facility_id,
+                    "target_actor_id": target_actor_id,
+                },
+                actor_id=actor_id,
+                correlation_id=correlation_id,
+            )
+        except Exception:
+            pass
+    elif isinstance(repo, PostgresStorageRepository) and audit_key:
+        log_federation_rewrap(
+            repo._conn,
+            record_id=record_id,
+            source_facility_id=source_facility_id,
+            target_actor_id=target_actor_id,
+            actor_id=actor_id,
+            correlation_id=correlation_id,
+            signing_key=audit_key,
+        )
+
+
 def _parse_attribute_keyring(
     raw_keyring: dict[str, str],
 ) -> dict[tuple[str, str, str], bytes]:
@@ -164,6 +295,7 @@ def create_hospital_app(
     repository: StorageRepository | None = None,
     expiry_manager: EmergencyExpiryManager | None = None,
     audit_signing_key_pem: str | None = None,
+    audit_service_url: str | None = None,
 ) -> FastAPI:
     """Create and configure a FastAPI application for a hospital node.
 
@@ -172,6 +304,7 @@ def create_hospital_app(
         repository: Storage repository implementation. Defaults to in-memory.
         expiry_manager: Emergency expiry manager for tracking emergency sessions.
         audit_signing_key_pem: Optional ECDSA private key PEM for audit logging.
+        audit_service_url: Optional base URL of standalone Audit Service over HTTP.
 
     Returns:
         Configured FastAPI application instance.
@@ -195,6 +328,7 @@ def create_hospital_app(
     app.state.consumed_assertions = consumed_assertions
     app.state.expiry_manager = expiry_manager
     app.state.audit_key = audit_key
+    app.state.audit_service_url = audit_service_url
 
     # --- Health Check ---------------------------------------------------------
 
@@ -218,6 +352,7 @@ def create_hospital_app(
         payload: ReadRecordRequest,
         repo: RepoDep,
         audit_key: AuditKeyDep,
+        audit_url: AuditUrlDep,
     ) -> ReadRecordResponse:
         """Read and decrypt an encrypted health record under policy or consent."""
         record = repo.get_record(record_id)
@@ -279,33 +414,33 @@ def create_hospital_app(
                 ConsentScopeError,
                 ConsentSubjectError,
             ) as exc:
-                if isinstance(repo, PostgresStorageRepository) and audit_key:
-                    log_access_denied(
-                        repo._conn,
-                        record_id=record_id,
-                        requester_id=payload.requester_id,
-                        denied_by=DENIED_BY_CONSENT,
-                        reason=str(exc),
-                        actor_id=facility_id,
-                        correlation_id=payload.correlation_id or str(uuid4()),
-                        signing_key=audit_key,
-                    )
+                _log_denial(
+                    audit_url,
+                    repo,
+                    audit_key,
+                    record_id=record_id,
+                    requester_id=payload.requester_id,
+                    denied_by=DENIED_BY_CONSENT,
+                    reason=str(exc),
+                    actor_id=facility_id,
+                    correlation_id=payload.correlation_id or str(uuid4()),
+                )
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=f"Consent denied: {exc}",
                 ) from exc
             except PolicyDeniedError as exc:
-                if isinstance(repo, PostgresStorageRepository) and audit_key:
-                    log_access_denied(
-                        repo._conn,
-                        record_id=record_id,
-                        requester_id=payload.requester_id,
-                        denied_by=DENIED_BY_POLICY,
-                        reason=str(exc),
-                        actor_id=facility_id,
-                        correlation_id=payload.correlation_id or str(uuid4()),
-                        signing_key=audit_key,
-                    )
+                _log_denial(
+                    audit_url,
+                    repo,
+                    audit_key,
+                    record_id=record_id,
+                    requester_id=payload.requester_id,
+                    denied_by=DENIED_BY_POLICY,
+                    reason=str(exc),
+                    actor_id=facility_id,
+                    correlation_id=payload.correlation_id or str(uuid4()),
+                )
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=f"Policy denied: {exc}",
@@ -322,17 +457,17 @@ def create_hospital_app(
                 dek = unwrap_dek_via_policy(compiled_policy, keyring, wrapping)
                 plaintext_bytes = decrypt_record(record, dek)
             except PolicyDeniedError as exc:
-                if isinstance(repo, PostgresStorageRepository) and audit_key:
-                    log_access_denied(
-                        repo._conn,
-                        record_id=record_id,
-                        requester_id=payload.requester_id,
-                        denied_by=DENIED_BY_POLICY,
-                        reason=str(exc),
-                        actor_id=facility_id,
-                        correlation_id=payload.correlation_id or str(uuid4()),
-                        signing_key=audit_key,
-                    )
+                _log_denial(
+                    audit_url,
+                    repo,
+                    audit_key,
+                    record_id=record_id,
+                    requester_id=payload.requester_id,
+                    denied_by=DENIED_BY_POLICY,
+                    reason=str(exc),
+                    actor_id=facility_id,
+                    correlation_id=payload.correlation_id or str(uuid4()),
+                )
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=f"Policy denied: {exc}",
@@ -451,6 +586,7 @@ def create_hospital_app(
         payload: RevokeRecordRequest,
         repo: RepoDep,
         audit_key: AuditKeyDep,
+        audit_url: AuditUrlDep,
     ) -> RevokeRecordResponse:
         """Cryptographically revoke record access via DEK rotation (P3-7, P3-12)."""
         record = repo.get_record(record_id)
@@ -476,17 +612,17 @@ def create_hospital_app(
                 owner_authority_id=payload.owner_authority_id,
             )
         except UnauthorizedRevocationError as exc:
-            if isinstance(repo, PostgresStorageRepository) and audit_key:
-                log_access_denied(
-                    repo._conn,
-                    record_id=record_id,
-                    requester_id=payload.actor_id,
-                    denied_by=DENIED_BY_REVOCATION_AUTHZ,
-                    reason=str(exc),
-                    actor_id=facility_id,
-                    correlation_id=payload.correlation_id or str(uuid4()),
-                    signing_key=audit_key,
-                )
+            _log_denial(
+                audit_url,
+                repo,
+                audit_key,
+                record_id=record_id,
+                requester_id=payload.actor_id,
+                denied_by=DENIED_BY_REVOCATION_AUTHZ,
+                reason=str(exc),
+                actor_id=facility_id,
+                correlation_id=payload.correlation_id or str(uuid4()),
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Unauthorized revocation: {exc}",
@@ -568,6 +704,7 @@ def create_hospital_app(
         repo: RepoDep,
         consumed_store: ConsumedDep,
         audit_key: AuditKeyDep,
+        audit_url: AuditUrlDep,
     ) -> BreakglassUnlockResponse:
         """Execute 2-of-3 threshold emergency unlock for a record (P3-5)."""
         # 1. Five-point validation of EmergencyAssertion (P3-10, P3-11)
@@ -611,17 +748,17 @@ def create_hospital_app(
             InvalidSignatureError,
             ReplayedAssertionError,
         ) as exc:
-            if isinstance(repo, PostgresStorageRepository) and audit_key:
-                log_access_denied(
-                    repo._conn,
-                    record_id=record_id,
-                    requester_id=payload.assertion.clinician_id,
-                    denied_by="breakglass_assertion",
-                    reason=str(exc),
-                    actor_id=facility_id,
-                    correlation_id=payload.correlation_id or str(uuid4()),
-                    signing_key=audit_key,
-                )
+            _log_denial(
+                audit_url,
+                repo,
+                audit_key,
+                record_id=record_id,
+                requester_id=payload.assertion.clinician_id,
+                denied_by="breakglass_assertion",
+                reason=str(exc),
+                actor_id=facility_id,
+                correlation_id=payload.correlation_id or str(uuid4()),
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Emergency assertion invalid ({exc.__class__.__name__}): {exc}",
@@ -700,16 +837,53 @@ def create_hospital_app(
         )
         repo.insert_transition_event(unlock_result.transition_event)
 
-        if isinstance(repo, PostgresStorageRepository) and audit_key:
-            log_federation_rewrap(
-                repo._conn,
-                record_id=record_id,
-                source_facility_id=record.facility_id,
-                target_actor_id=payload.assertion.clinician_id,
-                actor_id=facility_id,
-                correlation_id=corr_id,
-                signing_key=audit_key,
-            )
+        # Register session with expiry manager if baseline wrapping key supplied
+        exp_manager = app.state.expiry_manager
+        if exp_manager and payload.baseline_wrapping_key_b64:
+            try:
+                base_wrapping_key = base64.b64decode(
+                    payload.baseline_wrapping_key_b64, validate=True
+                )
+                baseline_wrapping = (
+                    repo.get_wrapping_for_record(
+                        record_id, wrapped_for=record.policy_id
+                    )
+                    or repo.get_wrapping_for_record(record_id)
+                )
+                emergency_wrapping = (
+                    repo.get_wrapping_for_record(
+                        record_id, wrapped_for="emergency"
+                    )
+                    or wrapping
+                )
+                if baseline_wrapping and emergency_wrapping:
+                    exp_manager.register_session(
+                        record_id=record_id,
+                        actor_id=payload.assertion.clinician_id,
+                        correlation_id=corr_id,
+                        emergency_key=unlock_result.emergency_key,
+                        baseline_wrapping_key=base_wrapping_key,
+                        baseline_wrapping=baseline_wrapping,
+                        emergency_wrapping=emergency_wrapping,
+                        current_record=record,
+                        duration_seconds=payload.emergency_duration_seconds,
+                    )
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Failed to register emergency session: {exc}",
+                ) from exc
+
+        _log_rewrap(
+            audit_url,
+            repo,
+            audit_key,
+            record_id=record_id,
+            source_facility_id=record.facility_id,
+            target_actor_id=payload.assertion.clinician_id,
+            actor_id=facility_id,
+            correlation_id=corr_id,
+        )
 
         return BreakglassUnlockResponse(
             record_id=record_id,
@@ -727,19 +901,20 @@ def create_hospital_app(
         patient_id: str,
         repo: RepoDep,
         audit_key: AuditKeyDep,
+        audit_url: AuditUrlDep,
     ) -> DiscoveryResponse:
         """Federated discovery: find record IDs for a patient (C13)."""
         record_ids = repo.find_record_ids_by_patient(patient_id)
-        if isinstance(repo, PostgresStorageRepository) and audit_key:
-            log_federation_discovery(
-                repo._conn,
-                patient_id=patient_id,
-                requester_id=facility_id,
-                record_ids=record_ids,
-                actor_id=facility_id,
-                correlation_id=str(uuid4()),
-                signing_key=audit_key,
-            )
+        _log_discovery(
+            audit_url,
+            repo,
+            audit_key,
+            patient_id=patient_id,
+            requester_id=facility_id,
+            record_ids=record_ids,
+            actor_id=facility_id,
+            correlation_id=str(uuid4()),
+        )
         return DiscoveryResponse(
             patient_id=patient_id,
             record_ids=record_ids,
@@ -867,6 +1042,8 @@ def create_hospital_app(
 
         repo.insert_record(result.record)
         repo.insert_dek_wrapping(result.dek_wrapping)
+        if result.emergency_dek_wrapping:
+            repo.insert_dek_wrapping(result.emergency_dek_wrapping)
         repo.store_compiled_policy(result.record.policy_id, result.compiled_policy)
         repo.upsert_lifecycle_state(
             record_id=result.record.record_id,

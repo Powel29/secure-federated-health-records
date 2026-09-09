@@ -70,4 +70,5 @@ def app() -> FastAPI:
         facility_id=facility_id,
         repository=repo,
         expiry_manager=expiry_manager,
+        audit_service_url=audit_service_url,
     )

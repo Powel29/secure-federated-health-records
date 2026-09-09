@@ -58,6 +58,7 @@ class IngestResult:
     root_secret: bytes  # the wrapping key (caller must NOT persist this)
     lifecycle_state: LifecycleState
     search_tokens: dict[str, bytes]  # {plaintext_term: coded_token}
+    emergency_dek_wrapping: DEKWrapping | None = None
 
 
 def ingest_record(
@@ -178,6 +179,18 @@ def ingest_record(
         for term in search_terms:
             search_tokens[term] = derive_search_token(emergency_key, term)
 
+    # Wrap DEK for emergency recovery if emergency_key is provided
+    em_wrapping: DEKWrapping | None = None
+    if emergency_key:
+        em_wrapping = wrap_dek(
+            dek=dek,
+            record_id=record.record_id,
+            wrapping_key=emergency_key,
+            wrapped_for="emergency",
+            generation=0,
+            created_at=created_at,
+        )
+
     # --- Step 6: Return all artefacts ---
     return IngestResult(
         record=record,
@@ -187,4 +200,5 @@ def ingest_record(
         root_secret=root_secret,
         lifecycle_state=LifecycleState.GRANTED,
         search_tokens=search_tokens,
+        emergency_dek_wrapping=em_wrapping,
     )
