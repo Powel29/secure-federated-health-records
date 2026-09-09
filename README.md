@@ -68,6 +68,13 @@ DATABASE_URL="postgresql://postgres@localhost:55432/ehr_test" pytest tests/stora
 
 (PowerShell: prefix with `$env:DATABASE_URL="…";` instead of the inline form.)
 
+## Running the federation
+
+Two ways to bring up all six processes (shared store, two facilities, two
+attribute authorities, the audit service) with the bootstrap sequence
+ARCHITECTURE.md §7 describes — a local supervisor script (no Docker) and
+Docker Compose. See [deploy/README.md](deploy/README.md).
+
 ## Web portals
 
 Three role-based Django portals (patient / clinician / admin-audit) plus

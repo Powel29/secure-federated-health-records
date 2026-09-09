@@ -47,6 +47,14 @@ ignore = ["ANN101", "ANN102"]
 # CONVENTIONS.md §2 rule 4.
 "tests/**" = ["S101", "S105", "S106", "ANN"]
 "bench/**" = ["S101", "ANN"]
+# deploy/ is orchestration, not application code (not in CI's lint scope --
+# `ruff check src/ tests/` -- but kept clean anyway). Binding 0.0.0.0 is
+# required so a container's exposed port is reachable from outside it;
+# the one subprocess call launches this repo's own `deploy.entrypoint` via
+# `sys.executable`, never external or request-supplied input.
+"deploy/entrypoint.py" = ["S104"]
+"deploy/run_local.py" = ["S603"]
+"deploy/run_scenario.py" = ["S101"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

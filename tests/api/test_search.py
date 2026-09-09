@@ -11,6 +11,11 @@ from __future__ import annotations
 
 import base64
 
+import httpx
+import pytest
+from api.audit_client import AuditServiceError
+from api.hospital import create_hospital_app
+from fastapi.testclient import TestClient
 from search.service import derive_search_token
 
 
@@ -27,6 +32,40 @@ class TestHospitalSearchEndpoints:
         assert data["patient_id"] == "patient-001"
         assert "rec-001" in data["record_ids"]
         assert data["record_count"] >= 1
+
+    def test_discovery_fails_closed_when_audit_service_down(
+        self, test_setup, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Log-before-release: no discovery result if the audit chain refuses.
+
+        Discovery is a release-path event (§5 step 1 log-before-release
+        family). If the audit service is unreachable, the endpoint must
+        return 503, not silently drop the log entry and hand out record IDs.
+        """
+        repo = test_setup["repo"]
+        expiry_manager = test_setup["expiry_manager"]
+
+        app = create_hospital_app(
+            facility_id="facility-a",
+            repository=repo,
+            expiry_manager=expiry_manager,
+            audit_service_url="http://audit-down:9999",
+        )
+        client = TestClient(app, raise_server_exceptions=False)
+
+        def _dead(*args, **kwargs):
+            raise httpx.ConnectError("connection refused")
+
+        monkeypatch.setattr(httpx, "post", _dead)
+
+        response = client.get("/patients/patient-001/records")
+        assert response.status_code == 503
+        assert "audit service unavailable" in response.json()["detail"]
+
+    def test_audit_service_error_is_a_real_exception(self):
+        """Guard against reintroducing the silent swallow in _log_event."""
+        with pytest.raises(AuditServiceError):
+            raise AuditServiceError("simulated audit outage")
 
     def test_search_coded_index(self, test_setup):
         """POST /search/records matches record via derived search token."""

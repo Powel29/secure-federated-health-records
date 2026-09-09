@@ -255,11 +255,15 @@ class InMemoryStorageRepository:
 class PostgresStorageRepository:
     """PostgreSQL storage repository backed by ``storage.repositories``."""
 
+    _shared_compiled_policies: dict[str, CompiledPolicy] = {}
+    _shared_consent_requests: dict[UUID, ConsentRequest] = {}
+    _shared_consent_grants: dict[UUID, ConsentGrant] = {}
+
     def __init__(self, conn: psycopg.Connection) -> None:
         self._conn = conn
-        self._compiled_policies: dict[str, CompiledPolicy] = {}
-        self._consent_requests: dict[UUID, ConsentRequest] = {}
-        self._consent_grants: dict[UUID, ConsentGrant] = {}
+        self._compiled_policies = self._shared_compiled_policies
+        self._consent_requests = self._shared_consent_requests
+        self._consent_grants = self._shared_consent_grants
 
     def get_record(self, record_id: str) -> Record | None:
         return get_record(self._conn, record_id)

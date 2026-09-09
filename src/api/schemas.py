@@ -186,6 +186,16 @@ class BreakglassUnlockRequest(BaseModel):
         description="Root anchor certificate for chain validation",
     )
     correlation_id: str | None = None
+    baseline_wrapping_key_b64: str | None = Field(
+        default=None,
+        description=(
+            "Base64-encoded baseline wrapping key " "(starts expiry session if present)"
+        ),
+    )
+    emergency_duration_seconds: float | None = Field(
+        default=None,
+        description="Optional session duration override in seconds",
+    )
 
 
 class BreakglassUnlockResponse(BaseModel):
