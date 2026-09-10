@@ -7,9 +7,16 @@ arbitrary ``event_data`` dict -- correct by design (ADR-0034), since it lets
 every module log without a contract change. That flexibility means nothing
 fixes the *shape* of a denial or federation event across callers, and nothing
 stops an event from accidentally carrying more than an identifier or a hash.
-This module is that fixed shape for exactly two families of event this task
+This module is that fixed shape for the families of event this task
 covers:
 
+- **Access grants** -- a policy or consent read *succeeded* and plaintext was
+  released to the requester. ARCHITECTURE.md §5 makes the read itself an
+  auditable event ("logging-as-precondition"); until this helper existed only
+  denials and break-glass re-wraps were logged, so ordinary successful reads
+  left no trace. The orchestration layer (P4-1 hospital node) calls this on the
+  success path, log-before-release: if the entry cannot be written the read
+  must not return plaintext.
 - **Access denials** -- a policy, consent, credential, or revocation-
   authorization check refused a request (``policy.exceptions.PolicyDeniedError``,
   ``consent.exceptions.ConsentDeniedError``/``ConsentRevokedError``,
@@ -49,9 +56,18 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 from audit.chain import append_entry
 
+EVENT_ACCESS_GRANTED = "access_granted"
 EVENT_ACCESS_DENIED = "access_denied"
 EVENT_FEDERATION_DISCOVERY = "federation.discovery"
 EVENT_FEDERATION_REWRAP = "federation.rewrap"
+
+# Suggested, non-exhaustive values for ``log_access_granted``'s ``access_via`` --
+# which read path released the record. Free text is still accepted; callers that
+# match one of these should use the constant so the admin/patient portal access-
+# history views (P4-7/P4-9) can filter reliably.
+ACCESS_VIA_POLICY = "policy"
+ACCESS_VIA_CONSENT = "consent"
+ACCESS_VIA_OWNER = "owner"
 
 # Suggested, non-exhaustive values for ``log_access_denied``'s ``denied_by`` --
 # free text is still accepted (a future denial source needs no contract
@@ -61,6 +77,66 @@ DENIED_BY_POLICY = "policy"
 DENIED_BY_CONSENT = "consent"
 DENIED_BY_CREDENTIAL = "credential_authority"
 DENIED_BY_REVOCATION_AUTHZ = "revocation_authorization"
+
+
+def log_access_granted(
+    conn: psycopg.Connection,
+    *,
+    record_id: str,
+    requester_id: str,
+    access_via: str,
+    actor_id: str,
+    correlation_id: str,
+    signing_key: ec.EllipticCurvePrivateKey,
+    timestamp: datetime.datetime | None = None,
+) -> AuditEntry:
+    """Log a successful record read (plaintext released to ``requester_id``).
+
+    The counterpart to :func:`log_access_denied` for the success path. It makes
+    "who read what" recoverable from the chain -- the patient's access-history
+    view (P4-7) and the admin portal (P4-9) both depend on reads leaving a
+    trace, and ARCHITECTURE.md §5 treats the read as an auditable event.
+
+    Args:
+        record_id: The record whose plaintext was released.
+        requester_id: The party the record was decrypted for (a clinician, or
+            the patient themselves for owner self-access, ADR-0016).
+        access_via: Which read path authorised it -- one of the ``ACCESS_VIA_*``
+            constants (``policy``/``consent``/``owner``), or a caller-defined
+            short label for a path this module does not yet name.
+        actor_id: The party responsible for logging this event (the facility
+            node that ran the read).
+        correlation_id: Ties this read to the rest of its request flow
+            (ADR-0017).
+        signing_key: The audit service's ECDSA-P256 private key.
+        timestamp: Optional timestamp; defaults to ``utcnow()``.
+
+    Returns:
+        The newly persisted, signed :class:`~contracts.AuditEntry`.
+
+    Raises:
+        EmptyChainError: No genesis entry exists yet.
+
+    Security property:
+        ``event_data`` holds only identifiers and the read-path label -- never
+        the DEK, the attribute keys, the reconstructed root secret, or the
+        released plaintext (CONVENTIONS.md §2 rule 3). There is no parameter
+        through which key material or record content could enter the entry.
+    """
+    event_data: dict[str, Any] = {
+        "record_id": record_id,
+        "requester_id": requester_id,
+        "access_via": access_via,
+    }
+    return append_entry(
+        conn,
+        event_type=EVENT_ACCESS_GRANTED,
+        event_data=event_data,
+        actor_id=actor_id,
+        correlation_id=correlation_id,
+        signing_key=signing_key,
+        timestamp=timestamp,
+    )
 
 
 def log_access_denied(

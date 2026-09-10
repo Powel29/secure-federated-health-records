@@ -25,13 +25,17 @@ from typing import Annotated, Any, Callable
 from uuid import uuid4
 
 from audit.events import (
+    ACCESS_VIA_CONSENT,
+    ACCESS_VIA_POLICY,
     DENIED_BY_CONSENT,
     DENIED_BY_POLICY,
     DENIED_BY_REVOCATION_AUTHZ,
     EVENT_ACCESS_DENIED,
+    EVENT_ACCESS_GRANTED,
     EVENT_FEDERATION_DISCOVERY,
     EVENT_FEDERATION_REWRAP,
     log_access_denied,
+    log_access_granted,
     log_federation_discovery,
     log_federation_rewrap,
 )
@@ -242,6 +246,43 @@ def _log_denial(
             correlation_id,
             audit_exc,
         )
+
+
+def _log_granted(
+    audit_url: str | None,
+    repo: StorageRepository,
+    audit_key: ECPrivateKey | None,
+    *,
+    record_id: str,
+    requester_id: str,
+    access_via: str,
+    actor_id: str,
+    correlation_id: str,
+) -> None:
+    """Log a successful read; log-before-release (propagate on audit outage).
+
+    Unlike ``_log_denial``, this does NOT swallow ``AuditServiceError``: a read
+    that cannot be logged must not return plaintext (ARCHITECTURE.md §5,
+    logging-as-precondition). The error propagates to the 503 handler exactly
+    like discovery / break-glass re-wrap.
+    """
+    _log_event(
+        audit_url,
+        repo,
+        audit_key,
+        event_type=EVENT_ACCESS_GRANTED,
+        event_data={
+            "record_id": record_id,
+            "requester_id": requester_id,
+            "access_via": access_via,
+        },
+        actor_id=actor_id,
+        correlation_id=correlation_id,
+        in_process_logger=log_access_granted,
+        record_id=record_id,
+        requester_id=requester_id,
+        access_via=access_via,
+    )
 
 
 def _log_discovery(
@@ -458,6 +499,7 @@ def create_hospital_app(
                     detail=f"Invalid patient public key PEM: {exc}",
                 ) from exc
 
+            access_via = ACCESS_VIA_CONSENT
             try:
                 plaintext_bytes = read_record_under_consent(
                     record=record,
@@ -514,6 +556,7 @@ def create_hospital_app(
 
         # 2. Otherwise, direct policy unwrap (e.g. owner access or in-network read)
         else:
+            access_via = ACCESS_VIA_POLICY
             try:
                 dek = unwrap_dek_via_policy(compiled_policy, keyring, wrapping)
                 plaintext_bytes = decrypt_record(record, dek)
@@ -538,6 +581,20 @@ def create_hospital_app(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=f"DEK unwrapping failed: {exc}",
                 ) from exc
+
+        # Log-before-release: record the successful read before returning
+        # plaintext. If the audit chain is unreachable this raises and the read
+        # returns 503, not the record (ARCHITECTURE.md §5, logging-as-precondition).
+        _log_granted(
+            audit_url,
+            repo,
+            audit_key,
+            record_id=record_id,
+            requester_id=payload.requester_id,
+            access_via=access_via,
+            actor_id=facility_id,
+            correlation_id=payload.correlation_id or str(uuid4()),
+        )
 
         return ReadRecordResponse(
             record_id=record.record_id,

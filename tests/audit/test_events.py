@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 
 from audit import (
+    ACCESS_VIA_OWNER,
     DENIED_BY_POLICY,
     EVENT_ACCESS_DENIED,
+    EVENT_ACCESS_GRANTED,
     EVENT_FEDERATION_DISCOVERY,
     EVENT_FEDERATION_REWRAP,
     create_genesis_entry,
     log_access_denied,
+    log_access_granted,
     log_federation_discovery,
     log_federation_rewrap,
 )
@@ -47,6 +50,53 @@ def test_log_access_denied_appends_a_shaped_entry(conn, audit_keypair):
         "reason": "held attribute keys do not satisfy the policy tree",
     }
     assert repo.get_chain_head(conn) == entry
+
+
+def test_log_access_granted_appends_a_shaped_entry(conn, audit_keypair):
+    priv, _pub = audit_keypair
+    _seed_genesis(conn, priv)
+
+    entry = log_access_granted(
+        conn,
+        record_id="rec-1",
+        requester_id="patient-001",
+        access_via=ACCESS_VIA_OWNER,
+        actor_id="facility-a",
+        correlation_id="flow-granted-1",
+        signing_key=priv,
+    )
+
+    assert entry.event_type == EVENT_ACCESS_GRANTED
+    assert entry.event_data == {
+        "record_id": "rec-1",
+        "requester_id": "patient-001",
+        "access_via": ACCESS_VIA_OWNER,
+    }
+    assert repo.get_chain_head(conn) == entry
+
+
+def test_log_access_granted_carries_no_key_material(conn, audit_keypair):
+    """The success entry names only identifiers -- never a DEK, key, or plaintext.
+
+    Regression guard for CONVENTIONS.md §2 rule 3: the granted event exists to
+    make reads auditable, and it must not become a place a secret leaks. There
+    is no parameter to pass key material through, and the persisted shape has
+    exactly three identifier fields.
+    """
+    priv, _pub = audit_keypair
+    _seed_genesis(conn, priv)
+
+    entry = log_access_granted(
+        conn,
+        record_id="rec-secret-diagnosis",
+        requester_id="dr-alice",
+        access_via="policy",
+        actor_id="facility-a",
+        correlation_id="flow-granted-2",
+        signing_key=priv,
+    )
+
+    assert set(entry.event_data.keys()) == {"record_id", "requester_id", "access_via"}
 
 
 def test_log_federation_discovery_hashes_patient_id_not_raw(conn, audit_keypair):

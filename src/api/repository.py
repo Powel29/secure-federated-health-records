@@ -130,6 +130,16 @@ class StorageRepository(Protocol):
         """Fetch a ConsentGrant by UUID."""
         ...
 
+    def list_consent_grants_by_patient(self, patient_id: str) -> list[ConsentGrant]:
+        """List every ConsentGrant whose subject is ``patient_id``.
+
+        Powers the patient portal's "who has access" view (P4-7). Returns all
+        grants for the patient regardless of status -- GRANTED, DENIED, and
+        REVOKED alike -- so the caller can render current access and its
+        history; filtering by status is the caller's concern.
+        """
+        ...
+
 
 class InMemoryStorageRepository:
     """Thread-safe, fully in-memory repository implementation."""
@@ -251,6 +261,14 @@ class InMemoryStorageRepository:
         with self._lock:
             return self.consent_grants.get(grant_id)
 
+    def list_consent_grants_by_patient(self, patient_id: str) -> list[ConsentGrant]:
+        with self._lock:
+            return [
+                grant
+                for grant in self.consent_grants.values()
+                if grant.patient_id == patient_id
+            ]
+
 
 class PostgresStorageRepository:
     """PostgreSQL storage repository backed by ``storage.repositories``."""
@@ -351,3 +369,10 @@ class PostgresStorageRepository:
 
     def get_consent_grant(self, grant_id: UUID) -> ConsentGrant | None:
         return self._consent_grants.get(grant_id)
+
+    def list_consent_grants_by_patient(self, patient_id: str) -> list[ConsentGrant]:
+        return [
+            grant
+            for grant in self._consent_grants.values()
+            if grant.patient_id == patient_id
+        ]
