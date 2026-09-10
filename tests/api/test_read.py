@@ -15,11 +15,13 @@ from __future__ import annotations
 import base64
 import datetime
 
+from api.hospital import create_hospital_app
 from consent.service import create_consent_grant, create_consent_request
 from contracts.enums import ConsentStatus
 from crypto_core import (
     public_key_to_pem,
 )
+from fastapi.testclient import TestClient
 
 
 class TestHospitalReadEndpoint:
@@ -255,6 +257,42 @@ class TestHospitalReadEndpoint:
 
         assert response.status_code == 403
         assert "scope" in response.json()["detail"]
+
+    def test_successful_read_fails_closed_when_audit_unreachable(self, test_setup):
+        """Logging-as-precondition: a read that cannot be logged returns no plaintext.
+
+        A successful owner read that would otherwise 200 instead returns 503 when
+        the audit service is unreachable, because ``_log_granted`` is
+        log-before-release (ARCHITECTURE.md §5). This is the negative test that
+        proves the success-path log is a precondition, not best-effort.
+        """
+        # Same seeded repo, but this app points at an unreachable audit service.
+        app = create_hospital_app(
+            facility_id="facility-a",
+            repository=test_setup["repo"],
+            expiry_manager=test_setup["expiry_manager"],
+            audit_service_url="http://127.0.0.1:1",
+        )
+        client = TestClient(app, raise_server_exceptions=False)
+        attrs = test_setup["attrs"]
+
+        owner_keyring = {
+            "authority-net:owner:patient-001": attrs["b64_keyring"][
+                "authority-net:owner:patient-001"
+            ]
+        }
+
+        response = client.post(
+            "/records/rec-001/read",
+            json={
+                "requester_id": "patient-001",
+                "holder_keyring": owner_keyring,
+                "correlation_id": "corr-read-audit-down-001",
+            },
+        )
+
+        assert response.status_code == 503
+        assert "audit service unavailable" in response.json()["detail"]
 
     def test_read_nonexistent_record_returns_404(self, test_setup):
         """Request for unknown record returns 404."""

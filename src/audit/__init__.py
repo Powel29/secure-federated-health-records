@@ -18,14 +18,19 @@ from audit.chain import (
     verify_full_chain,
 )
 from audit.events import (
+    ACCESS_VIA_CONSENT,
+    ACCESS_VIA_OWNER,
+    ACCESS_VIA_POLICY,
     DENIED_BY_CONSENT,
     DENIED_BY_CREDENTIAL,
     DENIED_BY_POLICY,
     DENIED_BY_REVOCATION_AUTHZ,
     EVENT_ACCESS_DENIED,
+    EVENT_ACCESS_GRANTED,
     EVENT_FEDERATION_DISCOVERY,
     EVENT_FEDERATION_REWRAP,
     log_access_denied,
+    log_access_granted,
     log_federation_discovery,
     log_federation_rewrap,
 )
@@ -41,11 +46,15 @@ from audit.share_registry import ShareNotFoundError, ShareRegistry
 
 __all__ = [
     "GENESIS_PREV_HASH",
+    "ACCESS_VIA_CONSENT",
+    "ACCESS_VIA_OWNER",
+    "ACCESS_VIA_POLICY",
     "DENIED_BY_CONSENT",
     "DENIED_BY_CREDENTIAL",
     "DENIED_BY_POLICY",
     "DENIED_BY_REVOCATION_AUTHZ",
     "EVENT_ACCESS_DENIED",
+    "EVENT_ACCESS_GRANTED",
     "EVENT_FEDERATION_DISCOVERY",
     "EVENT_FEDERATION_REWRAP",
     "AuditCommitFailedError",
@@ -60,6 +69,7 @@ __all__ = [
     "compute_entry_hash",
     "create_genesis_entry",
     "log_access_denied",
+    "log_access_granted",
     "log_federation_discovery",
     "log_federation_rewrap",
     "release_share_after_commit",
