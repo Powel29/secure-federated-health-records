@@ -14,6 +14,7 @@ pyca-provided primitive, not one of the three hand-rolled constructions.
 from __future__ import annotations
 
 import datetime
+import ipaddress
 
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature
@@ -78,6 +79,57 @@ def build_certificate(
         )
     )
     return builder.sign(issuer_private_key, hashes.SHA256())
+
+
+def build_self_signed_tls_cert(
+    *,
+    signing_key: ec.EllipticCurvePrivateKey,
+    common_name: str,
+    dns_names: tuple[str, ...] = (),
+    ip_addresses: tuple[str, ...] = (),
+    valid_days: int = 365,
+) -> x509.Certificate:
+    """Build a self-signed TLS server certificate with a SubjectAlternativeName.
+
+    For the P4-6 traffic-capture harness only: local, throwaway server certs so
+    the federation can be spoken to over TLS while a capture runs. Kept here so
+    the hazmat surface stays inside ``crypto_core`` (CONVENTIONS.md §2 rule 1) --
+    ``wire`` calls this, it does not touch ``cryptography`` itself.
+
+    Args:
+        signing_key: The server's own EC private key (self-signed: subject key
+            is this key's public half).
+        common_name: CN and the identity the SAN is built around.
+        dns_names: DNS SubjectAlternativeName entries (e.g. the service name,
+            ``"localhost"``).
+        ip_addresses: IP SubjectAlternativeName entries (e.g. ``"127.0.0.1"``).
+        valid_days: Bounded validity window in days (ARCHITECTURE.md §8: nothing
+            issues forever -- so no far-future certs even for a capture cert).
+
+    Returns:
+        The signed certificate.
+    """
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    san_entries: list[x509.GeneralName] = [x509.DNSName(d) for d in dns_names]
+    san_entries.extend(x509.IPAddress(ipaddress.ip_address(ip)) for ip in ip_addresses)
+
+    builder = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(signing_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + datetime.timedelta(days=valid_days))
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+    )
+    if san_entries:
+        builder = builder.add_extension(
+            x509.SubjectAlternativeName(san_entries), critical=False
+        )
+    return builder.sign(signing_key, hashes.SHA256())
 
 
 def verify_certificate_signature(

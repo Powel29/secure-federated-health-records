@@ -54,6 +54,7 @@ Each row links to a one-file ADR with the full context.
 | [0039](0039-audit-authority-services-and-deployment.md) | Audit + authority services as standalone, ephemeral FastAPI processes; break-glass share release made a real HTTP call; ADR-0034's `seq`-race gap closed with a process lock; ADR-0035's lifecycle audit-callback seam closed via HTTP client; shared-entrypoint deployment for both Path A (local) and Path B (Compose) | Accepted | 2026-09-09 | Ojas → all four | P4-2, P4-3 |
 | [0040](0040-end-to-end-orchestration-and-audit-wiring.md) | Cross-hospital break-glass end-to-end orchestration and audit wiring; automatic emergency wrapping in ingest; expiry registration in breakglass unlock | Accepted | 2026-09-09 | Avaneeth → all four | P4-4 |
 | [0041](0041-demo-driver-and-synthetic-dataset.md) | Demo driver and synthetic clinical dataset: one-command 8-Act examiner runner, realistic cardiac/diabetes/trauma profiles, dead-token and hash-chain verification | Accepted | 2026-09-10 | Nandini → all four | P4-5 |
+| [0042](0042-traffic-capture-harness.md) | Traffic-capture harness + TLS capture profile: loopback-only dumpcap capture producing plain/tls pcaps, TLS certs via `crypto_core`, double-gated verify escape hatch; analysis stays P5-5 | Proposed | 2026-09-10 | Nandini → all four | P4-6 |
 
 ## Owed, not yet written
 

@@ -1,15 +1,23 @@
-"""Generate local-only TLS certificates for the P4-6 traffic-capture harness."""
+"""Generate local-only TLS certificates for the P4-6 traffic-capture harness.
+
+TLS here exists only so the capture harness can record an *encrypted* wire in
+the ``capture-tls`` profile and prove no plaintext leaks even without TLS
+termination in front. These are throwaway, localhost-only server certs.
+
+All certificate/key primitives go through ``crypto_core`` (CONVENTIONS.md §2
+rule 1) -- this module holds no ``cryptography.hazmat`` imports of its own.
+"""
 
 from __future__ import annotations
 
-import ipaddress
 from pathlib import Path
 
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.x509.oid import NameOID
-
+from crypto_core import (
+    build_self_signed_tls_cert,
+    certificate_to_pem,
+    generate_ec_keypair,
+    private_key_to_pem,
+)
 
 SERVICES = {
     "authority-med": 8010,
@@ -19,61 +27,26 @@ SERVICES = {
     "facility-b": 8002,
 }
 
-
-def _write_key(path: Path, key: ec.EllipticCurvePrivateKey) -> None:
-    path.write_bytes(
-        key.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.TraditionalOpenSSL,
-            serialization.NoEncryption(),
-        )
-    )
-
-
-def _write_cert(path: Path, cert: x509.Certificate) -> None:
-    path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+# Bounded lifetime -- ARCHITECTURE.md §8 "nothing issues forever"; long enough
+# to outlive a demo/capture run, short enough that a stray cert is not durable.
+_TLS_VALID_DAYS = 90
 
 
 def generate(output_dir: Path) -> None:
     """Create one self-signed local certificate per federation service."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    for service, port in SERVICES.items():
-        key = ec.generate_private_key(ec.SECP256R1())
-
-        subject = issuer = x509.Name(
-            [x509.NameAttribute(NameOID.COMMON_NAME, service)]
+    for service in SERVICES:
+        priv, _pub = generate_ec_keypair()
+        cert = build_self_signed_tls_cert(
+            signing_key=priv,
+            common_name=service,
+            dns_names=(service, "localhost"),
+            ip_addresses=("127.0.0.1",),
+            valid_days=_TLS_VALID_DAYS,
         )
-
-        cert = (
-            x509.CertificateBuilder()
-            .subject_name(subject)
-            .issuer_name(issuer)
-            .public_key(key.public_key())
-            .serial_number(x509.random_serial_number())
-            .not_valid_before(__import__("datetime").datetime.now(
-                __import__("datetime").timezone.utc
-            ))
-            .not_valid_after(
-                __import__("datetime").datetime.now(
-                    __import__("datetime").timezone.utc
-                ).replace(year=2036)
-            )
-            .add_extension(
-                x509.SubjectAlternativeName(
-                    [
-                        x509.DNSName(service),
-                        x509.DNSName("localhost"),
-                        x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
-                    ]
-                ),
-                critical=False,
-            )
-            .sign(key, hashes.SHA256())
-        )
-
-        _write_key(output_dir / f"{service}.key", key)
-        _write_cert(output_dir / f"{service}.crt", cert)
+        (output_dir / f"{service}.key").write_bytes(private_key_to_pem(priv))
+        (output_dir / f"{service}.crt").write_bytes(certificate_to_pem(cert))
 
     print(f"TLS certificates written to {output_dir}")
 

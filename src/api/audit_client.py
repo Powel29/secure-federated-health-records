@@ -18,17 +18,31 @@ deferred to Phase 4:
 
 from __future__ import annotations
 
+import os
 from typing import Any, Callable
 
 import httpx
 
 DEFAULT_TIMEOUT_SECONDS = 5.0
 
+_DISABLE_VALUES = {"0", "false", "no"}
+
 
 def _tls_verify() -> bool:
-    """Allow the P4-6 local capture harness to use self-signed TLS."""
-    import os
-    return os.environ.get("TLS_VERIFY", "true").lower() not in {"0", "false", "no"}
+    """Whether to verify the audit service's TLS certificate.
+
+    Verification is **on by default** and can only be disabled by *both* opting
+    into the capture profile (``CAPTURE_TLS=true``) *and* explicitly setting
+    ``TLS_VERIFY=false``. This double gate keeps the escape hatch scoped to the
+    P4-6 ``capture-tls`` harness talking to :mod:`wire.tls`'s self-signed local
+    certs -- a stray ``TLS_VERIFY=false`` in any normal deployment does nothing
+    on its own, so this cannot silently become a fail-open path in production.
+    """
+    verify_off = os.environ.get("TLS_VERIFY", "true").strip().lower() in _DISABLE_VALUES
+    capture_tls = os.environ.get("CAPTURE_TLS", "false").strip().lower() not in (
+        {"", *_DISABLE_VALUES}
+    )
+    return not (verify_off and capture_tls)
 
 
 class AuditServiceError(RuntimeError):

@@ -56,6 +56,9 @@ ignore = ["ANN101", "ANN102"]
 "deploy/entrypoint.py" = ["S104"]
 "deploy/run_local.py" = ["S603"]
 "deploy/run_scenario.py" = ["S101"]
+# wire/capture.py shells out to the resolved `dumpcap` path and this repo's own
+# `deploy.run_scenario` via `sys.executable` -- fixed, never request-supplied.
+"wire/capture.py" = ["S603"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

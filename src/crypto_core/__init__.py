@@ -34,6 +34,7 @@ from crypto_core.symmetric import (
 )
 from crypto_core.x509_certs import (
     build_certificate,
+    build_self_signed_tls_cert,
     certificate_from_pem,
     certificate_public_key,
     certificate_to_pem,
@@ -52,6 +53,7 @@ __all__ = [
     "aes_gcm_decrypt",
     "aes_gcm_encrypt",
     "build_certificate",
+    "build_self_signed_tls_cert",
     "certificate_from_pem",
     "certificate_public_key",
     "certificate_to_pem",
