@@ -47,6 +47,7 @@ ignore = ["ANN101", "ANN102"]
 # CONVENTIONS.md §2 rule 4.
 "tests/**" = ["S101", "S105", "S106", "ANN"]
 "bench/**" = ["S101", "ANN"]
+"demo/**" = ["S101", "S105", "S106", "ANN"]
 # deploy/ is orchestration, not application code (not in CI's lint scope --
 # `ruff check src/ tests/` -- but kept clean anyway). Binding 0.0.0.0 is
 # required so a container's exposed port is reachable from outside it;
