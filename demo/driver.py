@@ -242,9 +242,11 @@ def standalone_federation(
             status=FacilityStatus.ACTIVE,
         ),
     )
-    repo_mod.insert_patient(conn, "pat-101", "authority-net")
-    repo_mod.insert_patient(conn, "pat-102", "authority-net")
-    repo_mod.insert_patient(conn, "pat-103", "authority-net")
+    # Patient rows are domain data owned by ``seed_synthetic_data`` (P4-5);
+    # ``standalone_federation`` sets up services + authorities + facilities only.
+    # Inserting patients here caused a UNIQUE-violation when the seed step ran
+    # afterwards -- one row per patient from each side -- so the demo
+    # integration tests failed under Postgres in CI.
     conn.commit()
 
     conn_fa = psycopg.connect(db_url)
