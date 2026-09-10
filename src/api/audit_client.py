@@ -25,6 +25,12 @@ import httpx
 DEFAULT_TIMEOUT_SECONDS = 5.0
 
 
+def _tls_verify() -> bool:
+    """Allow the P4-6 local capture harness to use self-signed TLS."""
+    import os
+    return os.environ.get("TLS_VERIFY", "true").lower() not in {"0", "false", "no"}
+
+
 class AuditServiceError(RuntimeError):
     """The Audit Service could not be reached, or refused the request."""
 
@@ -75,6 +81,7 @@ def append_entry(
                 "correlation_id": correlation_id,
             },
             timeout=timeout,
+            verify=_tls_verify(),
         )
         resp.raise_for_status()
     except httpx.HTTPError as exc:

@@ -1,21 +1,7 @@
 # Path B: Docker Compose deployment (P4-3, ARCHITECTURE.md §7).
 #
-# Six processes: the shared Postgres store, two facilities, two attribute
-# authorities, and the audit service -- plus a one-shot `bootstrap` service
-# that performs PKI generation, authority registration, and the hard boot
-# precondition (the audit chain must verify) once every other service
-# reports healthy.
-#
-# Inter-service traffic is plain HTTP by default -- this *is* the
-# `capture-plain` profile PROJECT.md §4A's traffic-analysis module captures
-# against, deliberately: confidentiality here comes from the
-# application-layer encryption (crypto_core/records/pre), not from
-# transport security. TLS between services (the `capture-tls` defence-in-
-# depth profile) is P4-6's addition, not this one's.
-#
-# Up:   docker compose -f deploy/docker-compose.yml up --build
-# Logs: docker compose -f deploy/docker-compose.yml logs -f
-# Down: docker compose -f deploy/docker-compose.yml down -v
+# Plain HTTP is the default capture mode.
+# TLS is enabled with TLS_ENABLED=true for the P4-6 defense-in-depth mode.
 
 services:
   store:
@@ -32,6 +18,18 @@ services:
       - store-data:/var/lib/postgresql/data
     networks: [federation]
 
+  migrate:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    depends_on:
+      store:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres@store:5432/ehr
+    entrypoint: ["python", "-m", "storage.migrate"]
+    networks: [federation]
+
   authority-med:
     build:
       context: ..
@@ -41,12 +39,19 @@ services:
       PORT: "8010"
       AUTHORITY_ID: authority-med
       OWNED_ATTRIBUTES: role
+      TLS_ENABLED: "${TLS_ENABLED:-false}"
+      SSL_CERTFILE: /tls/authority-med.crt
+      SSL_KEYFILE: /tls/authority-med.key
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8010/health', timeout=2)"]
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8010), 2).close()"]
       interval: 2s
       timeout: 3s
       retries: 30
+    ports:
+      - "8010:8010"
     networks: [federation]
+    volumes:
+      - ../wire/certs:/tls:ro
 
   authority-net:
     build:
@@ -57,12 +62,19 @@ services:
       PORT: "8011"
       AUTHORITY_ID: authority-net
       OWNED_ATTRIBUTES: "specialty,facility,owner"
+      TLS_ENABLED: "${TLS_ENABLED:-false}"
+      SSL_CERTFILE: /tls/authority-net.crt
+      SSL_KEYFILE: /tls/authority-net.key
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8011/health', timeout=2)"]
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8011), 2).close()"]
       interval: 2s
       timeout: 3s
       retries: 30
+    ports:
+      - "8011:8011"
     networks: [federation]
+    volumes:
+      - ../wire/certs:/tls:ro
 
   audit:
     build:
@@ -71,17 +83,27 @@ services:
     depends_on:
       store:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       SERVICE_ROLE: audit
       PORT: "8020"
       DATABASE_URL: postgresql://postgres@store:5432/ehr
       AUDIT_ACTOR_ID: audit-service
+      TLS_ENABLED: "${TLS_ENABLED:-false}"
+      SSL_CERTFILE: /tls/audit.crt
+      SSL_KEYFILE: /tls/audit.key
+      TLS_VERIFY: "${TLS_VERIFY:-true}"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8020/health', timeout=2)"]
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8020), 2).close()"]
       interval: 2s
       timeout: 3s
       retries: 30
+    ports:
+      - "8020:8020"
     networks: [federation]
+    volumes:
+      - ../wire/certs:/tls:ro
 
   facility-a:
     build:
@@ -97,13 +119,21 @@ services:
       PORT: "8001"
       FACILITY_ID: facility-a
       DATABASE_URL: postgresql://postgres@store:5432/ehr
-      AUDIT_SERVICE_URL: http://audit:8020
+      AUDIT_SERVICE_URL: "${AUDIT_SERVICE_URL:-http://audit:8020}"
+      TLS_ENABLED: "${TLS_ENABLED:-false}"
+      SSL_CERTFILE: /tls/facility-a.crt
+      SSL_KEYFILE: /tls/facility-a.key
+      TLS_VERIFY: "${TLS_VERIFY:-true}"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8001/health', timeout=2)"]
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8001), 2).close()"]
       interval: 2s
       timeout: 3s
       retries: 30
+    ports:
+      - "8001:8001"
     networks: [federation]
+    volumes:
+      - ../wire/certs:/tls:ro
 
   facility-b:
     build:
@@ -119,13 +149,21 @@ services:
       PORT: "8002"
       FACILITY_ID: facility-b
       DATABASE_URL: postgresql://postgres@store:5432/ehr
-      AUDIT_SERVICE_URL: http://audit:8020
+      AUDIT_SERVICE_URL: "${AUDIT_SERVICE_URL:-http://audit:8020}"
+      TLS_ENABLED: "${TLS_ENABLED:-false}"
+      SSL_CERTFILE: /tls/facility-b.crt
+      SSL_KEYFILE: /tls/facility-b.key
+      TLS_VERIFY: "${TLS_VERIFY:-true}"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8002/health', timeout=2)"]
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8002), 2).close()"]
       interval: 2s
       timeout: 3s
       retries: 30
+    ports:
+      - "8002:8002"
     networks: [federation]
+    volumes:
+      - ../wire/certs:/tls:ro
 
   bootstrap:
     build:
@@ -145,11 +183,12 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://postgres@store:5432/ehr
-      AUDIT_SERVICE_URL: http://audit:8020
-      AUTHORITY_MED_URL: http://authority-med:8010
-      AUTHORITY_NET_URL: http://authority-net:8011
-      FACILITY_A_URL: http://facility-a:8001
-      FACILITY_B_URL: http://facility-b:8002
+      AUDIT_SERVICE_URL: "${AUDIT_SERVICE_URL:-https://audit:8020}"
+      AUTHORITY_MED_URL: "${AUTHORITY_MED_URL:-https://authority-med:8010}"
+      AUTHORITY_NET_URL: "${AUTHORITY_NET_URL:-https://authority-net:8011}"
+      FACILITY_A_URL: "${FACILITY_A_URL:-https://facility-a:8001}"
+      FACILITY_B_URL: "${FACILITY_B_URL:-https://facility-b:8002}"
+      TLS_VERIFY: "${TLS_VERIFY:-true}"
     volumes:
       - ./pki:/pki
     networks: [federation]

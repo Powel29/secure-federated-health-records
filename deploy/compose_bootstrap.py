@@ -18,7 +18,12 @@ import os
 import sys
 from pathlib import Path
 
+import httpx
+import psycopg
+
+from crypto_core.asymmetric import public_key_from_pem
 from deploy import bootstrap
+from storage.repositories import insert_authority
 
 FEDERATION_CONFIG_PATH = Path("/pki/federation.json")
 
@@ -27,10 +32,12 @@ def main() -> int:
     """Run bootstrap steps 1-3 and 7 against the Compose network, then exit."""
     database_url = os.environ["DATABASE_URL"]
     audit_url = os.environ["AUDIT_SERVICE_URL"]
+
     authority_urls = {
         "authority-med": os.environ["AUTHORITY_MED_URL"],
         "authority-net": os.environ["AUTHORITY_NET_URL"],
     }
+
     facility_urls = {
         "facility-a": os.environ["FACILITY_A_URL"],
         "facility-b": os.environ["FACILITY_B_URL"],
@@ -46,11 +53,36 @@ def main() -> int:
 
         print("[3/7] waiting for authority services and registering them...")
         authority_certificates: dict[str, str] = {}
-        for authority_id, base_url in authority_urls.items():
-            bootstrap.wait_for_health(base_url)
-            authority_certificates[authority_id] = bootstrap.register_authority(
-                base_url, root, authority_id
-            )
+
+        with psycopg.connect(database_url) as conn:
+            for authority_id, base_url in authority_urls.items():
+                bootstrap.wait_for_health(base_url)
+
+                certificate_pem = bootstrap.register_authority(
+                    base_url,
+                    root,
+                    authority_id,
+                )
+
+                authority_certificates[authority_id] = certificate_pem
+
+                response = httpx.get(
+                    f"{base_url}/public-key",
+                    timeout=10.0,
+                    verify=bootstrap._http_verify(),
+                )
+                response.raise_for_status()
+
+                public_key = response.json()["public_key_pem"].encode("ascii")
+
+                insert_authority(
+                    conn,
+                    authority_id,
+                    authority_id.replace("-", " ").title(),
+                    public_key,
+                )
+
+            conn.commit()
 
         print("[4/7] waiting for the audit service...")
         bootstrap.wait_for_health(audit_url)
@@ -75,11 +107,14 @@ def main() -> int:
             authority_urls,
             audit_url,
         )
+
         print(f"federation config written to {FEDERATION_CONFIG_PATH}")
         print("\nfederation is up.")
-    except bootstrap.BootstrapError as exc:
+
+    except Exception as exc:
         print(f"bootstrap failed: {exc}", file=sys.stderr)
         return 1
+
     return 0
 
 
