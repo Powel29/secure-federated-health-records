@@ -14,6 +14,7 @@ import httpx
 import pytest
 from api.audit_client import (
     AuditServiceError,
+    _tls_verify,
     append_entry,
     make_lifecycle_audit_logger,
 )
@@ -39,10 +40,11 @@ class _FakeResponse:
 def test_append_entry_posts_expected_shape_and_returns_entry(monkeypatch):
     captured: dict = {}
 
-    def fake_post(url, *, json, timeout):
+    def fake_post(url, *, json, timeout, verify=True):
         captured["url"] = url
         captured["json"] = json
         captured["timeout"] = timeout
+        captured["verify"] = verify
         return _FakeResponse(
             200, {"entry": {"seq": 1, "event_type": json["event_type"]}}
         )
@@ -99,10 +101,34 @@ def test_append_entry_raises_on_non_2xx_status(monkeypatch):
         )
 
 
+def test_tls_verify_is_on_by_default(monkeypatch):
+    monkeypatch.delenv("TLS_VERIFY", raising=False)
+    monkeypatch.delenv("CAPTURE_TLS", raising=False)
+    assert _tls_verify() is True
+
+
+def test_tls_verify_off_alone_does_not_disable(monkeypatch):
+    """A lone TLS_VERIFY=false must NOT disable verification -- fail-open guard."""
+    monkeypatch.setenv("TLS_VERIFY", "false")
+    monkeypatch.delenv("CAPTURE_TLS", raising=False)
+    assert _tls_verify() is True
+
+
+def test_tls_verify_disabled_only_under_capture_double_gate(monkeypatch):
+    """Both CAPTURE_TLS=true and TLS_VERIFY=false are required to disable."""
+    monkeypatch.setenv("CAPTURE_TLS", "true")
+    monkeypatch.setenv("TLS_VERIFY", "false")
+    assert _tls_verify() is False
+
+    # capture profile on, but verify not explicitly disabled -> still verifies
+    monkeypatch.setenv("TLS_VERIFY", "true")
+    assert _tls_verify() is True
+
+
 def test_lifecycle_audit_logger_uses_entrys_own_actor_and_correlation(monkeypatch):
     captured: dict = {}
 
-    def fake_post(url, *, json, timeout):
+    def fake_post(url, *, json, timeout, verify=True):
         captured.update(json)
         return _FakeResponse(200, {"entry": {}})
 

@@ -30,6 +30,7 @@ import argparse
 import base64
 import datetime
 import json
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,6 +56,11 @@ from pre.elgamal import generate_keypair as generate_pre_keypair
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = REPO_ROOT / "deploy" / "pki" / "federation.json"
+
+
+def _tls_verify() -> bool:
+    """Allow the P4-6 local capture harness to use self-signed TLS."""
+    return os.environ.get("TLS_VERIFY", "true").lower() not in {"0", "false", "no"}
 
 
 def _unwrap_rewrapped_dek(rewrapped_dek: bytes, pre_priv: int, record_id: str) -> bytes:
@@ -125,7 +131,7 @@ def run_scenario(
                 for line in detail.strip().splitlines():
                     print(f"    {line}")
 
-    client = httpx.Client(timeout=10.0)
+    client = httpx.Client(timeout=10.0, verify=_tls_verify())
 
     # -------------------------------------------------------------------------
     # Step 1: Health & Bootstrap Verification
@@ -219,6 +225,7 @@ def run_scenario(
             "owner": True,
         },
     ).raise_for_status()
+
 
     # Obtain authoring attribute keys for compilation
     def get_auth_key(base_url: str, name: str, val: str) -> bytes:
@@ -351,15 +358,15 @@ def run_scenario(
     log("  * Policy satisfied: Dr. Bob successfully decrypted Alice's record!")
 
     # -------------------------------------------------------------------------
-    # Step 5: Out-of-Network Emergency Attempt & Denial at Facility B
-    # -------------------------------------------------------------------------
+      # Step 5: Out-of-Network Emergency Attempt & Denial
     log("[5/9] Out-of-network emergency: Alice unconscious at Facility B...")
+
     carol_routine_keyring = {
         "authority-med:role:emergency-physician": base64.b64encode(
             k_em_physician
         ).decode("ascii"),
     }
-    # Routine read fails because cardiology policy requires (physician AND cardiology)
+
     read_carol_denied = client.post(
         f"{endpoints.facility_b}/records/{record_id}/read",
         json={
@@ -368,12 +375,15 @@ def run_scenario(
             "correlation_id": "corr-read-carol-denied",
         },
     )
-    assert read_carol_denied.status_code == 403
-    log(
-        "  * Dr. Carol attempted routine read: 403 Forbidden (Denied by policy)\n"
-        "  * Denial logged to Audit Service"
+
+    if read_carol_denied.status_code != 403:
+        raise RuntimeError(
+        f"Expected 403 at Facility B, got "
+        f"{read_carol_denied.status_code}: "
+        f"{read_carol_denied.text}"
     )
 
+    log("  ✓ Facility B routine access correctly denied (403)")
     # -------------------------------------------------------------------------
     # Step 6: Federated Discovery & Emergency Assertion
     # -------------------------------------------------------------------------
@@ -520,6 +530,12 @@ def main() -> int:
         default=5.0,
         help="Emergency duration time-box in seconds.",
     )
+    parser.add_argument(
+        "--scheme",
+        choices=("http", "https"),
+        default="http",
+        help="Transport scheme for the scenario endpoints.",
+    )
     args = parser.parse_args()
 
     config_data: dict[str, Any] | None = None
@@ -529,14 +545,22 @@ def main() -> int:
         except Exception as exc:
             print(f"Warning: could not read {args.config}: {exc}", file=sys.stderr)
 
-    endpoints = ScenarioEndpoints()
+    scheme = args.scheme
+    endpoints = ScenarioEndpoints(
+        authority_med=f"{scheme}://127.0.0.1:8010",
+        authority_net=f"{scheme}://127.0.0.1:8011",
+        audit=f"{scheme}://127.0.0.1:8020",
+        facility_a=f"{scheme}://127.0.0.1:8001",
+        facility_b=f"{scheme}://127.0.0.1:8002",
+    )
+
     if config_data:
         endpoints = ScenarioEndpoints(
-            authority_med=config_data["authorities"]["authority-med"]["endpoint"],
-            authority_net=config_data["authorities"]["authority-net"]["endpoint"],
-            audit=config_data["audit"]["endpoint"],
-            facility_a="http://127.0.0.1:8001",
-            facility_b="http://127.0.0.1:8002",
+            authority_med=f"{scheme}://127.0.0.1:8010",
+            authority_net=f"{scheme}://127.0.0.1:8011",
+            audit=f"{scheme}://127.0.0.1:8020",
+            facility_a=f"{scheme}://127.0.0.1:8001",
+            facility_b=f"{scheme}://127.0.0.1:8002",
         )
 
     print("Executing Cross-Hospital Break-Glass Scenario (P4-4)...")

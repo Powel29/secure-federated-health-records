@@ -41,7 +41,27 @@ def main() -> int:
 
     port = int(os.environ.get("PORT", "8000"))
     host = os.environ.get("HOST", "0.0.0.0")
-    uvicorn.run(_FACTORIES[role], host=host, port=port, factory=True, log_level="info")
+
+    tls_enabled = os.environ.get("TLS_ENABLED", "").lower() in {"1", "true", "yes"}
+    ssl_certfile = os.environ.get("SSL_CERTFILE")
+    ssl_keyfile = os.environ.get("SSL_KEYFILE")
+
+    if tls_enabled and not (ssl_certfile and ssl_keyfile):
+        print(
+            "TLS_ENABLED requires SSL_CERTFILE and SSL_KEYFILE",
+            file=sys.stderr,
+        )
+        return 2
+
+    uvicorn.run(
+        _FACTORIES[role],
+        host=host,
+        port=port,
+        factory=True,
+        log_level="info",
+        ssl_certfile=ssl_certfile if tls_enabled else None,
+        ssl_keyfile=ssl_keyfile if tls_enabled else None,
+    )
     return 0
 
 
