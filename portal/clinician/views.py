@@ -52,6 +52,25 @@ REQUEST_TTL_DAYS = 7
 _DISCOVERY_SESSION_KEY = "clinician.discovery"
 
 
+def _session_safe(meta: dict[str, Any]) -> dict[str, Any]:
+    """Store metadata carries datetimes; the session store needs JSON scalars."""
+    return {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in meta.items()}
+
+
+def _discover(facility_id: str, patient_id: str) -> list[dict[str, Any]]:
+    """Federated discovery + read-only metadata for display (decoration only)."""
+    found = []
+    for rid in services.facility_discover(facility_id, patient_id):
+        try:
+            meta = store_reader.record_meta(rid)
+        except Exception:  # noqa: BLE001 - metadata is decoration only
+            meta = None
+        found.append(
+            _session_safe(meta) if meta else {"record_id": rid, "facility_id": "?", "content_type": "?"}
+        )
+    return found
+
+
 def _subject(subject_id: str) -> dict[str, Any] | None:
     try:
         return services.custodian_subject(subject_id)
@@ -246,18 +265,10 @@ def breakglass(request: Any) -> HttpResponse:
 
     if action == "discover":
         try:
-            ids = services.facility_discover(ctx["facility_id"], patient_id)
+            found = _discover(ctx["facility_id"], patient_id)
         except ServiceError as exc:
             ctx["error"] = f"Discovery refused — {exc.service}: {exc.detail}"
             return render(request, "clinician/breakglass.html", ctx, status=502)
-        found = []
-        for rid in ids:
-            meta = None
-            try:
-                meta = store_reader.record_meta(rid)
-            except Exception:  # noqa: BLE001 - metadata is decoration only
-                meta = None
-            found.append(meta or {"record_id": rid, "facility_id": "?", "content_type": "?"})
         session = request.session.get(_DISCOVERY_SESSION_KEY) or {}
         session[patient_id] = found
         request.session[_DISCOVERY_SESSION_KEY] = session
@@ -476,17 +487,10 @@ def consent_request(request: Any) -> HttpResponse:
         return render(request, "clinician/consent_request.html", ctx, status=400)
     if action == "discover":
         try:
-            ids = services.facility_discover(ctx["facility_id"], patient_id)
+            found = _discover(ctx["facility_id"], patient_id)
         except ServiceError as exc:
             ctx["error"] = f"Discovery refused — {exc.service}: {exc.detail}"
             return render(request, "clinician/consent_request.html", ctx, status=502)
-        found = []
-        for rid in ids:
-            try:
-                meta = store_reader.record_meta(rid)
-            except Exception:  # noqa: BLE001
-                meta = None
-            found.append(meta or {"record_id": rid, "facility_id": "?", "content_type": "?"})
         session = request.session.get(_DISCOVERY_SESSION_KEY) or {}
         session[patient_id] = found
         request.session[_DISCOVERY_SESSION_KEY] = session

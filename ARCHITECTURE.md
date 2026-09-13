@@ -335,7 +335,7 @@ undermine the paper's central claim.
 
 ### Runtime topology
 
-Six processes. The shared `store` holds the encrypted records; the other five each have their own signing key and a small local DB for keys and state:
+Seven processes. The shared `store` holds the encrypted records; the five federation services each have their own signing key and a small local DB for keys and state; the `custodian` (ADR-0043) is the portals' key agent:
 
 | Process | Port | Role | Holds |
 |---|---|---|---|
@@ -345,6 +345,13 @@ Six processes. The shared `store` holds the encrypted records; the other five ea
 | `authority-med` | 8010 | Medical council attribute authority | Attribute keys for `role:*` |
 | `authority-net` | 8011 | Hospital network attribute authority | Attribute keys for `specialty:*`, `facility:*` |
 | `audit` | 8020 | Audit service — chain custodian + share 3 | Hash-chained log, break-glass share |
+| `custodian` | 8030 | Key Custodian — every subject's key agent (ADR-0043) | Per-subject signing keys, certificates, PRE keypairs, issued credentials; clinician-custody share 1 per record. Signs and presents on request; **decides nothing** |
+
+The three Django portals (C16) run beside these (`portal/manage.py runserver`,
+port 8000, or all-in-one via `python -m deploy.run_portal_demo`) and hold no
+keys: anything that needs one goes to the `custodian` by `subject_id` after
+login; grant submission, discovery, emergency search and chain reads go to the
+facilities and the audit service directly.
 
 The `audit` service **must** be a separate process. If it shares memory with a
 facility node, "the audit service releases its share only after committing"

@@ -2,6 +2,10 @@
 #
 # Plain HTTP is the default capture mode.
 # TLS is enabled with TLS_ENABLED=true for the P4-6 defense-in-depth mode.
+#
+# The `custodian` service (ADR-0043) is the portals' key agent; the Django
+# portals themselves run outside Compose (see portal/README.md) and are pointed
+# at the published ports 8001/8002/8010/8011/8020/8030.
 
 services:
   store:
@@ -165,6 +169,39 @@ services:
     volumes:
       - ../wire/certs:/tls:ro
 
+  custodian:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    depends_on:
+      audit:
+        condition: service_healthy
+      facility-a:
+        condition: service_healthy
+      facility-b:
+        condition: service_healthy
+    environment:
+      SERVICE_ROLE: custodian
+      PORT: "8030"
+      DATABASE_URL: postgresql://postgres@store:5432/ehr
+      AUDIT_SERVICE_URL: "${AUDIT_SERVICE_URL:-http://audit:8020}"
+      AUTHORITY_URLS: "${AUTHORITY_URLS:-authority-med=http://authority-med:8010,authority-net=http://authority-net:8011}"
+      FACILITY_URLS: "${FACILITY_URLS:-facility-a=http://facility-a:8001,facility-b=http://facility-b:8002}"
+      TLS_ENABLED: "${TLS_ENABLED:-false}"
+      SSL_CERTFILE: /tls/custodian.crt
+      SSL_KEYFILE: /tls/custodian.key
+      TLS_VERIFY: "${TLS_VERIFY:-true}"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8030), 2).close()"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    ports:
+      - "8030:8030"
+    networks: [federation]
+    volumes:
+      - ../wire/certs:/tls:ro
+
   bootstrap:
     build:
       context: ..
@@ -180,6 +217,8 @@ services:
       facility-a:
         condition: service_healthy
       facility-b:
+        condition: service_healthy
+      custodian:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://postgres@store:5432/ehr

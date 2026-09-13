@@ -55,6 +55,7 @@ Each row links to a one-file ADR with the full context.
 | [0040](0040-end-to-end-orchestration-and-audit-wiring.md) | Cross-hospital break-glass end-to-end orchestration and audit wiring; automatic emergency wrapping in ingest; expiry registration in breakglass unlock | Accepted | 2026-09-09 | Avaneeth → all four | P4-4 |
 | [0041](0041-demo-driver-and-synthetic-dataset.md) | Demo driver and synthetic clinical dataset: one-command 8-Act examiner runner, realistic cardiac/diabetes/trauma profiles, dead-token and hash-chain verification | Accepted | 2026-09-10 | Nandini → all four | P4-5 |
 | [0042](0042-traffic-capture-harness.md) | Traffic-capture harness + TLS capture profile: loopback-only dumpcap capture producing plain/tls pcaps, TLS certs via `crypto_core`, double-gated verify escape hatch; analysis stays P5-5 | Proposed | 2026-09-10 | Nandini → all four | P4-6 |
+| [0043](0043-key-custodian-and-portal-integration.md) | Key Custodian service (sixth process) as every subject's key agent; portals sign/read/break-glass through it and never hold keys; consent ledger mirror, break-glass cases and patient notifications in the portal DB with `patient.lookup` / `patient.notification` / `consent.decision` chain events; `pre.delivery` decode | Proposed | 2026-09-13 | Ojas → all four | P4-7/8/8a/9/10 |
 
 ## Owed, not yet written
 

@@ -1,9 +1,16 @@
 # Running the federation
 
-Two ways to bring up all six processes (`store`, `facility-a`, `facility-b`,
-`authority-med`, `authority-net`, `audit`) — see `ARCHITECTURE.md` §7 for the
-full topology and bootstrap-sequence rationale, and ADR-0039 for the
-implementation decisions behind what's here.
+Two ways to bring up all seven processes (`store`, `facility-a`, `facility-b`,
+`authority-med`, `authority-net`, `audit`, and the portals' key agent
+`custodian`, ADR-0043) — see `ARCHITECTURE.md` §7 for the full topology and
+bootstrap-sequence rationale, and ADR-0039 for the implementation decisions
+behind what's here.
+
+**Want the browser demo?** `python -m deploy.run_portal_demo` (with
+`DATABASE_URL` set) runs everything below *plus* the seeded dataset, the key
+deposits and the three Django portals in one process — see `portal/README.md`.
+The two paths here are the multi-process deployments the phase exit criteria
+and the traffic-capture module need.
 
 Both paths run the same bootstrap sequence (`deploy/bootstrap.py`): apply
 migrations, generate the federation PKI (root anchor + facility CAs), start
@@ -27,8 +34,8 @@ Then, from the repository root:
 DATABASE_URL="postgresql://postgres@localhost:55432/ehr_local" python -m deploy.run_local
 ```
 
-This prints each bootstrap step as it happens, then the five services' URLs.
-Press Ctrl+C to stop everything together.
+This prints each bootstrap step as it happens, then the six services' URLs
+(the custodian on 8030 last). Press Ctrl+C to stop everything together.
 
 ## Path B — Docker Compose
 
@@ -38,7 +45,7 @@ From the repository root:
 docker compose -f deploy/docker-compose.yml up --build
 ```
 
-Compose brings up Postgres (`store`), the five application services, and a
+Compose brings up Postgres (`store`), the six application services, and a
 one-shot `bootstrap` container that runs once every other service reports
 healthy. Watch its logs for the same step-by-step output as Path A:
 

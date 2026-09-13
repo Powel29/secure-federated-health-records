@@ -143,7 +143,16 @@ def trace(request: Any) -> HttpResponse:
     cid = request.GET.get("cid", "").strip()
     stats, store_error = _store(store_reader.chain_stats, default={"head": None, "length": 0})
     recent_flows, _ = _store(store_reader.breakglass_correlations, 10, default=[])
-    ctx.update({"cid": cid, "stats": stats, "store_error": store_error, "verify": _verify(), "flows": recent_flows})
+    ctx.update(
+        {
+            "cid": cid,
+            "stats": stats,
+            "store_error": store_error,
+            "verify": _verify(),
+            "flows": recent_flows,
+            "cases_total": BreakglassCase.objects.count(),
+        }
+    )
     if cid:
         entries, err = _store(store_reader.audit_by_correlation, cid, default=[])
         entries = _decode(entries)

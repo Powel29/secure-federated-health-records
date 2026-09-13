@@ -88,3 +88,17 @@ class TraceTests(TestCase):
         self.assertContains(resp, "never issues an attribute itself")
         req.refresh_from_db()
         self.assertEqual(req.status, RequestStatus.PENDING)
+
+
+class OverviewTests(TestCase):
+    def test_overview_renders_with_chain_stats(self) -> None:
+        admin()
+        self.client.login(username="auditor", password="pw12345")
+        with mock.patch("portal_core.store_reader.chain_stats", return_value={"head": None, "length": 3}), mock.patch(
+            "portal_core.store_reader.recent_audit", return_value=[]
+        ), mock.patch("portal_core.store_reader.event_type_counts", return_value=[]), patched(
+            audit_verify=mock.Mock(return_value={"verified": True, "head_seq": 2})
+        ):
+            resp = self.client.get("/oversight/")
+        self.assertContains(resp, "PASS")
+        self.assertContains(resp, "Trace by correlation ID")

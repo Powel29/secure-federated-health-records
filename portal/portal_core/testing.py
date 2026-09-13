@@ -10,6 +10,7 @@ crypto core, which has its own suites under ``tests/``.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from typing import Any, Iterator
 from unittest import mock
 
@@ -125,7 +126,8 @@ RECORD_META = {
     "facility_name": "St. Jude Hospital",
     "content_type": "application/json",
     "ciphertext_bytes": 512,
-    "created_at": "2026-09-06T14:30:00+00:00",
+    # A real datetime, as the store reader returns -- the session cache must cope.
+    "created_at": datetime(2026, 9, 6, 14, 30, tzinfo=timezone.utc),
     "lifecycle_state": "granted",
 }
 

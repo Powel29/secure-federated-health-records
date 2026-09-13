@@ -274,6 +274,13 @@ than this is the fastest way to lose credibility in the viva.
    collusion-resistant** in the way pairing-based CP-ABE is: two users could in
    principle pool attribute keys to satisfy a policy neither satisfies alone.
    This must be stated explicitly in the paper. Real CP-ABE is a stretch goal.
+5. **The portals' key agent is one shared process (ADR-0043).** In the demo a
+   single Key Custodian holds every synthetic persona's signing key, PRE key
+   and issued credentials and signs on their behalf after portal login; in a
+   real deployment each person's agent would be their own device or enclave.
+   This simplification does not weaken the threshold property (the custodian
+   holds share 1 only; the audit service still commits before releasing share
+   3; the policy engine still gates every read), but it must be stated.
 
 ---
 

@@ -34,6 +34,7 @@ SRC_DIR = REPO_ROOT / "src"
 FEDERATION_CONFIG_PATH = REPO_ROOT / "deploy" / "pki" / "federation.json"
 
 _AUDIT_PORT = 8020
+_CUSTODIAN_PORT = 8030  # Key Custodian, ADR-0043 (the portals' key agent)
 _AUTHORITY_PORTS = {"authority-med": 8010, "authority-net": 8011}
 _FACILITY_PORTS = {"facility-a": 8001, "facility-b": 8002}
 
@@ -85,6 +86,23 @@ def _default_specs(database_url: str, audit_base_url: str) -> list[ServiceSpec]:
             },
         )
         for facility_id, port in _FACILITY_PORTS.items()
+    )
+    specs.append(
+        ServiceSpec(
+            "custodian",
+            "custodian",
+            _CUSTODIAN_PORT,
+            {
+                "DATABASE_URL": database_url,
+                "AUDIT_SERVICE_URL": audit_base_url,
+                "AUTHORITY_URLS": ",".join(
+                    f"{aid}={_base_url(port)}" for aid, port in _AUTHORITY_PORTS.items()
+                ),
+                "FACILITY_URLS": ",".join(
+                    f"{fid}={_base_url(port)}" for fid, port in _FACILITY_PORTS.items()
+                ),
+            },
+        )
     )
     return specs
 
@@ -168,9 +186,14 @@ def main() -> int:
         for port in _FACILITY_PORTS.values():
             bootstrap.wait_for_health(_base_url(port))
 
+        print("[6/7] starting the key custodian (ADR-0043)...")
+        for spec in specs:
+            if spec.role == "custodian":
+                processes[spec.name] = _spawn(spec)
+        bootstrap.wait_for_health(_base_url(_CUSTODIAN_PORT))
         print(
-            "[6/7] seeding synthetic data -- left to the demo driver (P4-5); "
-            "skipped here."
+            "      seeding synthetic data -- left to the demo driver (P4-5) or "
+            "`python -m deploy.run_portal_demo`; skipped here."
         )
 
         print("[7/7] verifying the audit chain from genesis...")
