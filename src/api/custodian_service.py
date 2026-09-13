@@ -41,6 +41,7 @@ Invariants:
 from __future__ import annotations
 
 import base64
+import binascii
 import datetime
 import logging
 import threading
@@ -50,13 +51,15 @@ from uuid import uuid4
 
 import httpx
 from breakglass import create_emergency_assertion
+from breakglass.emergency_key import generate_emergency_key, split_emergency_key
 from consent.service import (
     create_consent_grant,
     create_consent_request,
     revoke_consent_grant,
 )
 from contracts import AttributeCredential, Record, TransitionEvent
-from contracts.enums import ConsentStatus
+from contracts.enums import ConsentStatus, PolicyNodeType
+from contracts.policy import PolicyTree
 from crypto_core import (
     generate_key,
     private_key_from_pem,
@@ -82,6 +85,8 @@ from api.custodian_schemas import (
     DepositShareResponse,
     ErrorResponse,
     HealthResponse,
+    IngestPayload,
+    IngestResult,
     PublicKeyResponse,
     ReadRecordPayload,
     ReadRecordResult,
@@ -293,6 +298,52 @@ def _holder_keyring(
         keyring[label] = resp.json()["key_b64"]
         presented.append(label)
     return keyring, presented
+
+
+def _policy_leaves(tree: PolicyTree) -> list[tuple[str, str, str]]:
+    """Every ``(authority_id, name, value)`` leaf a policy tree references."""
+    if tree.node_type is PolicyNodeType.LEAF:
+        if tree.attribute is None or tree.authority_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="malformed policy leaf"
+            )
+        return [(tree.authority_id, tree.attribute.name, tree.attribute.value)]
+    leaves: list[tuple[str, str, str]] = []
+    for child in tree.children:
+        leaves.extend(_policy_leaves(child))
+    return leaves
+
+
+def _authoring_keyring(
+    http: httpx.Client,
+    endpoints: CustodianEndpoints,
+    leaves: list[tuple[str, str, str]],
+) -> dict[str, str]:
+    """Mint/fetch the authoring-side key for each leaf at its owning authority.
+
+    ``/attribute-keys/author`` is the same path ``demo/seed_data.py`` and
+    ``deploy/run_scenario.py`` use to seal leaves at ingest; its access
+    limitation is documented on the authority service itself.
+    """
+    keyring: dict[str, str] = {}
+    for authority_id, name, value in leaves:
+        label = f"{authority_id}:{name}:{value}"
+        if label in keyring:
+            continue
+        authority_url = endpoints.authorities.get(authority_id)
+        if not authority_url:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"policy references unknown authority {authority_id!r}",
+            )
+        data = _post(
+            http,
+            f"{authority_url}/attribute-keys/author",
+            {"name": name, "value": value},
+            what=f"authoring key for {label}",
+        )
+        keyring[label] = data["key_b64"]
+    return keyring
 
 
 # --- App factory -------------------------------------------------------------
@@ -607,6 +658,104 @@ def create_custodian_app(
             access_via=access_via,
             correlation_id=body["correlation_id"],
             attributes_presented=presented,
+        )
+
+    @app.post(
+        "/subjects/{subject_id}/records",
+        response_model=IngestResult,
+        status_code=status.HTTP_201_CREATED,
+        responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+    )
+    def ingest_own_record(
+        subject_id: str,
+        payload: IngestPayload,
+        vault: VaultDep,
+        endpoints: EndpointsDep,
+        http: HttpDep,
+    ) -> IngestResult:
+        """Upload a record of the patient's own (P3-14 ingest via the key agent).
+
+        Fails closed before touching any service if the patient holds no
+        ``owner`` credential: the facility would seal a record the patient
+        could never open, so the request is refused instead.
+        """
+        material = _require_subject(vault, subject_id)
+        _require_kind(material, "patient")
+        owner_creds = [
+            c
+            for c in material.credentials
+            if c.attribute.name == "owner" and c.attribute.value == subject_id
+        ]
+        if not owner_creds:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"patient {subject_id!r} holds no owner credential; refusing to "
+                    "seal a record its owner could not open (ADR-0016)"
+                ),
+            )
+        owner_authority_id = owner_creds[0].issuer_id
+        facility_url = _facility_url(endpoints, payload.facility_id)
+        if not endpoints.audit:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="no audit service configured; share 3 has nowhere to go",
+            )
+        try:
+            plaintext = base64.b64decode(payload.content_b64, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"content_b64 is not valid base64: {exc}",
+            ) from exc
+        if not plaintext:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="empty record"
+            )
+        record_id = payload.record_id or f"rec-{uuid4().hex[:8]}"
+
+        # Authoring keys for every clinical leaf plus the owner leaf.
+        leaves = _policy_leaves(payload.clinical_policy)
+        leaves.append((owner_authority_id, "owner", subject_id))
+        keyring = _authoring_keyring(http, endpoints, leaves)
+
+        # 2-of-3 emergency key: share 3 to the audit service (commit-before-
+        # release custody), share 1 to clinician custody here, share 2 unused
+        # (home authority) -- the same split the seed performs.
+        emergency_key = generate_emergency_key()
+        share1, _share2, share3 = split_emergency_key(emergency_key)
+        _post(
+            http,
+            f"{endpoints.audit}/breakglass/shares",
+            {"share_key": record_id, "x": share3[0], "share_hex": share3[1].hex()},
+            what="audit share deposit",
+        )
+        vault.put_share(record_id, share1)
+
+        data = _post(
+            http,
+            f"{facility_url}/records/ingest",
+            {
+                "plaintext_b64": payload.content_b64,
+                "patient_id": subject_id,
+                "owner_authority_id": owner_authority_id,
+                "clinical_policy": payload.clinical_policy.model_dump(mode="json"),
+                "attribute_keyring": keyring,
+                "search_terms": payload.search_terms or None,
+                "emergency_key_b64": base64.b64encode(emergency_key).decode("ascii"),
+                "content_type": payload.content_type,
+                "record_id": record_id,
+            },
+            what="record ingest",
+        )
+        return IngestResult(
+            record_id=data["record_id"],
+            facility_id=payload.facility_id,
+            patient_id=subject_id,
+            policy_id=data["policy_id"],
+            lifecycle_state=data["lifecycle_state"],
+            search_terms_indexed=data["search_terms_indexed"],
+            audit_share_deposited=True,
         )
 
     @app.post(

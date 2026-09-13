@@ -22,7 +22,7 @@ from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone as dj_tz
 from django.views.decorators.http import require_POST
-from portal_core import notify, services, store_reader
+from portal_core import notify, policies, services, store_reader
 from portal_core.access import role_required
 from portal_core.services import ServiceError
 
@@ -381,6 +381,82 @@ def record_view(request: Any, record_id: str) -> HttpResponse:
     response = render(request, "patient/record_view.html", ctx)
     response["Cache-Control"] = "no-store"
     return response
+
+
+# --- Upload: the patient's own record, sealed by the facility -------------------
+
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+
+
+@role_required(Role.PATIENT)
+def upload(request: Any) -> HttpResponse:
+    """Hand a file to the key agent, which has the facility encrypt and index it.
+
+    The bytes pass through this request once and are never stored by the
+    portal; what lands in the store is AES-256-GCM ciphertext sealed under
+    ``OR(chosen clinical policy, owner:<patient_id>)`` (ADR-0016).
+    """
+    ctx = _base_ctx(request, "Encrypted health records")
+    subject_id = ctx["subject_id"]
+    enrolled = services_subject_safe(subject_id)
+    facilities = list(settings.FACILITY_URLS)
+    default_facility = (
+        request.user.profile.home_facility_id
+        or (enrolled or {}).get("facility_id")
+        or (facilities[0] if facilities else "")
+    )
+    ctx.update(
+        {
+            "enrolled": enrolled,
+            "facilities": facilities,
+            "facility_id": default_facility,
+            "presets": policies.preset_choices(),
+            "preset": "general",
+            "search_terms": "",
+            "max_mb": MAX_UPLOAD_BYTES // (1024 * 1024),
+        }
+    )
+    if request.method != "POST":
+        return render(request, "patient/upload.html", ctx)
+
+    upload_file = request.FILES.get("file")
+    preset = request.POST.get("preset", "")
+    facility_id = request.POST.get("facility_id", "").strip()
+    terms = [t.strip() for t in request.POST.get("search_terms", "").split(",") if t.strip()]
+    ctx.update({"preset": preset, "facility_id": facility_id, "search_terms": ", ".join(terms)})
+
+    policy = policies.policy_for(preset)
+    if upload_file is None or policy is None or facility_id not in facilities:
+        ctx["error"] = "Choose a file, a clinical access policy and a facility."
+        return render(request, "patient/upload.html", ctx, status=400)
+    if upload_file.size == 0 or upload_file.size > MAX_UPLOAD_BYTES:
+        ctx["error"] = f"The file must be between 1 byte and {ctx['max_mb']} MB."
+        return render(request, "patient/upload.html", ctx, status=400)
+
+    content = upload_file.read()
+    content_type = upload_file.content_type or "application/octet-stream"
+    try:
+        result = services.custodian_ingest(
+            subject_id,
+            facility_id=facility_id,
+            content=content,
+            content_type=content_type,
+            clinical_policy=policy,
+            search_terms=terms,
+        )
+    except ServiceError as exc:
+        ctx["error"] = f"Not sealed — {exc.service}: {exc.detail}"
+        return render(request, "patient/upload.html", ctx, status=403 if exc.is_denial else 503)
+    finally:
+        del content
+
+    messages.success(
+        request,
+        f"Sealed {result['record_id']} at {facility_id}: policy {result['policy_id'][:8]}…, "
+        f"{result['search_terms_indexed']} search term(s) indexed, share 3 in audit custody. "
+        f"Your owner leaf is present — open it under Encrypted health records.",
+    )
+    return redirect("patient:records")
 
 
 def _renderable(content_type: str) -> bool:

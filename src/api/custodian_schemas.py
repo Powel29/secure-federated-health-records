@@ -21,6 +21,7 @@ from typing import Any, Literal
 from contracts import AttributeCredential, TransitionEvent
 from contracts.consent import ConsentGrant, ConsentRequest
 from contracts.enums import ReasonCode
+from contracts.policy import PolicyTree
 from pydantic import BaseModel, Field
 
 SubjectKind = Literal["patient", "clinician"]
@@ -227,6 +228,38 @@ class BreakglassResult(BaseModel):
     content_type: str | None
     plaintext_b64: str | None
     detail: str = "Emergency access granted; DEK recovered through PRE delivery"
+
+
+class IngestPayload(BaseModel):
+    """A patient uploads a record of their own through their key agent (P3-14).
+
+    The custodian does what ``demo/seed_data.py`` does for the synthetic
+    dataset: mints and 2-of-3-splits the record's emergency key (share 3 to
+    the audit service, share 1 to clinician custody here), obtains the
+    authoring attribute keys the ``clinical_policy`` leaves reference plus the
+    patient's own ``owner:<patient_id>`` key, and hands the bytes to the
+    facility's ``/records/ingest``, which encrypts, compiles the policy with
+    the owner leaf added (ADR-0016), wraps the DEK and indexes the terms. The
+    portal never sees a key and never writes the store.
+    """
+
+    facility_id: str = Field(..., description="Facility that will hold the record")
+    content_b64: str = Field(..., description="Base64 of the file's bytes")
+    content_type: str = "application/octet-stream"
+    clinical_policy: PolicyTree
+    search_terms: list[str] = Field(default_factory=list)
+    record_id: str | None = None
+
+
+class IngestResult(BaseModel):
+    record_id: str
+    facility_id: str
+    patient_id: str
+    policy_id: str
+    lifecycle_state: str
+    search_terms_indexed: int
+    audit_share_deposited: bool
+    detail: str = "Record encrypted at the facility; owner leaf present"
 
 
 class ErrorResponse(BaseModel):

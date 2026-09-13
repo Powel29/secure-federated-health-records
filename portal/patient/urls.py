@@ -13,6 +13,7 @@ urlpatterns = [
     path("access/<uuid:request_id>/revoke/", views.revoke, name="revoke"),
     path("history/", views.history, name="history"),
     path("records/", views.records, name="records"),
+    path("records/upload/", views.upload, name="upload"),
     path("records/<str:record_id>/", views.record_view, name="record_view"),
     path("notifications/<int:pk>/read/", views.mark_read, name="mark_read"),
 ]

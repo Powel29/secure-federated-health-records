@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Upload a record · {{ product_name }}{% endblock %}
+{% block content %}
+<div><a class="btn btn-ghost btn-sm" href="{% url 'patient:records' %}">← Back to records</a></div>
+
+<div class="grid-2">
+  <div class="card card-accent">
+    <h3 class="card-title">Upload a record of your own</h3>
+    <div class="small text-muted">The file goes to your key agent, which has the facility encrypt it (AES-256-GCM, one fresh DEK), compile the access policy you choose with your <span class="mono">owner:{{ subject_id }}</span> leaf added, split a 2-of-3 emergency key (share 3 to the audit service), and index the search terms. The portal keeps nothing.</div>
+    <form method="post" enctype="multipart/form-data" class="stack mt-2">
+      {% csrf_token %}
+      <div class="field"><label for="file">File (up to {{ max_mb }} MB — PDF, image, JSON or text)</label><input class="input" id="file" type="file" name="file" required></div>
+      <div class="form-grid">
+        <div class="field">
+          <label for="facility">Facility that will hold it</label>
+          <select class="input mono" id="facility" name="facility_id">{% for f in facilities %}<option value="{{ f }}" {% if f == facility_id %}selected{% endif %}>{{ f }}</option>{% endfor %}</select>
+        </div>
+        <div class="field">
+          <label for="preset">Who may read it (clinical branch)</label>
+          <select class="input" id="preset" name="preset">{% for key, label in presets %}<option value="{{ key }}" {% if key == preset %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+        </div>
+      </div>
+      <div class="field"><label for="terms">Search terms (comma-separated; usable only during break-glass)</label><input class="input" id="terms" name="search_terms" value="{{ search_terms }}" placeholder="anticoagulant, echocardiogram, penicillin"></div>
+      <button class="btn btn-primary btn-block" {% if not enrolled %}disabled{% endif %}>Seal and store</button>
+    </form>
+    {% if not enrolled %}<div class="notice notice-info small">No key agent material is held for <span class="mono">{{ subject_id }}</span>, so no owner key can be sealed in. Uploads are refused until an authority issues your owner credential (ADR-0016/0021).</div>{% endif %}
+  </div>
+
+  <div class="card">
+    <h3 class="card-title">What is stored, and where</h3>
+    <div class="grid-stats">
+      <div><div class="kicker">Store</div><div class="value">Ciphertext, nonce, wrapped DEK, coded search tokens — never the file</div></div>
+      <div><div class="kicker">Policy</div><div class="value">OR(your chosen clinical branch, owner:{{ subject_id }})</div></div>
+      <div><div class="kicker">Break-glass</div><div class="value">Emergency key split 2-of-3: clinician custody + audit service (log-before-release)</div></div>
+      <div><div class="kicker">This portal</div><div class="value">Nothing — bytes pass through this one request</div></div>
+    </div>
+    <div class="tiny text-muted">A clinician outside the chosen branch can reach the record only by consent you sign, or by a logged, time-boxed break-glass you are notified of.</div>
+  </div>
+</div>
+{% endblock %}

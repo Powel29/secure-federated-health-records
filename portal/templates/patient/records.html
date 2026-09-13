@@ -4,7 +4,10 @@
 <div class="card">
   <div class="subhead">
     <h3 class="card-title">Your encrypted records</h3>
-    <span class="tag tag-outline">{{ records|length }} sealed payload{{ records|length|pluralize }}</span>
+    <div class="flex">
+      <span class="tag tag-outline">{{ records|length }} sealed payload{{ records|length|pluralize }}</span>
+      <a class="btn btn-primary btn-sm" href="{% url 'patient:upload' %}">Upload a record</a>
+    </div>
   </div>
   {% if store_error %}<div class="notice notice-error">The encrypted store is not reachable from the portal: {{ store_error }}</div>{% endif %}
   <div class="grid-3 mt-3">

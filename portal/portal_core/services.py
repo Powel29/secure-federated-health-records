@@ -182,6 +182,32 @@ def custodian_breakglass(
     )
 
 
+def custodian_ingest(
+    patient_id: str,
+    *,
+    facility_id: str,
+    content: bytes,
+    content_type: str,
+    clinical_policy: dict[str, Any],
+    search_terms: list[str],
+) -> dict[str, Any]:
+    """Upload a record of the patient's own; the custodian seals it at the facility."""
+    import base64
+
+    return _request(
+        "custodian",
+        "POST",
+        f"{settings.CUSTODIAN_URL}/subjects/{patient_id}/records",
+        json={
+            "facility_id": facility_id,
+            "content_b64": base64.b64encode(content).decode("ascii"),
+            "content_type": content_type,
+            "clinical_policy": clinical_policy,
+            "search_terms": search_terms,
+        },
+    )
+
+
 # --- Facility nodes (no keys in these bodies) ----------------------------------
 
 

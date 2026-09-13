@@ -82,6 +82,14 @@ def _audit_stub(
         state["entries"].append(entry)
         return {"entry": entry}
 
+    @app.post("/breakglass/shares")
+    def deposit(payload: dict[str, Any]) -> dict[str, Any]:
+        shares[payload["share_key"]] = (
+            payload["x"],
+            bytes.fromhex(payload["share_hex"]),
+        )
+        return {"status": "registered", "share_key": payload["share_key"]}
+
     @app.post("/breakglass/release")
     def release(payload: dict[str, Any]) -> dict[str, Any]:
         if payload["share_key"] not in shares:
@@ -508,3 +516,123 @@ def test_patient_cannot_declare_breakglass(federation):
         json={"patient_id": PATIENT, "record_id": RECORD, "reason_code": "stroke"},
     )
     assert r.status_code == 403
+
+
+# --- Patient upload (P3-14 ingest through the key agent) -----------------------
+
+CARDIO_POLICY = {
+    "node_type": "and",
+    "children": [
+        {
+            "node_type": "leaf",
+            "attribute": {"name": "role", "value": "physician"},
+            "authority_id": "authority-med",
+        },
+        {
+            "node_type": "leaf",
+            "attribute": {"name": "specialty", "value": "cardiology"},
+            "authority_id": "authority-net",
+        },
+    ],
+}
+
+
+def _upload(client: TestClient, content: bytes, **extra: Any) -> Any:
+    body = {
+        "facility_id": "facility-a",
+        "content_b64": base64.b64encode(content).decode("ascii"),
+        "content_type": "text/plain",
+        "clinical_policy": CARDIO_POLICY,
+        "search_terms": ["echo", "stress-test"],
+        **extra,
+    }
+    return client.post(f"/subjects/{PATIENT}/records", json=body)
+
+
+def test_patient_upload_is_sealed_with_owner_leaf_and_readable_by_owner(federation):
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    r = _upload(client, b"Echocardiogram report: EF 35%")
+    assert r.status_code == 201, r.text
+    body = r.json()
+    rid = body["record_id"]
+    assert body["lifecycle_state"] == "granted"
+    assert body["search_terms_indexed"] == 2
+    assert body["audit_share_deposited"] is True
+
+    # The owner opens it through the owner leaf ...
+    r = client.post(
+        f"/subjects/{PATIENT}/read",
+        json={"record_id": rid, "facility_id": "facility-a"},
+    )
+    assert r.status_code == 200, r.text
+    assert (
+        base64.b64decode(r.json()["plaintext_b64"]) == b"Echocardiogram report: EF 35%"
+    )
+    assert r.json()["content_type"] == "text/plain"
+    # ... a cardiologist through the clinical branch ...
+    r = client.post(
+        f"/subjects/{DOC_CARDIO}/read",
+        json={"record_id": rid, "facility_id": "facility-a"},
+    )
+    assert r.status_code == 200, r.text
+    # ... and an ER physician is refused by policy.
+    r = client.post(
+        f"/subjects/{DOC_ER}/read", json={"record_id": rid, "facility_id": "facility-b"}
+    )
+    assert r.status_code == 403
+
+
+def test_uploaded_record_can_be_opened_by_break_glass(federation):
+    """The custodian kept share 1 and deposited share 3 for the new record."""
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    r = _upload(client, b"Uploaded by the patient")
+    assert r.status_code == 201, r.text
+    rid = r.json()["record_id"]
+    r = client.post(
+        f"/subjects/{DOC_ER}/breakglass",
+        json={"patient_id": PATIENT, "record_id": rid, "reason_code": "stroke"},
+    )
+    assert r.status_code == 200, r.text
+    assert base64.b64decode(r.json()["plaintext_b64"]) == b"Uploaded by the patient"
+    assert federation["repo"].get_lifecycle_state(rid) is LifecycleState.EMERGENCY_OPEN
+
+
+def test_upload_refused_without_owner_credential(federation):
+    """Fail closed: never seal a record its owner could not open (ADR-0016)."""
+    client = _custodian(federation)
+    material = dict(federation["material"][PATIENT], credentials=[])
+    client.post(f"/subjects/{PATIENT}/material", json=material)
+    r = _upload(client, b"x")
+    assert r.status_code == 403
+    assert "owner credential" in r.json()["detail"]
+
+
+def test_clinician_cannot_upload_as_a_patient(federation):
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    r = client.post(
+        f"/subjects/{DOC_CARDIO}/records",
+        json={
+            "facility_id": "facility-a",
+            "content_b64": base64.b64encode(b"x").decode(),
+            "clinical_policy": CARDIO_POLICY,
+        },
+    )
+    assert r.status_code == 403
+
+
+def test_empty_or_malformed_upload_is_rejected_before_any_service_call(federation):
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    assert _upload(client, b"").status_code == 400
+    r = client.post(
+        f"/subjects/{PATIENT}/records",
+        json={
+            "facility_id": "facility-a",
+            "content_b64": "%%%",
+            "clinical_policy": CARDIO_POLICY,
+        },
+    )
+    assert r.status_code == 400

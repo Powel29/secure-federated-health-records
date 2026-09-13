@@ -44,7 +44,9 @@ needs to decode the PRE delivery package, which `breakglass.gate` documents as
    and emergency assertions on a subject's behalf and performs the key-bearing
    federation calls (attribute-key release, `/records/{id}/read`, audit share
    release, `/records/{id}/breakglass`, PRE delivery decode, decryption for
-   display). It **decides nothing**: the facility's policy engine, the audit
+   display, and — for a patient's own upload — the P3-14 ingest: emergency
+   key minted and split, share 3 deposited at the audit service, authoring
+   keys fetched, `/records/ingest` called). It **decides nothing**: the facility's policy engine, the audit
    service's commit-before-release and the facility's grant-signature check are
    unchanged and still run. No endpoint ever returns a private key.
 2. **The portal calls the custodian by `subject_id` after Django login**, and

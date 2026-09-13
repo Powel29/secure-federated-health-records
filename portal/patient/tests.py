@@ -244,3 +244,56 @@ class PatientHistoryAndRoleTests(TestCase):
         resp = self.client.get("/clinician/identify/")
         self.assertEqual(resp.status_code, 302)
         self.assertTrue(resp["Location"].startswith("/patient/"))
+
+
+class PatientUploadTests(TestCase):
+    """Upload: bytes pass through once; the custodian seals at the facility."""
+
+    def setUp(self) -> None:
+        patient()
+        self.client.login(username="alice", password="pw12345")
+
+    def _post(self, **extra):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        data = {
+            "file": SimpleUploadedFile("echo.txt", b"EF 35%", content_type="text/plain"),
+            "facility_id": "facility-a",
+            "preset": "cardiology",
+            "search_terms": "echo, ef",
+        }
+        data.update(extra)
+        return self.client.post("/patient/records/upload/", data)
+
+    def test_upload_hands_bytes_and_policy_to_the_custodian(self) -> None:
+        with patched(
+            custodian_ingest=mock.Mock(
+                return_value={"record_id": "rec-abc", "policy_id": "pol-1", "search_terms_indexed": 2}
+            ),
+            custodian_subject=mock.Mock(return_value=SUBJECT_PATIENT),
+        ) as m:
+            resp = self._post()
+        self.assertEqual(resp.status_code, 302)
+        kwargs = m["custodian_ingest"].call_args.kwargs
+        self.assertEqual(m["custodian_ingest"].call_args.args[0], "pat-101")
+        self.assertEqual(kwargs["content"], b"EF 35%")
+        self.assertEqual(kwargs["content_type"], "text/plain")
+        self.assertEqual(kwargs["search_terms"], ["echo", "ef"])
+        self.assertEqual(kwargs["clinical_policy"]["node_type"], "and")
+        leaves = {(c["attribute"]["name"], c["attribute"]["value"]) for c in kwargs["clinical_policy"]["children"]}
+        self.assertEqual(leaves, {("role", "physician"), ("specialty", "cardiology")})
+
+    def test_refusal_is_shown_and_nothing_is_stored_by_the_portal(self) -> None:
+        with patched(
+            custodian_ingest=mock.Mock(side_effect=refuse(403, "holds no owner credential")),
+            custodian_subject=mock.Mock(return_value=None),
+        ):
+            resp = self._post()
+        self.assertEqual(resp.status_code, 403)
+        self.assertContains(resp, "owner credential", status_code=403)
+
+    def test_unknown_preset_or_facility_never_reaches_the_custodian(self) -> None:
+        with patched(custodian_ingest=mock.Mock(), custodian_subject=mock.Mock(return_value=SUBJECT_PATIENT)) as m:
+            self.assertEqual(self._post(preset="anything-goes").status_code, 400)
+            self.assertEqual(self._post(facility_id="facility-z").status_code, 400)
+        m["custodian_ingest"].assert_not_called()
