@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Break-glass case review · {{ product_name }}{% endblock %}
+{% block content %}
+<div class="card card-strong">
+  <div class="subhead">
+    <h3 class="card-title">Break-glass case review</h3>
+    <span class="tag tag-accent">{{ rows|length }} case{{ rows|length|pluralize }}</span>
+  </div>
+  {% if store_error %}<div class="notice notice-error small">Store not readable: {{ store_error }}</div>{% endif %}
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Case</th><th>Record</th><th>Clinician</th><th>Shares</th><th>Chain</th><th>Outcome</th><th class="right">Trace</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td class="mono">{% if r.case %}{{ r.case.case_number }}{% else %}—{% endif %}<span class="sub">{{ r.flow.started_at|date:"Y-m-d H:i:s"|default:r.case.created_at|date:"Y-m-d H:i:s" }}</span></td>
+        <td class="mono">{% if r.case %}{{ r.case.record_id }}{% else %}?{% endif %}</td>
+        <td>{% if r.case %}{{ r.case.clinician_id }}<span class="sub mono">{{ r.case.facility_id }} · {{ r.case.reason_code }}</span>{% else %}<span class="text-muted">chain only</span>{% endif %}</td>
+        <td class="small">{% if r.case and r.case.shares %}{% for s in r.case.shares %}{{ s.holder }}{% if not forloop.last %} + {% endif %}{% endfor %}{% elif r.case %}none released{% else %}—{% endif %}</td>
+        <td class="mono small">{% if r.flow %}seq {{ r.flow.first_seq }}–{{ r.flow.last_seq }} · {{ r.flow.entries }} entries{% else %}no release entry{% endif %}</td>
+        <td>{% if r.status == "open" %}<span class="tag tag-accent">open{% if r.case.expires_at %} · <span data-countdown="{{ r.case.expires_at|date:'c' }}">--:--</span>{% endif %}</span>{% elif r.status == "expired" %}<span class="tag tag-outline">expired · rotated</span>{% else %}<span class="tag tag-neutral">failed closed</span>{% endif %}</td>
+        <td class="right">{% if r.flow %}<a class="btn btn-secondary btn-sm" href="{% url 'admin_audit:trace' %}?cid={{ r.flow.correlation_id|urlencode }}">Trace</a>{% elif r.case %}<span class="tiny text-muted">{{ r.case.failure_reason|truncatechars:60 }}</span>{% endif %}</td>
+      </tr>
+    {% empty %}<tr><td colspan="7" class="empty">No break-glass has been declared.</td></tr>{% endfor %}
+    </tbody></table></div>
+  <div class="tiny text-muted">A case is authoritative in the chain (share release → PRE re-wrap → lifecycle transitions under one correlation id); the portal's case file adds the clinician's justification and the countdown. Failed-closed attempts never produce a release entry, so they appear from the case file only.</div>
+</div>
+{% endblock %}

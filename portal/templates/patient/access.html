@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Access control & consent · {{ product_name }}{% endblock %}
+{% block content %}
+{% include "patient/_case_banner.html" %}
+
+<div class="grid-2">
+  <div class="card card-accent">
+    <div class="subhead">
+      <h3 class="card-title">Incoming access requests</h3>
+      <span class="tag tag-outline">{{ pending|length }} awaiting signature</span>
+    </div>
+    {% for row in pending %}
+      <div class="panel">
+        <div class="flex between baseline">
+          <div>
+            <span style="font-family:var(--font-heading);font-size:18px;font-weight:600">{{ row.requester_id }}</span>
+            {% if row.requester %}{% for c in row.requester.credentials %}<span class="tag tag-neutral" style="margin-left:6px">{{ c.name }}:{{ c.value }}</span>{% endfor %}{% endif %}
+          </div>
+          {% if row.requester and row.requester.certificate_pem %}<span class="tag tag-accent">cert chains to root</span>{% else %}<span class="tag tag-neutral">no certificate held</span>{% endif %}
+        </div>
+        <div class="mono tiny text-muted mt-2">{{ row.requester_facility_id|default:"facility unknown"|upper }} · request {{ row.request_id|stringformat:"s"|truncatechars:14 }}</div>
+        <div class="grid-stats mt-4" style="padding-top:var(--space-3);border-top:1px solid var(--color-divider)">
+          <div><div class="kicker">Target records</div><div class="value mono">{{ row.scope|join:", " }}</div></div>
+          <div><div class="kicker">Permitted scope</div><div class="value">Read only</div></div>
+          <div><div class="kicker">Request lapses</div><div class="value mono">{{ row.request_expires_at|date:"m-d H:i" }}</div></div>
+          <div><div class="kicker">Key path</div><div class="value">Policy-tree unwrap, consent-gated</div></div>
+        </div>
+        <div class="quote mt-3">“{{ row.purpose }}”</div>
+        <form method="post" action="{% url 'patient:decide' row.request_id %}" class="flex mt-4">
+          {% csrf_token %}
+          <button class="btn btn-primary grow" name="decision" value="granted">Sign grant</button>
+          <button class="btn btn-secondary grow" name="decision" value="denied">Deny</button>
+        </form>
+      </div>
+    {% empty %}
+      <div class="empty">No pending requests. A clinician's signed request will appear here for your decision.</div>
+    {% endfor %}
+    <div class="flex between tiny text-muted mt-3">
+      <span>Signed with your custodian-held key · ECDSA P-256</span>
+      <span>Consent is a gate on top of the policy tree — it never replaces it (ADR-0031)</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="subhead">
+      <h3 class="card-title">Grants and decisions</h3>
+      <span class="tag tag-outline">{{ live_count|default:"" }}{% with grants|length as n %}{{ n }} recorded{% endwith %}</span>
+    </div>
+    <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Holder</th><th>Records</th><th>State</th><th class="right">Action</th></tr></thead>
+      <tbody>
+      {% for row in grants %}
+        <tr>
+          <td>{{ row.requester_id }}<span class="sub mono">{{ row.requester_facility_id|upper }}</span></td>
+          <td class="mono small">{{ row.scope|join:", " }}</td>
+          <td>
+            {% if row.status == "granted" %}<span class="tag tag-accent">granted{% if row.grant_expires_at %} · exp {{ row.grant_expires_at|date:"m-d" }}{% endif %}</span>
+            {% elif row.status == "revoked" %}<span class="tag tag-outline">revoked</span>
+            {% elif row.status == "denied" %}<span class="tag tag-neutral">denied</span>
+            {% else %}<span class="tag tag-neutral">{{ row.status }}</span>{% endif %}
+            <span class="sub mono">{{ row.correlation_id|truncatechars:26 }}</span>
+          </td>
+          <td class="right">
+            {% if row.status == "granted" %}
+              <form method="post" action="{% url 'patient:revoke' row.request_id %}">{% csrf_token %}<button class="btn btn-danger btn-sm">Revoke</button></form>
+            {% else %}<button class="btn btn-ghost btn-sm" disabled>{{ row.get_status_display }}</button>{% endif %}
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="4" class="empty">No one currently has consent-based access.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <div class="tiny text-muted">Revocation is a fresh grant you sign with status <span class="mono">revoked</span>; the facility refuses the old one at read time. Cryptographic key rotation on revoke is the facility's separate path (P3-7).</div>
+  </div>
+</div>
+
+{% if cases %}
+<div class="card">
+  <div class="subhead"><h3 class="card-title">Emergency sessions on your records</h3></div>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Case</th><th>Record</th><th>Clinician</th><th>Shares</th><th>Outcome</th></tr></thead>
+    <tbody>{% for c in cases %}
+      <tr><td class="mono">{{ c.case_number }}</td><td class="mono">{{ c.record_id }}</td><td>{{ c.clinician_id }}<span class="sub mono">{{ c.facility_id }}</span></td>
+        <td class="small">{% for s in c.shares %}{{ s.holder }}{% if not forloop.last %} + {% endif %}{% empty %}—{% endfor %}</td>
+        <td>{% if c.status == "open" %}<span class="tag tag-accent">open · <span data-countdown="{{ c.expires_at|date:'c' }}">--:--</span></span>{% elif c.status == "expired" %}<span class="tag tag-outline">expired · rotated</span>{% else %}<span class="tag tag-neutral">failed closed</span>{% endif %}</td></tr>
+    {% endfor %}</tbody></table></div>
+</div>
+{% endif %}
+{% endblock %}

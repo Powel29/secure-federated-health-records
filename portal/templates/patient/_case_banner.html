@@ -1,0 +1,25 @@
+{% for case in cases %}{% if case.status == "open" %}
+<div class="card card-emergency">
+  <div class="flex between gap-6" style="align-items:flex-start">
+    <div class="grow" style="min-width:min(100%,420px)">
+      <div class="flex baseline">
+        <span class="card-title card-title-lg">Break-glass invocation on your record</span>
+        <span class="tag tag-accent">Active session</span>
+      </div>
+      <div class="card-sub mt-2">Record <span class="mono">{{ case.record_id }}</span> · {{ case.clinician_id }} · {{ case.facility_id }} · <span class="mono">{{ case.opened_at|date:"Y-m-d H:i" }} UTC</span> · shares: {% for s in case.shares %}{{ s.holder }}{% if not forloop.last %} + {% endif %}{% endfor %}</div>
+      <div class="panel-inset mt-3">
+        <div class="kicker mb-2">Declared reason code · {{ case.reason_code|upper }}</div>
+        <div class="italic" style="font-size:14px;line-height:1.6">{% if case.justification %}“{{ case.justification }}”{% else %}No free-text justification was recorded; the signed assertion carries the constrained reason code only.{% endif %}</div>
+      </div>
+    </div>
+    <div class="stack" style="min-width:190px">
+      <div class="right">
+        <div class="kicker">Window closes in</div>
+        <div class="clock" data-countdown="{{ case.expires_at|date:'c' }}">--:--</div>
+      </div>
+      <a class="btn btn-secondary btn-sm" href="{% url 'patient:history' %}?type=breakglass">Open audit trail</a>
+      <span class="tiny text-muted right">Auto-expiry rotates the key; no action needed.</span>
+    </div>
+  </div>
+</div>
+{% endif %}{% endfor %}

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}{{ record.record_id|default:"Record" }} · {{ product_name }}{% endblock %}
+{% block content %}
+<div><a class="btn btn-ghost btn-sm" href="{% url 'patient:records' %}">← Back to records</a></div>
+
+{% if store_error %}
+  <div class="card card-danger"><h3 class="card-title">Store unreachable</h3><div class="small">{{ store_error }}</div></div>
+{% else %}
+<div class="card">
+  <div class="subhead">
+    <div>
+      <div class="kicker">Sealed record</div>
+      <h3 class="card-title mono">{{ record.record_id }}</h3>
+    </div>
+    <div class="flex">
+      <span class="tag tag-neutral">{{ record.content_type }}</span>
+      {% if record.lifecycle_state %}<span class="tag {% if record.lifecycle_state == 'emergency_open' %}tag-accent{% else %}tag-outline{% endif %}">{{ record.lifecycle_state }}</span>{% endif %}
+    </div>
+  </div>
+  <div class="grid-stats">
+    <div><div class="kicker">Facility</div><div class="value">{{ record.facility_name|default:record.facility_id }} <span class="mono tiny">{{ record.facility_id }}</span></div></div>
+    <div><div class="kicker">Created</div><div class="value mono">{{ record.created_at|date:"Y-m-d H:i" }} UTC</div></div>
+    <div><div class="kicker">Ciphertext</div><div class="value mono">{{ record.ciphertext_bytes }} B · AES-256-GCM</div></div>
+    <div><div class="kicker">Key path</div><div class="value">OR(clinical policy, owner:{{ subject_id }})</div></div>
+  </div>
+
+  {% if denied %}
+    <div class="card card-danger mt-3">
+      <h3 class="card-title">This record can't be opened — access is not granted by keys.</h3>
+      <div class="small">{{ denied_service|default:"service" }}: {{ denied }}</div>
+      <div class="tiny text-muted mono">correlation {{ correlation_id }}</div>
+      <div class="tiny text-muted">Your login identified you, but the facility's policy engine did not reconstruct the key. Nothing was decrypted. This is the fail-closed path ADR-0016 requires.</div>
+    </div>
+  {% elif plaintext %}
+    <div class="flex between mt-3">
+      <span class="tag tag-accent">decrypted for this request only</span>
+      <span class="tiny text-muted mono">via {{ access_via }} · {{ attributes_presented|join:", " }} · correlation {{ correlation_id }}</span>
+    </div>
+    <pre class="plaintext">{{ plaintext }}</pre>
+    <div class="tiny text-muted">Streamed to your browser once; not persisted by the portal, not cached (<span class="mono">Cache-Control: no-store</span>). The read itself was logged before release.</div>
+  {% else %}
+    <form method="post" class="flex mt-3">
+      {% csrf_token %}
+      <button class="btn btn-primary" name="mode" value="render">Decrypt via owner attribute</button>
+      <button class="btn btn-secondary" name="mode" value="raw">Stream raw file inline</button>
+      <span class="tiny text-muted">Your key agent presents <span class="mono">owner:{{ subject_id }}</span>; the facility reconstructs the DEK only if the policy tree accepts it.</span>
+    </form>
+    {% if not enrolled %}<div class="notice notice-info small mt-2">No key agent material is held for <span class="mono">{{ subject_id }}</span>. The request will be refused — expected: a login alone decrypts nothing.</div>{% endif %}
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

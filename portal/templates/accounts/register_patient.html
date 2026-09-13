@@ -1,21 +1,31 @@
 {% extends "base.html" %}
-{% block title %}Register as patient{% endblock %}
-{% block content %}
-<div class="col-md-6">
-  <h1 class="h4 mb-3">Register as a patient</h1>
-  <p class="text-muted small">This creates your login and a request for your own
-    <code>owner</code> key. Your home authority issues the key (P2-2) &mdash; the
-    signup itself grants no access.</p>
-  {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
-  <form method="post">
-    {% csrf_token %}
-    <div class="mb-2"><label class="form-label">Username</label>
-      <input class="form-control" name="username" required></div>
-    <div class="mb-2"><label class="form-label">Password</label>
-      <input class="form-control" type="password" name="password" required></div>
-    <div class="mb-3"><label class="form-label">Patient id</label>
-      <input class="form-control" name="patient_id" placeholder="pat-101" required></div>
-    <button class="btn btn-primary">Create account &amp; request key</button>
-  </form>
+{% block title %}Register as patient · {{ product_name }}{% endblock %}
+{% block shell %}
+<div class="auth">
+  <div class="auth-card">
+    <div class="wordmark">{{ product_name }}</div>
+    <div class="sub">Patient enrolment · request-then-issue</div>
+    <p class="small text-muted">This creates your login and a request for your own <code>owner</code> key. Your home authority issues the key — the signup itself grants no access (ADR-0021).</p>
+    {% if error %}<div class="notice notice-error mb-3">{{ error }}</div>{% endif %}
+    <form method="post" class="stack">
+      {% csrf_token %}
+      <div class="form-grid">
+        <div class="field"><label>Username</label><input class="input" name="username" required></div>
+        <div class="field"><label>Password</label><input class="input" type="password" name="password" required></div>
+      </div>
+      <div class="field"><label>Patient id</label><input class="input mono" name="patient_id" placeholder="pat-101" required></div>
+      <div class="form-grid">
+        <div class="field"><label>Given name</label><input class="input" name="given_name"></div>
+        <div class="field"><label>Family name</label><input class="input" name="family_name"></div>
+      </div>
+      <div class="form-grid">
+        <div class="field"><label>Date of birth</label><input class="input mono" name="date_of_birth" type="date"></div>
+        <div class="field"><label>Home facility</label><input class="input mono" name="home_facility_id" placeholder="facility-a"></div>
+      </div>
+      <div class="tiny text-muted">Name and date of birth go only into the portal directory used for emergency identification (ADR-0033) — never into the encrypted store.</div>
+      <button class="btn btn-primary btn-block">Create account &amp; request key</button>
+    </form>
+    <div class="small text-muted mt-3"><a href="{% url 'accounts:login' %}">Back to log in</a></div>
+  </div>
 </div>
 {% endblock %}

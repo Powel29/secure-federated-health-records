@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}{{ case.case_number }} · Emergency session · {{ product_name }}{% endblock %}
+{% block content %}
+{% if case.status == "open" %}<script>document.body.setAttribute("data-reload-on-expiry", "1");</script>{% endif %}
+<div><a class="btn btn-ghost btn-sm" href="{% url 'clinician:cases' %}">← All emergency sessions</a></div>
+
+{% if just_opened %}
+<div class="notice notice-success">Break-glass opened. Two of three shares reconstructed the emergency key; the DEK reached your key agent through the PRE delivery package; the record's lifecycle moved to <span class="mono">emergency_open</span>. The patient has been notified.</div>
+{% endif %}
+
+<div class="card">
+  <div class="flex between gap-4 baseline">
+    <div>
+      <h3 class="card-title">Threshold collection · 2 of 3</h3>
+      <div class="small text-muted mono mt-2">{{ case.case_number }} · record {{ case.record_id }} · patient {{ case.patient_id }}{% if directory %} ({{ directory.full_name }}){% endif %} · declared at {{ case.facility_id }} · reason {{ case.reason_code }}</div>
+      <div class="small text-muted mono">correlation {{ case.correlation_id }}{% if case.assertion_id %} · assertion {{ case.assertion_id|truncatechars:13 }}{% endif %}</div>
+    </div>
+    <div class="right">
+      <div class="kicker">Emergency window</div>
+      {% if case.status == "open" %}<div class="clock" data-countdown="{{ case.expires_at|date:'c' }}">--:--</div>
+      {% elif case.status == "expired" %}<div class="clock dead">00:00</div>
+      {% else %}<div class="clock dead">—</div>{% endif %}
+    </div>
+  </div>
+
+  <div class="grid-3 mt-4">
+    {% for s in share_cards %}
+      <div class="share {% if s.held %}held{% endif %}">
+        <div class="flex between baseline"><span class="kicker">{{ s.kicker }}</span><span class="tag {% if s.held %}tag-accent{% else %}tag-neutral{% endif %}">{{ s.state }}</span></div>
+        <div class="who">{{ s.who }}</div>
+        <div class="note">{{ s.note }}</div>
+        {% if s.x %}<div class="mono tiny text-muted mt-2">x = {{ s.x }}</div>{% endif %}
+      </div>
+    {% endfor %}
+  </div>
+
+  <div class="flex gap-4 mt-4" style="padding-top:var(--space-4);border-top:1px solid var(--color-divider)">
+    <div class="grow" style="min-width:260px">
+      {% if case.status == "open" %}<div class="verdict ok">Threshold met · emergency key reconstructed · record EMERGENCY-OPEN</div>
+      {% elif case.status == "expired" %}<div class="verdict">Window closed · forced rotation back to baseline · search tokens dead</div>
+      {% else %}<div class="verdict bad">Failed closed · {{ case.failure_reason }}</div>{% endif %}
+    </div>
+    {% if case.audit_entry_seq %}<span class="tag tag-dark">audit head written before share 3 · seq {{ case.audit_entry_seq }}</span>{% endif %}
+  </div>
+</div>
+
+{% if plaintext %}
+<div class="card card-emergency">
+  <div class="subhead">
+    <h3 class="card-title card-title-lg">Decrypted record · shown once</h3>
+    <span class="tag tag-accent">this response only</span>
+  </div>
+  <pre class="plaintext">{{ plaintext }}</pre>
+  <div class="tiny text-muted">The DEK was recovered by your key agent from the PRE delivery package and the ciphertext decrypted for this response. The portal stores nothing; reloading this page will not show it again. Rotation at expiry makes the emergency wrapping useless.</div>
+</div>
+{% endif %}
+
+<div class="grid-2">
+  <div class="card" {% if case.status != "open" %}style="opacity:.7"{% endif %}>
+    <div class="subhead">
+      <h3 class="card-title">Emergency search</h3>
+      <span class="tag {% if case.status == 'open' %}tag-accent{% else %}tag-neutral{% endif %}">{{ search_state|default:"" }}{% if not search_state %}{% if case.status == "open" %}token live{% else %}token dead{% endif %}{% endif %}</span>
+    </div>
+    <div class="small text-muted">Tokens derive from the emergency key via HKDF; they exist only while the record is EMERGENCY-OPEN and die at expiry.</div>
+    <form method="post" class="flex mt-2">
+      {% csrf_token %}
+      <input class="input grow" type="text" name="search_term" value="{{ search_term|default:'' }}" placeholder="anticoagulant" style="min-width:200px">
+      <button class="btn btn-primary nowrap">Derive token and search</button>
+    </form>
+    {% if search_error %}<div class="notice notice-error small">{{ search_error }}</div>{% endif %}
+    {% if search_results is not None %}
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>Record</th><th>Matched on</th><th>Key path</th></tr></thead>
+        <tbody>{% for rid in search_results %}<tr><td class="mono">{{ rid }}</td><td class="mono small">HKDF(emergency key, "{{ search_term }}")</td><td class="small">Coded-index equality; contents never read by the store</td></tr>
+        {% empty %}<tr><td colspan="3" class="empty">No indexed record matches this term.</td></tr>{% endfor %}</tbody></table></div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <div class="subhead">
+      <h3 class="card-title">Chain segment · <span class="mono" style="font-size:15px">{{ case.correlation_id|truncatechars:24 }}</span></h3>
+      <span class="tag tag-outline">{{ entries|length }} entries</span>
+    </div>
+    {% if store_error %}<div class="notice notice-error small">{{ store_error }}</div>{% endif %}
+    <div class="chain">
+      <div class="chain-head"><span class="seq">Seq</span><span class="head">Head</span><span class="ev">Event</span></div>
+      {% for e in entries %}
+        <div class="chain-row {% if e.event_type == 'breakglass_share_released' or e.event_type == 'breakglass_share_release' %}hl{% endif %}">
+          <span class="seq">{{ e.seq }}</span><span class="head">{{ e.entry_hash_hex|slice:":6" }}</span>
+          <span class="ev">{{ e.event_type }}{% if e.event_data.to_state %} — {{ e.event_data.from_state }} → {{ e.event_data.to_state }}{% elif e.event_data.record_count is not None %} — {{ e.event_data.record_count }} records{% elif e.event_data.candidate_count is not None %} — {{ e.event_data.candidate_count }} candidates{% if e.event_data.selected_patient_id %}, selected{% endif %}{% elif e.event_data.kind %} — {{ e.event_data.kind }}{% endif %} <span class="sub">{{ e.actor_id }}</span></span>
+        </div>
+      {% empty %}
+        <div class="chain-row"><span class="ev">No entries readable for this correlation id.</span></div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

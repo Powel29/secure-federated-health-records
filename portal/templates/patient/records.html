@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Encrypted health records · {{ product_name }}{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="subhead">
+    <h3 class="card-title">Your encrypted records</h3>
+    <span class="tag tag-outline">{{ records|length }} sealed payload{{ records|length|pluralize }}</span>
+  </div>
+  {% if store_error %}<div class="notice notice-error">The encrypted store is not reachable from the portal: {{ store_error }}</div>{% endif %}
+  <div class="grid-3 mt-3">
+    {% for r in records %}
+      <div class="record-card">
+        <div class="flex between baseline"><span class="mono" style="font-size:13px">{{ r.record_id }}</span><span class="tag tag-neutral">{{ r.content_type }}</span></div>
+        <div class="title">{{ r.facility_name|default:r.facility_id }}</div>
+        <div class="meta">Facility <span class="mono">{{ r.facility_id }}</span><br>Created <span class="mono">{{ r.created_at|date:"Y-m-d H:i" }} UTC</span><br>Ciphertext {{ r.ciphertext_bytes }} B · generation {{ r.generation|default:0 }}</div>
+        <div class="seal">AES-256-GCM · {% if r.lifecycle_state == "emergency_open" %}EMERGENCY-OPEN{% elif r.lifecycle_state == "revoked" %}re-keyed after rotation{% else %}owner leaf present{% endif %}</div>
+        <a class="btn btn-primary btn-sm" href="{% url 'patient:record_view' r.record_id %}">Open via owner attribute</a>
+      </div>
+    {% empty %}
+      {% if not store_error %}<div class="empty">No records yet. Records arrive through a facility's ingest path, sealed under a policy that always carries your <span class="mono">owner:{{ subject_id }}</span> leaf (ADR-0016).</div>{% endif %}
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

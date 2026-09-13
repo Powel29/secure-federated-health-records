@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Emergency break-glass · {{ product_name }}{% endblock %}
+{% block content %}
+<div class="grid-2">
+  <div class="card">
+    <div class="subhead">
+      <h3 class="card-title">Identified patient</h3>
+      {% if patient_id %}<span class="tag tag-outline">{{ patient_id }} bound</span>{% else %}<span class="tag tag-neutral">none</span>{% endif %}
+    </div>
+    {% if patient_id %}
+      {% if directory %}
+        <div class="candidate selected" style="cursor:default">
+          <div class="name">{{ directory.given_name }} {{ directory.family_name }}</div>
+          <div class="ids">DOB {{ directory.date_of_birth|date:"Y-m-d" }} · {{ directory.subject_id }}{% if directory.home_authority_id %} · home authority {{ directory.home_authority_id|upper }}{% endif %}</div>
+        </div>
+      {% else %}
+        <div class="notice notice-info small">No directory row for <span class="mono">{{ patient_id }}</span>; the assertion will still be bound to this identifier.</div>
+      {% endif %}
+      <form method="post" class="mt-3">
+        {% csrf_token %}
+        <input type="hidden" name="patient_id" value="{{ patient_id }}">
+        <button class="btn btn-secondary btn-block" name="action" value="discover">Run federated discovery from {{ facility_id|default:"this facility" }}</button>
+        <div class="tiny text-muted mt-2">Discovery asks the shared store which sealed records exist for this patient. It is logged as <span class="mono">federation.discovery</span> with the patient id hashed; it reveals no contents.</div>
+      </form>
+      {% if discovered is not None %}
+        <div class="kicker mt-4">{{ discovered|length }} sealed record{{ discovered|length|pluralize }} located</div>
+        <div class="tiny text-muted">Choose the record to open in the declaration on the right.</div>
+      {% endif %}
+    {% else %}
+      <div class="empty">An assertion is bound to a <span class="mono">patient_id</span>. Identify the patient first.</div>
+      <a class="btn btn-primary" href="{% url 'clinician:identify' %}">Identify patient</a>
+    {% endif %}
+  </div>
+
+  <div class="card card-strong">
+    <div class="subhead">
+      <h3 class="card-title">Declare break-glass</h3>
+      <span class="tag tag-outline">{% if patient_id %}{{ patient_id }} bound{% else %}unbound{% endif %}</span>
+    </div>
+    <form method="post" class="stack">
+      {% csrf_token %}
+      <input type="hidden" name="patient_id" value="{{ patient_id }}">
+      <div class="field">
+        <label>Target record</label>
+        {% if discovered %}
+          {% for r in discovered %}
+            <label class="radio-row"><input type="radio" name="record_id" value="{{ r.record_id }}" {% if record_id == r.record_id or forloop.first and not record_id %}checked{% endif %}>
+              <span><span class="mono">{{ r.record_id }}</span> · {{ r.facility_name|default:r.facility_id }} · {{ r.content_type }}{% if r.lifecycle_state %} · <span class="tag tag-neutral">{{ r.lifecycle_state }}</span>{% endif %}</span></label>
+          {% endfor %}
+        {% else %}
+          <div class="empty">Run discovery to list the patient's sealed records.</div>
+        {% endif %}
+      </div>
+      <div class="field">
+        <label for="reason">Reason code (constrained enum — never free text in the assertion)</label>
+        <select class="input" id="reason" name="reason_code">
+          {% for code, label in reason_codes %}<option value="{{ code }}" {% if reason_code == code %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="just">Clinical justification (kept in the case file, not in the assertion)</label>
+        <input class="input" id="just" name="justification" value="{{ justification|default:'' }}" placeholder="Unresponsive on arrival; prior cardiac history required before intervention.">
+      </div>
+      <div class="grid-stats mt-2" style="padding-top:var(--space-3);border-top:1px solid var(--color-divider)">
+        <div><div class="kicker">Assertion</div><div class="value mono">one-time id · ECDSA</div></div>
+        <div><div class="kicker">Facility</div><div class="value mono">{{ facility_id|default:"—"|upper }}</div></div>
+        <div><div class="kicker">Assertion expiry</div><div class="value mono">{{ assertion_ttl }}s</div></div>
+        <div><div class="kicker">Window length</div><div class="value mono">{{ duration }}s</div></div>
+      </div>
+      <button class="btn btn-primary btn-block" name="action" value="declare" {% if not discovered %}disabled{% endif %}>Sign assertion and request shares</button>
+      <div class="tiny text-muted">Your key agent signs the assertion, asks the audit service for share 3 (committed to the chain first, released second), presents it with the clinician-custody share to the threshold gate, and opens the PRE delivery package. The gate, not this button, decides.</div>
+    </form>
+    {% if failed_case %}
+      <div class="card card-danger mt-3">
+        <div class="kicker">Failed closed · {{ failed_case.case_number }}</div>
+        <div class="small">{{ failed_case.failure_reason }}</div>
+        <div class="tiny text-muted">Recorded for admin review; no share was released and the record's state is unchanged.</div>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
