@@ -6,8 +6,8 @@ there is exactly one way a service process starts, regardless of which
 deployment path launched it.
 
 Environment:
-    SERVICE_ROLE: One of ``"facility"``, ``"authority"``, ``"audit"`` --
-        selects which ``deploy.asgi`` factory to run.
+    SERVICE_ROLE: One of ``"facility"``, ``"authority"``, ``"audit"``,
+        ``"custodian"`` -- selects which ``deploy.asgi`` factory to run.
     PORT: TCP port to bind (default ``8000``).
     HOST: Interface to bind (default ``0.0.0.0``).
 
@@ -26,6 +26,7 @@ _FACTORIES = {
     "facility": "deploy.asgi.facility:app",
     "authority": "deploy.asgi.authority:app",
     "audit": "deploy.asgi.audit:app",
+    "custodian": "deploy.asgi.custodian:app",
 }
 
 

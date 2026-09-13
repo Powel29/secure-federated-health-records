@@ -6,6 +6,7 @@ ciphertexts to emergency clinicians without plaintext exposure.
 
 from __future__ import annotations
 
+from pre.delivery import open_delivery_package
 from pre.elgamal import (
     decapsulate_key,
     decrypt_point,
@@ -27,5 +28,6 @@ __all__ = [
     "encrypt_point",
     "generate_keypair",
     "generate_rekey",
+    "open_delivery_package",
     "reencrypt",
 ]
