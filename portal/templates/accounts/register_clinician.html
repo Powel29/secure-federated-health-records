@@ -1,28 +1,24 @@
 {% extends "base.html" %}
-{% block title %}Register as clinician{% endblock %}
-{% block content %}
-<div class="col-md-6">
-  <h1 class="h4 mb-3">Register as a clinician</h1>
-  <p class="text-muted small">This creates your login and a <strong>request</strong>.
-    An authority verifies your licence and <strong>issues</strong> your role /
-    specialty credential (P2-2). Until then you hold no attribute and can open
-    nothing &mdash; a signup never makes you a physician.</p>
-  {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
-  <form method="post">
-    {% csrf_token %}
-    <div class="mb-2"><label class="form-label">Username</label>
-      <input class="form-control" name="username" required></div>
-    <div class="mb-2"><label class="form-label">Password</label>
-      <input class="form-control" type="password" name="password" required></div>
-    <div class="mb-2"><label class="form-label">Clinician id</label>
-      <input class="form-control" name="clinician_id" placeholder="doc-201" required></div>
-    <div class="mb-2"><label class="form-label">Requested attributes</label>
-      <input class="form-control" name="requested_attributes"
-             placeholder="role:physician, specialty:cardiology"></div>
-    <div class="mb-3"><label class="form-label">Licence / proof</label>
-      <textarea class="form-control" name="license_info" rows="2"
-                placeholder="Medical licence number, issuing board"></textarea></div>
-    <button class="btn btn-primary">Create account &amp; submit request</button>
-  </form>
+{% block title %}Register as clinician · {{ product_name }}{% endblock %}
+{% block shell %}
+<div class="auth">
+  <div class="auth-card">
+    <div class="wordmark">{{ product_name }}</div>
+    <div class="sub">Clinician enrolment · request-then-issue</div>
+    <p class="small text-muted">This records what you are asking to be certified for. An authority verifies your licence and issues the attribute — until then you hold nothing and can open nothing.</p>
+    {% if error %}<div class="notice notice-error mb-3">{{ error }}</div>{% endif %}
+    <form method="post" class="stack">
+      {% csrf_token %}
+      <div class="form-grid">
+        <div class="field"><label>Username</label><input class="input" name="username" required></div>
+        <div class="field"><label>Password</label><input class="input" type="password" name="password" required></div>
+      </div>
+      <div class="field"><label>Clinician id</label><input class="input mono" name="clinician_id" placeholder="doc-201" required></div>
+      <div class="field"><label>Requested attributes</label><input class="input mono" name="requested_attributes" placeholder="role:physician, specialty:cardiology"></div>
+      <div class="field"><label>Licence / proof</label><textarea class="input" name="license_info" placeholder="Registration number, issuing council…"></textarea></div>
+      <button class="btn btn-primary btn-block">Create account &amp; request credential</button>
+    </form>
+    <div class="small text-muted mt-3"><a href="{% url 'accounts:login' %}">Back to log in</a></div>
+  </div>
 </div>
 {% endblock %}

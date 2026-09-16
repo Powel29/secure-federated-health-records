@@ -1,0 +1,961 @@
+"""Key Custodian Service (ADR-0043, C14) -- the subject's key agent.
+
+The three web portals (C16) identify users and display data; they hold no keys
+and decide no access (ADR-0014/0021). But every action the portals must offer
+-- a patient signing a consent decision, a patient reading their own record via
+the ``owner:<patient_id>`` leaf, a clinician reading under consent, a clinician
+signing an ``EmergencyAssertion`` and presenting threshold shares -- needs a
+private key or a share on the caller's side of the wire. This service is where
+that material lives instead: **one process standing in for every subject's
+personal key agent** (a smartcard, an enclave, a browser keystore in a real
+deployment). It:
+
+- holds each subject's ECDSA signing key, certificate, PRE keypair and the
+  credentials an authority issued them, deposited once at seed time the same
+  way the audit service is handed share 3;
+- signs on a subject's behalf (consent requests/decisions/revocations,
+  emergency assertions) and returns the *signed public artifact* -- never a key;
+- performs the key-bearing federation calls a subject would perform themself
+  (attribute-key release at the authorities, ``/records/{id}/read``,
+  ``/breakglass/release`` at the audit service, ``/records/{id}/breakglass``
+  at a facility) and returns only the outcome.
+
+What it does **not** do is decide access. A read still goes through the
+facility's policy engine; a break-glass still needs the audit service's
+committed log entry before share 3 exists; a consent grant is still verified
+by the facility against the patient's public key. A portal login whose subject
+has no material here gets ``404`` and nothing decrypts -- that is ADR-0021's
+"a portal account alone grants zero access", made concrete.
+
+Invariants:
+- CONVENTIONS.md §2 rule 10: no cryptography in route handlers. Signing is
+  ``consent.service`` / ``breakglass.assertion``; PRE delivery decode is
+  ``pre.delivery``; record decryption is ``records.service``.
+- No private key is ever returned by any endpoint (only public keys,
+  certificates and credential *summaries*).
+- Every federation endpoint this service calls comes from its configuration
+  (CONVENTIONS.md §2 rule 8), never from request data -- a request names a
+  ``facility_id``, and the allowlist maps it to a URL.
+"""
+
+from __future__ import annotations
+
+import base64
+import binascii
+import datetime
+import logging
+import threading
+from dataclasses import dataclass, field
+from typing import Annotated, Any, Callable
+from uuid import uuid4
+
+import httpx
+from breakglass import create_emergency_assertion
+from breakglass.emergency_key import generate_emergency_key, split_emergency_key
+from consent.service import (
+    create_consent_grant,
+    create_consent_request,
+    revoke_consent_grant,
+)
+from contracts import AttributeCredential, Record, TransitionEvent
+from contracts.enums import ConsentStatus, PolicyNodeType
+from contracts.policy import PolicyTree
+from crypto_core import (
+    generate_key,
+    private_key_from_pem,
+    private_key_to_pem,
+    public_key_to_pem,
+)
+from crypto_core.exceptions import InvalidTagError, KeyFormatError
+from crypto_core.types import ECPrivateKey
+from fastapi import Depends, FastAPI, HTTPException, Request, status
+from pre import open_delivery_package
+from pre.exceptions import PREError
+from records.exceptions import DecryptionError
+from records.service import decrypt_record
+
+from api.custodian_schemas import (
+    BreakglassPayload,
+    BreakglassResult,
+    CredentialSummary,
+    DecideConsentPayload,
+    DepositMaterialRequest,
+    DepositMaterialResponse,
+    DepositShareRequest,
+    DepositShareResponse,
+    ErrorResponse,
+    HealthResponse,
+    IngestPayload,
+    IngestResult,
+    PublicKeyResponse,
+    ReadRecordPayload,
+    ReadRecordResult,
+    RevokeConsentPayload,
+    SharePresented,
+    SignConsentRequestPayload,
+    SignConsentRequestResponse,
+    SignedGrantResponse,
+    SubjectSummary,
+    TrustMaterialRequest,
+)
+
+_logger = logging.getLogger(__name__)
+
+DEFAULT_TIMEOUT_SECONDS = 10.0
+
+SHARE_HOLDER_CLINICIAN = "clinician"
+SHARE_HOLDER_AUDIT = "audit-service"
+SHARE_HOLDER_HOME_AUTHORITY = "home-authority"
+
+RecordLoader = Callable[[str], Record | None]
+
+
+# --- In-memory vault ---------------------------------------------------------
+
+
+@dataclass
+class SubjectMaterial:
+    """One subject's private material. Never serialised back out."""
+
+    subject_id: str
+    kind: str
+    display_name: str
+    signing_key: ECPrivateKey
+    facility_id: str | None = None
+    certificate_pem: str | None = None
+    pre_private_key: int | None = None
+    pre_public_key: int | None = None
+    credentials: list[AttributeCredential] = field(default_factory=list)
+
+
+@dataclass
+class CustodianEndpoints:
+    """Config allowlist of every federation endpoint this service may call."""
+
+    authorities: dict[str, str] = field(default_factory=dict)
+    facilities: dict[str, str] = field(default_factory=dict)
+    audit: str | None = None
+
+
+class CustodianVault:
+    """Thread-safe registry of subject material, trust anchors and share 1s."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._subjects: dict[str, SubjectMaterial] = {}
+        self._shares: dict[str, tuple[int, bytes]] = {}
+        self.root_certificate_pem: str | None = None
+        self.facility_ca_certificate_pems: dict[str, str] = {}
+
+    def put_subject(self, material: SubjectMaterial) -> None:
+        with self._lock:
+            self._subjects[material.subject_id] = material
+
+    def get_subject(self, subject_id: str) -> SubjectMaterial | None:
+        with self._lock:
+            return self._subjects.get(subject_id)
+
+    def put_share(self, record_id: str, share: tuple[int, bytes]) -> None:
+        with self._lock:
+            self._shares[record_id] = share
+
+    def get_share(self, record_id: str) -> tuple[int, bytes] | None:
+        with self._lock:
+            return self._shares.get(record_id)
+
+    def set_trust(self, root_pem: str, facility_ca_pems: dict[str, str]) -> None:
+        with self._lock:
+            self.root_certificate_pem = root_pem
+            self.facility_ca_certificate_pems = dict(facility_ca_pems)
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._subjects)
+
+
+# --- Dependencies ------------------------------------------------------------
+
+
+def get_vault(request: Request) -> CustodianVault:
+    return request.app.state.vault
+
+
+def get_endpoints(request: Request) -> CustodianEndpoints:
+    return request.app.state.endpoints
+
+
+def get_http(request: Request) -> httpx.Client:
+    return request.app.state.http
+
+
+VaultDep = Annotated[CustodianVault, Depends(get_vault)]
+EndpointsDep = Annotated[CustodianEndpoints, Depends(get_endpoints)]
+HttpDep = Annotated[httpx.Client, Depends(get_http)]
+
+
+def _require_subject(vault: CustodianVault, subject_id: str) -> SubjectMaterial:
+    """Fail closed: a subject with no deposited material can do nothing."""
+    material = vault.get_subject(subject_id)
+    if material is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"no key material held for subject {subject_id!r}; a portal "
+                "login alone grants nothing (ADR-0021)"
+            ),
+        )
+    return material
+
+
+def _require_kind(material: SubjectMaterial, kind: str) -> None:
+    if material.kind != kind:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"subject {material.subject_id!r} is a {material.kind}, not a {kind}"
+            ),
+        )
+
+
+def _facility_url(endpoints: CustodianEndpoints, facility_id: str) -> str:
+    url = endpoints.facilities.get(facility_id)
+    if not url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"facility {facility_id!r} is not in this custodian's allowlist",
+        )
+    return url
+
+
+def _raise_upstream(resp: httpx.Response, *, what: str) -> None:
+    """Translate an upstream refusal into this service's response, verbatim.
+
+    A facility's 403 (policy/consent denial) stays a 403 -- the portal must
+    show the specific reason, not a generic failure. Anything else upstream
+    becomes a 502 so a portal never mistakes an outage for a denial.
+    """
+    try:
+        body: Any = resp.json()
+    except ValueError:
+        body = {"detail": resp.text}
+    detail = body.get("detail", resp.text) if isinstance(body, dict) else resp.text
+    if resp.status_code in (400, 403, 404, 409, 503):
+        raise HTTPException(status_code=resp.status_code, detail=f"{what}: {detail}")
+    raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail=f"{what} failed upstream ({resp.status_code}): {detail}",
+    )
+
+
+def _post(
+    http: httpx.Client, url: str, json: dict[str, Any], *, what: str
+) -> dict[str, Any]:
+    try:
+        resp = http.post(url, json=json)
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"{what}: could not reach {url}: {exc}",
+        ) from exc
+    if resp.status_code >= 400:
+        _raise_upstream(resp, what=what)
+    return resp.json()
+
+
+def _holder_keyring(
+    http: httpx.Client,
+    endpoints: CustodianEndpoints,
+    material: SubjectMaterial,
+) -> tuple[dict[str, str], list[str]]:
+    """Exchange each held credential for its attribute key at the issuer.
+
+    A credential the issuing authority now refuses (expired, revoked, or the
+    authority is unknown) is simply not presented -- the facility's policy
+    engine then decides with whatever remains, and denies if that is not
+    enough. Refusals are logged, never hidden.
+    """
+    keyring: dict[str, str] = {}
+    presented: list[str] = []
+    for cred in material.credentials:
+        authority_url = endpoints.authorities.get(cred.issuer_id)
+        label = f"{cred.issuer_id}:{cred.attribute.name}:{cred.attribute.value}"
+        if not authority_url:
+            _logger.warning(
+                "no endpoint for issuer %s; skipping %s", cred.issuer_id, label
+            )
+            continue
+        try:
+            resp = http.post(
+                f"{authority_url}/attribute-keys/release",
+                json={"credential": cred.model_dump(mode="json")},
+            )
+        except httpx.HTTPError as exc:
+            _logger.warning("attribute-key release for %s unreachable: %s", label, exc)
+            continue
+        if resp.status_code != 200:
+            _logger.info("authority refused %s: %s", label, resp.text)
+            continue
+        keyring[label] = resp.json()["key_b64"]
+        presented.append(label)
+    return keyring, presented
+
+
+def _policy_leaves(tree: PolicyTree) -> list[tuple[str, str, str]]:
+    """Every ``(authority_id, name, value)`` leaf a policy tree references."""
+    if tree.node_type is PolicyNodeType.LEAF:
+        if tree.attribute is None or tree.authority_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="malformed policy leaf"
+            )
+        return [(tree.authority_id, tree.attribute.name, tree.attribute.value)]
+    leaves: list[tuple[str, str, str]] = []
+    for child in tree.children:
+        leaves.extend(_policy_leaves(child))
+    return leaves
+
+
+def _authoring_keyring(
+    http: httpx.Client,
+    endpoints: CustodianEndpoints,
+    leaves: list[tuple[str, str, str]],
+) -> dict[str, str]:
+    """Mint/fetch the authoring-side key for each leaf at its owning authority.
+
+    ``/attribute-keys/author`` is the same path ``demo/seed_data.py`` and
+    ``deploy/run_scenario.py`` use to seal leaves at ingest; its access
+    limitation is documented on the authority service itself.
+    """
+    keyring: dict[str, str] = {}
+    for authority_id, name, value in leaves:
+        label = f"{authority_id}:{name}:{value}"
+        if label in keyring:
+            continue
+        authority_url = endpoints.authorities.get(authority_id)
+        if not authority_url:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"policy references unknown authority {authority_id!r}",
+            )
+        data = _post(
+            http,
+            f"{authority_url}/attribute-keys/author",
+            {"name": name, "value": value},
+            what=f"authoring key for {label}",
+        )
+        keyring[label] = data["key_b64"]
+    return keyring
+
+
+# --- App factory -------------------------------------------------------------
+
+
+def create_custodian_app(
+    *,
+    endpoints: CustodianEndpoints | None = None,
+    vault: CustodianVault | None = None,
+    record_loader: RecordLoader | None = None,
+    http_client: httpx.Client | None = None,
+    root_certificate_pem: str | None = None,
+    facility_ca_certificate_pems: dict[str, str] | None = None,
+) -> FastAPI:
+    """Create and configure the Key Custodian Service application.
+
+    Args:
+        endpoints: The allowlist of authority / facility / audit URLs this
+            service may call. Everything is resolved from here, never from a
+            request body (CONVENTIONS.md §2 rule 8).
+        vault: Pre-populated vault (tests); a fresh empty one otherwise.
+        record_loader: Returns the ciphertext ``Record`` for a ``record_id``
+            so a break-glass result can include the decrypted payload. In
+            deployment this is ``storage.repositories.get_record`` bound to a
+            store connection; ``None`` means break-glass reports the recovered
+            DEK only and ``plaintext_b64`` is omitted.
+        http_client: Injected client (tests); a default one otherwise.
+        root_certificate_pem: Optional trust anchor; may also be set later via
+            ``PUT /trust``.
+        facility_ca_certificate_pems: Optional per-facility CA certificates.
+    """
+    app = FastAPI(
+        title="Key Custodian Service",
+        description=(
+            "Federated Break-Glass EHR -- per-subject key agent standing in for "
+            "every persona's smartcard/enclave (ADR-0043). Holds keys, signs on "
+            "request, decides nothing."
+        ),
+        version="1.0.0",
+    )
+    app.state.vault = vault or CustodianVault()
+    app.state.endpoints = endpoints or CustodianEndpoints()
+    app.state.http = http_client or httpx.Client(timeout=DEFAULT_TIMEOUT_SECONDS)
+    app.state.record_loader = record_loader
+    if root_certificate_pem:
+        app.state.vault.set_trust(
+            root_certificate_pem, facility_ca_certificate_pems or {}
+        )
+
+    # --- Health ------------------------------------------------------------
+
+    @app.get("/health", response_model=HealthResponse)
+    def health_check(vault: VaultDep) -> HealthResponse:
+        return HealthResponse(subjects=len(vault))
+
+    # --- Bootstrap deposits -------------------------------------------------
+
+    @app.put("/trust", response_model=TrustMaterialRequest)
+    def set_trust(
+        payload: TrustMaterialRequest, vault: VaultDep
+    ) -> TrustMaterialRequest:
+        """Register the federation root and facility CA certificates (public)."""
+        vault.set_trust(
+            payload.root_certificate_pem, payload.facility_ca_certificate_pems
+        )
+        return payload
+
+    @app.post(
+        "/subjects/{subject_id}/material",
+        response_model=DepositMaterialResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def deposit_material(
+        subject_id: str, payload: DepositMaterialRequest, vault: VaultDep
+    ) -> DepositMaterialResponse:
+        """Deposit a subject's private material (seed/bootstrap step)."""
+        try:
+            signing_key = private_key_from_pem(payload.signing_key_pem.encode("utf-8"))
+        except KeyFormatError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"invalid signing key PEM: {exc}",
+            ) from exc
+        for cred in payload.credentials:
+            if cred.subject_id != subject_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"credential {cred.serial!r} is for {cred.subject_id!r}, "
+                        f"not {subject_id!r}"
+                    ),
+                )
+        vault.put_subject(
+            SubjectMaterial(
+                subject_id=subject_id,
+                kind=payload.kind,
+                display_name=payload.display_name,
+                signing_key=signing_key,
+                facility_id=payload.facility_id,
+                certificate_pem=payload.certificate_pem,
+                pre_private_key=payload.pre_private_key,
+                pre_public_key=payload.pre_public_key,
+                credentials=list(payload.credentials),
+            )
+        )
+        return DepositMaterialResponse(
+            subject_id=subject_id, credentials=len(payload.credentials)
+        )
+
+    @app.post(
+        "/records/{record_id}/shares",
+        response_model=DepositShareResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def deposit_share(
+        record_id: str, payload: DepositShareRequest, vault: VaultDep
+    ) -> DepositShareResponse:
+        """Deposit share 1 (attending-clinician custody) for one record."""
+        try:
+            share_bytes = bytes.fromhex(payload.share_hex)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"invalid hex share: {exc}",
+            ) from exc
+        vault.put_share(record_id, (payload.x, share_bytes))
+        return DepositShareResponse(record_id=record_id, x=payload.x)
+
+    # --- Public read-back --------------------------------------------------
+
+    @app.get(
+        "/subjects/{subject_id}",
+        response_model=SubjectSummary,
+        responses={404: {"model": ErrorResponse}},
+    )
+    def subject_summary(subject_id: str, vault: VaultDep) -> SubjectSummary:
+        """Public identity of a subject: keys are described, never returned."""
+        material = _require_subject(vault, subject_id)
+        return SubjectSummary(
+            subject_id=material.subject_id,
+            kind=material.kind,  # type: ignore[arg-type]
+            display_name=material.display_name,
+            facility_id=material.facility_id,
+            public_key_pem=public_key_to_pem(material.signing_key.public_key()).decode(
+                "ascii"
+            ),
+            certificate_pem=material.certificate_pem,
+            pre_public_key=material.pre_public_key,
+            credentials=[
+                CredentialSummary(
+                    serial=c.serial,
+                    issuer_id=c.issuer_id,
+                    name=c.attribute.name,
+                    value=c.attribute.value,
+                    valid_until=c.valid_until,
+                    status=c.status.value,
+                )
+                for c in material.credentials
+            ],
+        )
+
+    @app.get("/subjects/{subject_id}/public-key", response_model=PublicKeyResponse)
+    def subject_public_key(subject_id: str, vault: VaultDep) -> PublicKeyResponse:
+        material = _require_subject(vault, subject_id)
+        return PublicKeyResponse(
+            subject_id=subject_id,
+            public_key_pem=public_key_to_pem(material.signing_key.public_key()).decode(
+                "ascii"
+            ),
+        )
+
+    # --- Consent signing (ADR-0014 / ADR-0031) -------------------------------
+
+    @app.post(
+        "/subjects/{subject_id}/consent/request",
+        response_model=SignConsentRequestResponse,
+    )
+    def sign_consent_request(
+        subject_id: str, payload: SignConsentRequestPayload, vault: VaultDep
+    ) -> SignConsentRequestResponse:
+        """Sign a clinician's ``ConsentRequest``. Grants nothing by itself."""
+        material = _require_subject(vault, subject_id)
+        _require_kind(material, "clinician")
+        try:
+            req = create_consent_request(
+                patient_id=payload.patient_id,
+                requester_id=subject_id,
+                scope=tuple(payload.scope),
+                purpose=payload.purpose,
+                requester_signing_key=material.signing_key,
+                ttl=datetime.timedelta(days=payload.ttl_days),
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
+        return SignConsentRequestResponse(request=req)
+
+    @app.post(
+        "/subjects/{subject_id}/consent/decide", response_model=SignedGrantResponse
+    )
+    def sign_consent_decision(
+        subject_id: str, payload: DecideConsentPayload, vault: VaultDep
+    ) -> SignedGrantResponse:
+        """Sign the patient's decision on a request (granted or denied)."""
+        material = _require_subject(vault, subject_id)
+        _require_kind(material, "patient")
+        if payload.request.patient_id != subject_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"request {payload.request.request_id} is addressed to "
+                    f"{payload.request.patient_id!r}, not {subject_id!r}"
+                ),
+            )
+        grant = create_consent_grant(
+            request=payload.request,
+            status=ConsentStatus(payload.status),
+            grantee_id=payload.request.requester_id,
+            patient_signing_key=material.signing_key,
+            ttl=datetime.timedelta(days=payload.ttl_days),
+        )
+        return SignedGrantResponse(
+            grant=grant,
+            patient_public_key_pem=public_key_to_pem(
+                material.signing_key.public_key()
+            ).decode("ascii"),
+        )
+
+    @app.post(
+        "/subjects/{subject_id}/consent/revoke", response_model=SignedGrantResponse
+    )
+    def sign_consent_revocation(
+        subject_id: str, payload: RevokeConsentPayload, vault: VaultDep
+    ) -> SignedGrantResponse:
+        """Sign a revocation of a prior grant (patient-only, ADR-0037)."""
+        material = _require_subject(vault, subject_id)
+        _require_kind(material, "patient")
+        if payload.prior_grant.patient_id != subject_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="only the granting patient can revoke this grant",
+            )
+        revoked = revoke_consent_grant(
+            prior_grant=payload.prior_grant, patient_signing_key=material.signing_key
+        )
+        return SignedGrantResponse(
+            grant=revoked,
+            patient_public_key_pem=public_key_to_pem(
+                material.signing_key.public_key()
+            ).decode("ascii"),
+        )
+
+    # --- Key-bearing federation calls ---------------------------------------
+
+    @app.post(
+        "/subjects/{subject_id}/read",
+        response_model=ReadRecordResult,
+        responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+    )
+    def read_record(
+        subject_id: str,
+        payload: ReadRecordPayload,
+        vault: VaultDep,
+        endpoints: EndpointsDep,
+        http: HttpDep,
+    ) -> ReadRecordResult:
+        """Read a record at a facility with this subject's attribute keys.
+
+        The custodian presents; the facility's policy engine decides. A
+        patient with no ``owner:<patient_id>`` credential presents an empty
+        keyring and is refused by policy -- the ADR-0016 fail-closed case.
+        """
+        material = _require_subject(vault, subject_id)
+        facility_url = _facility_url(endpoints, payload.facility_id)
+        keyring, presented = _holder_keyring(http, endpoints, material)
+
+        body: dict[str, Any] = {
+            "requester_id": subject_id,
+            "holder_keyring": keyring,
+            "correlation_id": payload.correlation_id or str(uuid4()),
+        }
+        access_via = "policy" if material.kind == "clinician" else "owner"
+        if payload.grant is not None:
+            patient = vault.get_subject(payload.grant.patient_id)
+            if patient is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"no public key held for patient {payload.grant.patient_id!r}; "
+                        "the grant cannot be verified"
+                    ),
+                )
+            body["grant"] = payload.grant.model_dump(mode="json")
+            body["patient_public_key_pem"] = public_key_to_pem(
+                patient.signing_key.public_key()
+            ).decode("ascii")
+            access_via = "consent"
+
+        data = _post(
+            http,
+            f"{facility_url}/records/{payload.record_id}/read",
+            body,
+            what="record read",
+        )
+        return ReadRecordResult(
+            record_id=data["record_id"],
+            patient_id=data["patient_id"],
+            facility_id=data["facility_id"],
+            content_type=data["content_type"],
+            plaintext_b64=data["plaintext_b64"],
+            access_via=access_via,
+            correlation_id=body["correlation_id"],
+            attributes_presented=presented,
+        )
+
+    @app.post(
+        "/subjects/{subject_id}/records",
+        response_model=IngestResult,
+        status_code=status.HTTP_201_CREATED,
+        responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+    )
+    def ingest_own_record(
+        subject_id: str,
+        payload: IngestPayload,
+        vault: VaultDep,
+        endpoints: EndpointsDep,
+        http: HttpDep,
+    ) -> IngestResult:
+        """Upload a record of the patient's own (P3-14 ingest via the key agent).
+
+        Fails closed before touching any service if the patient holds no
+        ``owner`` credential: the facility would seal a record the patient
+        could never open, so the request is refused instead.
+        """
+        material = _require_subject(vault, subject_id)
+        _require_kind(material, "patient")
+        owner_creds = [
+            c
+            for c in material.credentials
+            if c.attribute.name == "owner" and c.attribute.value == subject_id
+        ]
+        if not owner_creds:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"patient {subject_id!r} holds no owner credential; refusing to "
+                    "seal a record its owner could not open (ADR-0016)"
+                ),
+            )
+        owner_authority_id = owner_creds[0].issuer_id
+        facility_url = _facility_url(endpoints, payload.facility_id)
+        if not endpoints.audit:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="no audit service configured; share 3 has nowhere to go",
+            )
+        try:
+            plaintext = base64.b64decode(payload.content_b64, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"content_b64 is not valid base64: {exc}",
+            ) from exc
+        if not plaintext:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="empty record"
+            )
+        record_id = payload.record_id or f"rec-{uuid4().hex[:8]}"
+
+        # Authoring keys for every clinical leaf plus the owner leaf.
+        leaves = _policy_leaves(payload.clinical_policy)
+        leaves.append((owner_authority_id, "owner", subject_id))
+        keyring = _authoring_keyring(http, endpoints, leaves)
+
+        # 2-of-3 emergency key: share 3 to the audit service (commit-before-
+        # release custody), share 1 to clinician custody here, share 2 unused
+        # (home authority) -- the same split the seed performs.
+        emergency_key = generate_emergency_key()
+        share1, _share2, share3 = split_emergency_key(emergency_key)
+        _post(
+            http,
+            f"{endpoints.audit}/breakglass/shares",
+            {"share_key": record_id, "x": share3[0], "share_hex": share3[1].hex()},
+            what="audit share deposit",
+        )
+        vault.put_share(record_id, share1)
+
+        data = _post(
+            http,
+            f"{facility_url}/records/ingest",
+            {
+                "plaintext_b64": payload.content_b64,
+                "patient_id": subject_id,
+                "owner_authority_id": owner_authority_id,
+                "clinical_policy": payload.clinical_policy.model_dump(mode="json"),
+                "attribute_keyring": keyring,
+                "search_terms": payload.search_terms or None,
+                "emergency_key_b64": base64.b64encode(emergency_key).decode("ascii"),
+                "content_type": payload.content_type,
+                "record_id": record_id,
+            },
+            what="record ingest",
+        )
+        return IngestResult(
+            record_id=data["record_id"],
+            facility_id=payload.facility_id,
+            patient_id=subject_id,
+            policy_id=data["policy_id"],
+            lifecycle_state=data["lifecycle_state"],
+            search_terms_indexed=data["search_terms_indexed"],
+            audit_share_deposited=True,
+        )
+
+    @app.post(
+        "/subjects/{subject_id}/breakglass",
+        response_model=BreakglassResult,
+        responses={
+            400: {"model": ErrorResponse},
+            403: {"model": ErrorResponse},
+            404: {"model": ErrorResponse},
+            503: {"model": ErrorResponse},
+        },
+    )
+    def declare_breakglass(
+        subject_id: str,
+        payload: BreakglassPayload,
+        vault: VaultDep,
+        endpoints: EndpointsDep,
+        http: HttpDep,
+    ) -> BreakglassResult:
+        """Run the clinician's side of ARCHITECTURE.md §5 steps 1-5.
+
+        1. Sign the ``EmergencyAssertion`` with the clinician's certificate key.
+        2. Ask the audit service for share 3 -- it commits its log entry
+           first and returns the share only with the new chain head
+           (log-before-release; a failed commit means no share, no unlock).
+        3. Take share 1 from clinician custody.
+        4. Present assertion + certificate chain + 2 shares + PRE public key
+           to the declaring facility's threshold gate.
+        5. Open the PRE delivery package and, when a record loader is
+           configured, decrypt the record for display.
+        """
+        material = _require_subject(vault, subject_id)
+        _require_kind(material, "clinician")
+        if not material.certificate_pem:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"clinician {subject_id!r} holds no certificate; cannot assert",
+            )
+        if material.pre_private_key is None or material.pre_public_key is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"clinician {subject_id!r} holds no PRE keypair; "
+                    "cannot receive a DEK"
+                ),
+            )
+        facility_id = payload.facility_id or material.facility_id
+        if not facility_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="no facility_id given and the clinician has no home facility",
+            )
+        facility_url = _facility_url(endpoints, facility_id)
+        if not endpoints.audit:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="no audit service configured; break-glass cannot proceed",
+            )
+        share1 = vault.get_share(payload.record_id)
+        if share1 is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"no clinician-custody share held for record "
+                    f"{payload.record_id!r}; threshold cannot be met"
+                ),
+            )
+        corr_id = payload.correlation_id or str(uuid4())
+
+        # 1. Sign the assertion, bound to the identified patient (ADR-0033).
+        assertion = create_emergency_assertion(
+            patient_id=payload.patient_id,
+            clinician_id=subject_id,
+            facility_id=facility_id,
+            reason_code=payload.reason_code,
+            signing_key=material.signing_key,
+            ttl=datetime.timedelta(seconds=payload.assertion_ttl_seconds),
+        )
+
+        # 2. Share 3: the audit service commits first, releases second.
+        release = _post(
+            http,
+            f"{endpoints.audit}/breakglass/release",
+            {
+                "share_key": payload.record_id,
+                "event_type": "breakglass_share_released",
+                "event_data": {
+                    "record_id": payload.record_id,
+                    "patient_id": payload.patient_id,
+                    "clinician_id": subject_id,
+                    "facility_id": facility_id,
+                    "assertion_id": str(assertion.assertion_id),
+                    "reason_code": payload.reason_code.value,
+                },
+                "actor_id": SHARE_HOLDER_AUDIT,
+                "correlation_id": corr_id,
+            },
+            what="audit share release",
+        )
+        shares_presented = [
+            SharePresented(holder=SHARE_HOLDER_CLINICIAN, x=share1[0]),
+            SharePresented(
+                holder=SHARE_HOLDER_AUDIT,
+                x=release["x"],
+                audit_entry_seq=release["entry"]["seq"],
+            ),
+        ]
+
+        # 4. Threshold gate at the declaring facility.
+        # ``baseline_wrapping_key_b64`` is what P4-1's contract makes the
+        # caller supply for the timer's re-baseline at expiry. A clinician's
+        # agent cannot know a record's policy root secret, and since ADR-0040
+        # the facility keeps the timer's rotated wrapping in memory only, so
+        # the value's sole effect is to let the time-box register (and so
+        # expire, with its two signed transitions entering the chain) --
+        # ``deploy/run_scenario`` passes an authoring key for the same
+        # reason. A fresh random 32-byte value is presented: it is not a key
+        # to anything and is discarded with the rotation. Tracked as an
+        # open gap in ADR-0043 (re-baseline persistence, P5-4).
+        unlock = _post(
+            http,
+            f"{facility_url}/records/{payload.record_id}/breakglass",
+            {
+                "assertion": assertion.model_dump(mode="json"),
+                "clinician_certificate_pem": material.certificate_pem,
+                "facility_ca_certificate_pem": vault.facility_ca_certificate_pems.get(
+                    facility_id
+                ),
+                "trusted_root_certificate_pem": vault.root_certificate_pem,
+                "shares": [
+                    [share1[0], share1[1].hex()],
+                    [release["x"], release["share_hex"]],
+                ],
+                "pre_rewrap_key": material.pre_public_key,
+                "lifecycle_signing_key_pem": private_key_to_pem(
+                    material.signing_key
+                ).decode("ascii"),
+                "correlation_id": corr_id,
+                "baseline_wrapping_key_b64": base64.b64encode(generate_key()).decode(
+                    "ascii"
+                ),
+                "emergency_duration_seconds": payload.emergency_duration_seconds,
+            },
+            what="break-glass unlock",
+        )
+        transition = TransitionEvent.model_validate(unlock["transition_event"])
+        opened_at = transition.issued_at
+
+        # 5. Open the PRE delivery package; decrypt if we can see the store.
+        try:
+            dek = open_delivery_package(
+                base64.b64decode(unlock["rewrapped_dek_b64"]),
+                pre_private_key=material.pre_private_key,
+                record_id=payload.record_id,
+            )
+        except (PREError, InvalidTagError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"PRE delivery package did not open for this clinician: {exc}",
+            ) from exc
+
+        plaintext_b64: str | None = None
+        content_type: str | None = None
+        loader: RecordLoader | None = app.state.record_loader
+        if loader is not None:
+            record = loader(payload.record_id)
+            if record is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"record {payload.record_id!r} not found in the store",
+                )
+            try:
+                plaintext = decrypt_record(record, dek)
+            except DecryptionError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"recovered DEK does not open the record: {exc}",
+                ) from exc
+            plaintext_b64 = base64.b64encode(plaintext).decode("ascii")
+            content_type = record.content_type
+
+        expires_at = (
+            opened_at + datetime.timedelta(seconds=payload.emergency_duration_seconds)
+            if payload.emergency_duration_seconds is not None
+            else None
+        )
+        return BreakglassResult(
+            record_id=payload.record_id,
+            patient_id=payload.patient_id,
+            facility_id=facility_id,
+            clinician_id=subject_id,
+            correlation_id=corr_id,
+            assertion_id=str(assertion.assertion_id),
+            assertion_expires_at=assertion.expires_at,
+            shares_presented=shares_presented,
+            transition_event=transition,
+            opened_at=opened_at,
+            expires_at=expires_at,
+            content_type=content_type,
+            plaintext_b64=plaintext_b64,
+        )
+
+    return app

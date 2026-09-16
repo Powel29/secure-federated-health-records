@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Federation & key custody · {{ product_name }}{% endblock %}
+{% block content %}
+<div class="grid-2">
+  <div class="card">
+    <h3 class="card-title">Federation processes</h3>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Process</th><th>Holds</th><th class="right">State</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">store</td><td class="small">{{ holds_store }}</td><td class="right">{% if store_ok %}<span class="tag tag-neutral">ready · read-only alias</span>{% else %}<span class="tag tag-danger">unreachable</span>{% endif %}</td></tr>
+        {% for p in processes %}
+          <tr><td class="mono">{{ p.name }}<span class="sub">{{ p.url }}</span></td><td class="small">{{ p.holds }}</td>
+            <td class="right">{% if p.ok %}<span class="tag tag-neutral">ready</span>{% else %}<span class="tag tag-danger">down</span>{% endif %}<span class="sub mono">{{ p.detail|truncatechars:48 }}</span></td></tr>
+        {% endfor %}
+      </tbody></table></div>
+    {% if store_error %}<div class="notice notice-error small">{{ store_error }}</div>{% endif %}
+    <div class="tiny text-muted">Health is probed live from the portal. The custodian holds subject keys and clinician-custody shares; it can sign and present but cannot open a record alone — the policy engine, the audit commit and the threshold gate still decide.</div>
+  </div>
+
+  <div class="stack gap-6">
+    <div class="card">
+      <h3 class="card-title">What the store holds</h3>
+      <div class="grid-stats">
+        {% for name, n in counts.items %}<div><div class="kicker">{{ name }}</div><div class="stat">{{ n }}</div></div>{% endfor %}
+      </div>
+      <div class="tiny text-muted">Ciphertext, wrapped keys, opaque search tokens, signed transitions and the hash chain. No plaintext, no names, no keys in the clear.</div>
+    </div>
+    <div class="card">
+      <h3 class="card-title">Trust topology</h3>
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>Party</th><th>Role</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for a in authorities %}<tr><td class="mono">{{ a.authority_id }}</td><td class="small">{{ a.display_name }} · attribute authority</td><td><span class="tag tag-neutral">registered</span></td></tr>{% endfor %}
+          {% for f in facilities %}<tr><td class="mono">{{ f.facility_id }}</td><td class="small">{{ f.display_name }} · facility CA, cross-certified</td><td><span class="tag tag-neutral">{{ f.status }}</span></td></tr>{% endfor %}
+          {% if not authorities and not facilities %}<tr><td colspan="3" class="empty">Topology not readable.</td></tr>{% endif %}
+        </tbody></table></div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="subhead"><h3 class="card-title">Sealed records and lifecycle state</h3><span class="tag tag-outline">read-only</span></div>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Record</th><th>Patient</th><th>Facility</th><th>Type</th><th>Ciphertext</th><th>Lifecycle</th><th>Created (UTC)</th></tr></thead>
+    <tbody>{% for r in records %}
+      <tr><td class="mono">{{ r.record_id }}</td><td class="mono">{{ r.patient_id }}</td><td class="small">{{ r.facility_name|default:r.facility_id }}</td><td class="small">{{ r.content_type }}</td><td class="mono small">{{ r.ciphertext_bytes }} B</td>
+        <td>{% if r.lifecycle_state == "emergency_open" %}<span class="tag tag-accent">emergency-open</span>{% elif r.lifecycle_state %}<span class="tag tag-neutral">{{ r.lifecycle_state }}</span>{% else %}—{% endif %}</td>
+        <td class="mono small">{{ r.created_at|date:"Y-m-d H:i" }}</td></tr>
+    {% empty %}<tr><td colspan="7" class="empty">No records ingested yet.</td></tr>{% endfor %}</tbody></table></div>
+</div>
+{% endblock %}

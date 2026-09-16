@@ -79,8 +79,15 @@ Docker Compose. See [deploy/README.md](deploy/README.md).
 
 Three role-based Django portals (patient / clinician / admin-audit) plus
 self-service registration live in [`portal/`](portal/). They identify users and
-show data; they never decide access or decrypt (`ADR-0014`/`ADR-0021`). To run
-the frontend (Postgres + Django + browser), follow
+show data; they never decide access or decrypt (`ADR-0014`/`ADR-0021`); anything
+that needs a key goes to the Key Custodian service (`ADR-0043`). One command
+brings up the federation, the custodian, the seeded dataset and the portals:
+
+```bash
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/mydb python -m deploy.run_portal_demo
+```
+
+Logins, the examiner walk-through and the multi-process variant are in
 [portal/README.md](portal/README.md).
 
 ## External tools

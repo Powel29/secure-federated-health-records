@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Read under consent · {{ product_name }}{% endblock %}
+{% block content %}
+<div><a class="btn btn-ghost btn-sm" href="{% url 'clinician:consent_request' %}">← Requests</a></div>
+<div class="card">
+  <div class="subhead">
+    <div><div class="kicker">Consent-gated read</div><h3 class="card-title mono">{{ record_id }}</h3></div>
+    <span class="tag {% if row.status == 'granted' %}tag-accent{% else %}tag-neutral{% endif %}">{{ row.get_status_display }}</span>
+  </div>
+  <div class="grid-stats">
+    <div><div class="kicker">Patient</div><div class="value mono">{{ row.patient_id }}</div></div>
+    <div><div class="kicker">Scope</div><div class="value mono">{{ row.scope|join:", " }}</div></div>
+    <div><div class="kicker">Grant expires</div><div class="value mono">{{ row.grant_expires_at|date:"Y-m-d H:i"|default:"—" }}</div></div>
+    <div><div class="kicker">Key path</div><div class="value">consent gate → policy-tree unwrap</div></div>
+  </div>
+
+  {% if denied %}
+    <div class="card card-danger mt-3">
+      <h3 class="card-title">Refused — {{ denied }}</h3>
+      <div class="tiny text-muted mono">{{ correlation_id }}</div>
+      <div class="tiny text-muted">A grant is necessary, not sufficient: the facility verified the patient signature and then ran the policy tree with your attribute keys. Whichever check failed, nothing was decrypted and the denial is in the chain.</div>
+    </div>
+  {% elif plaintext %}
+    <div class="flex between mt-3"><span class="tag tag-accent">decrypted for this request only</span><span class="tiny text-muted mono">{{ attributes_presented|join:", " }} · {{ correlation_id }}</span></div>
+    <pre class="plaintext">{{ plaintext }}</pre>
+  {% else %}
+    <form method="post" class="flex mt-3">
+      {% csrf_token %}
+      {% if row.scope|length > 1 %}
+        <select class="input" name="record_id" style="max-width:260px">{% for rid in row.scope %}<option value="{{ rid }}" {% if rid == record_id %}selected{% endif %}>{{ rid }}</option>{% endfor %}</select>
+      {% else %}<input type="hidden" name="record_id" value="{{ record_id }}">{% endif %}
+      <button class="btn btn-primary" {% if row.status != "granted" %}disabled{% endif %}>Present grant and attribute keys</button>
+    </form>
+  {% endif %}
+</div>
+{% endblock %}

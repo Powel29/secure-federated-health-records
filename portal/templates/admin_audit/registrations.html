@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Registrations · {{ product_name }}{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="subhead"><h3 class="card-title">Pending registration requests</h3><span class="tag tag-outline">{{ pending|length }} pending</span></div>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Subject</th><th>Role</th><th>Requested</th><th>Licence</th><th class="right"></th></tr></thead>
+    <tbody>{% for r in pending %}
+      <tr><td class="mono">{{ r.subject_id }}<span class="sub">{{ r.created_at|date:"Y-m-d H:i" }}</span></td><td>{{ r.get_role_display }}</td><td class="small mono">{{ r.requested_attributes }}</td><td class="small text-muted">{{ r.license_info|truncatechars:40 }}</td>
+        <td class="right"><form method="post">{% csrf_token %}<button class="btn btn-secondary btn-sm" name="approve" value="{{ r.id }}">Approve &amp; issue</button></form></td></tr>
+    {% empty %}<tr><td colspan="5" class="empty">No pending requests.</td></tr>{% endfor %}</tbody></table></div>
+  <div class="tiny text-muted">Approval reaches the authority's issuance path, never the portal's: a signup records a request; only an authority issues an attribute (ADR-0021). In this build the issuance hand-off is not wired, so the button reports that honestly instead of faking success.</div>
+</div>
+{% if decided %}
+<div class="card">
+  <h3 class="card-title">Decided</h3>
+  <div class="table-wrap"><table class="table"><thead><tr><th>Subject</th><th>Role</th><th>Status</th></tr></thead>
+    <tbody>{% for r in decided %}<tr><td class="mono">{{ r.subject_id }}</td><td>{{ r.get_role_display }}</td><td><span class="tag tag-neutral">{{ r.get_status_display }}</span></td></tr>{% endfor %}</tbody></table></div>
+</div>
+{% endif %}
+{% endblock %}

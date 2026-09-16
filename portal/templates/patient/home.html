@@ -1,28 +1,63 @@
 {% extends "base.html" %}
-{% block title %}Patient portal{% endblock %}
+{% block title %}Overview · Patient · {{ product_name }}{% endblock %}
 {% block content %}
-<h1 class="h4 mb-3">Patient portal</h1>
-<div class="row g-3">
-  <div class="col-md-6">
-    <div class="card"><div class="card-body">
-      <h2 class="h6">Your enrollment</h2>
-      <p class="mb-1">Subject: <code>{{ user.profile.subject_id }}</code></p>
-      {% for r in user.requests.all %}
-        <span class="badge bg-warning text-dark">{{ r.get_status_display }}</span>
-        <span class="small text-muted">{{ r.requested_attributes }}</span>
+{% include "patient/_case_banner.html" %}
+
+<div class="grid-2">
+  <div class="card card-accent">
+    <div class="subhead">
+      <h3 class="card-title">Alerts</h3>
+      <span class="tag tag-outline">{{ unread_count }} unread</span>
+    </div>
+    {% if notifications %}
+      <div>
+      {% for n in notifications %}
+        <div class="note {% if n.is_unread %}unread{% endif %}">
+          <div class="grow">
+            <div class="title">{{ n.title }}</div>
+            <div class="body">{{ n.body }}</div>
+            <div class="tiny text-muted mt-2 mono">{{ n.created_at|date:"Y-m-d H:i" }} UTC · {{ n.get_kind_display }}
+              {% if n.correlation_id %} · <a href="{% url 'patient:history' %}?type=all#cid-{{ n.correlation_id }}">{{ n.correlation_id|truncatechars:22 }}</a>{% endif %}
+              {% if n.audit_seq %} · chain seq {{ n.audit_seq }}{% else %} · <span class="tag tag-neutral">not yet in chain</span>{% endif %}</div>
+          </div>
+          {% if n.is_unread %}
+          <form method="post" action="{% url 'patient:mark_read' n.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{% url 'patient:home' %}"><button class="btn btn-ghost btn-sm">Dismiss</button></form>
+          {% endif %}
+        </div>
       {% endfor %}
-    </div></div>
+      </div>
+    {% else %}
+      <div class="empty">No alerts. You will be told here when a record is opened under break-glass, a grant is revoked, or a clinician asks for access.</div>
+    {% endif %}
   </div>
-  <div class="col-md-6">
-    <div class="card"><div class="card-body">
-      <h2 class="h6">Upload a record</h2>
-      <form method="post">
-        {% csrf_token %}
-        <input class="form-control mb-2" name="filename" placeholder="scan.png">
-        <button class="btn btn-primary btn-sm" name="upload" value="1">Upload</button>
-        <span class="text-muted small">(encrypted by the ingest service)</span>
-      </form>
-    </div></div>
+
+  <div class="stack gap-6">
+    <div class="card">
+      <h3 class="card-title">At a glance</h3>
+      <div class="grid-stats">
+        <div><div class="kicker">Pending requests</div><div class="stat">{{ pending_count }}</div></div>
+        <div><div class="kicker">Live grants</div><div class="stat">{{ live_count }}</div></div>
+        <div><div class="kicker">Sealed records</div><div class="stat">{{ records|length }}</div></div>
+      </div>
+      <div class="flex mt-3">
+        <a class="btn btn-primary btn-sm" href="{% url 'patient:access' %}">Review access</a>
+        <a class="btn btn-secondary btn-sm" href="{% url 'patient:records' %}">Open records</a>
+        <a class="btn btn-secondary btn-sm" href="{% url 'patient:history' %}">Access history</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 class="card-title">Your enrolment</h3>
+      <div class="grid-stats">
+        <div><div class="kicker">Subject</div><div class="value mono">{{ subject_id }}</div></div>
+        <div><div class="kicker">Owner key</div><div class="value">
+          {% if enrolled %}{% for c in enrolled.credentials %}<span class="tag tag-accent">{{ c.name }}:{{ c.value }}</span> {% empty %}<span class="tag tag-neutral">no credential issued</span>{% endfor %}
+          {% else %}<span class="tag tag-neutral">no key agent enrolled</span>{% endif %}</div></div>
+        <div><div class="kicker">Signing</div><div class="value">{% if enrolled %}ECDSA P-256 · custodian-held{% else %}—{% endif %}</div></div>
+      </div>
+      {% for r in requests %}<div class="tiny text-muted mt-2">Registration: <span class="tag tag-neutral">{{ r.get_status_display }}</span> {{ r.requested_attributes }}</div>{% endfor %}
+      {% if not enrolled %}<div class="notice notice-info mt-2 small">Your login identifies you, but no authority-issued key is held for <span class="mono">{{ subject_id }}</span>. Until one is, nothing decrypts (ADR-0021).</div>{% endif %}
+    </div>
   </div>
 </div>
 {% endblock %}

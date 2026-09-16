@@ -34,6 +34,7 @@ INSTALLED_APPS = [
     "patient",
     "clinician",
     "admin_audit",
+    "ledger",
 ]
 
 MIDDLEWARE = [
@@ -58,6 +59,7 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "portal_core.context.product",
             ],
         },
     },
@@ -109,4 +111,45 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "/static/"
+STATICFILES_DIRS = [BASE_DIR / "static"]
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# --- Federation services the portals talk to (ADR-0043) ---------------------
+# Every URL comes from configuration, never from a request (CONVENTIONS.md §2
+# rule 8). The portals call: the Key Custodian for anything that needs a key
+# on the caller's side; facility nodes for consent-grant submission, discovery
+# and emergency search (no keys in those bodies); the Audit Service to append
+# portal-originated events (patient.lookup, patient.notification) and to read
+# chain state. Defaults match deploy/run_local.py's Path A ports.
+
+
+def _url_map(raw: str) -> dict[str, str]:
+    pairs: dict[str, str] = {}
+    for item in raw.split(","):
+        key, _, value = item.strip().partition("=")
+        if key and value:
+            pairs[key.strip()] = value.strip().rstrip("/")
+    return pairs
+
+
+CUSTODIAN_URL = os.environ.get("CUSTODIAN_URL", "http://127.0.0.1:8030").rstrip("/")
+AUDIT_SERVICE_URL = os.environ.get("AUDIT_SERVICE_URL", "http://127.0.0.1:8020").rstrip(
+    "/"
+)
+FACILITY_URLS = _url_map(
+    os.environ.get(
+        "FACILITY_URLS",
+        "facility-a=http://127.0.0.1:8001,facility-b=http://127.0.0.1:8002",
+    )
+)
+AUTHORITY_URLS = _url_map(
+    os.environ.get(
+        "AUTHORITY_URLS",
+        "authority-med=http://127.0.0.1:8010,authority-net=http://127.0.0.1:8011",
+    )
+)
+SERVICE_TIMEOUT_SECONDS = float(os.environ.get("SERVICE_TIMEOUT_SECONDS", "8"))
+# Break-glass time-box the clinician portal requests, in seconds. ARCHITECTURE
+# §7: "must be adjustable" -- 900 for the paper, 60-120 for a live demo.
+EMERGENCY_DURATION_SECONDS = float(os.environ.get("EMERGENCY_DURATION_SECONDS", "120"))
+PRODUCT_NAME = os.environ.get("PORTAL_PRODUCT_NAME", "CUSTOS")

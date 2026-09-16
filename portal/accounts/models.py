@@ -68,3 +68,31 @@ class RegistrationRequest(models.Model):
 
     def __str__(self) -> str:
         return f"{self.subject_id} [{self.role}] -> {self.status}"
+
+
+class PatientDirectory(models.Model):
+    """Name + date of birth -> ``subject_id`` for emergency identification (ADR-0033).
+
+    The only place PII lives. ``subject_id`` is the *same string* as the crypto
+    store's ``patient_id`` -- no mapping table, no translation layer. Searching
+    this table identifies; it never authorises: picking a row releases no key
+    (ADR-0033 rule 3), and every lookup is a ``patient.lookup`` audit event.
+    """
+
+    subject_id = models.CharField(max_length=128, unique=True)
+    given_name = models.CharField(max_length=128)
+    family_name = models.CharField(max_length=128)
+    date_of_birth = models.DateField()
+    home_facility_id = models.CharField(max_length=128, blank=True)
+    home_authority_id = models.CharField(max_length=128, blank=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["family_name", "date_of_birth"])]
+        verbose_name_plural = "patient directory"
+
+    def __str__(self) -> str:
+        return f"{self.given_name} {self.family_name} ({self.subject_id})"
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.given_name} {self.family_name}"

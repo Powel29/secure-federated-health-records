@@ -1,54 +1,50 @@
 {% extends "base.html" %}
-{% block title %}Admin / audit{% endblock %}
+{% block title %}Admin & audit · {{ product_name }}{% endblock %}
 {% block content %}
-<h1 class="h4 mb-3">Admin / audit portal</h1>
+<div class="card">
+  <div class="flex between gap-4" style="align-items:flex-end">
+    <div class="grow" style="min-width:min(100%,300px)">
+      <h3 class="card-title">Trace by correlation ID</h3>
+      <form method="get" action="{% url 'admin_audit:trace' %}" class="flex mt-2">
+        <input class="input mono grow" type="text" name="cid" placeholder="lookup-… / consent-… / owner-read-…" style="min-width:200px">
+        <button class="btn btn-primary nowrap">Trace flow</button>
+      </form>
+    </div>
+    {% include "admin_audit/_chain_stats.html" %}
+  </div>
+  {% if store_error %}<div class="notice notice-error small">Store not readable: {{ store_error }}</div>{% endif %}
+</div>
 
-<div class="card mb-3"><div class="card-body">
-  <h2 class="h6">Pending registration requests</h2>
-  {% if pending %}
-  <table class="table table-sm align-middle">
-    <thead><tr><th>Subject</th><th>Role</th><th>Requested</th><th>Licence</th><th></th></tr></thead>
-    <tbody>
-    {% for r in pending %}
-      <tr>
-        <td><code>{{ r.subject_id }}</code></td>
-        <td>{{ r.get_role_display }}</td>
-        <td class="small">{{ r.requested_attributes }}</td>
-        <td class="small text-muted">{{ r.license_info|truncatechars:40 }}</td>
-        <td><form method="post" class="m-0">{% csrf_token %}
-          <button class="btn btn-outline-success btn-sm" name="approve" value="{{ r.id }}">Approve &amp; issue</button>
-        </form></td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% else %}<p class="text-muted small mb-0">No pending requests.</p>{% endif %}
-</div></div>
+<div class="grid-2">
+  <div class="card">
+    <div class="subhead"><h3 class="card-title">Latest chain entries</h3><a class="small" href="{% url 'admin_audit:trace' %}">trace</a></div>
+    <div class="chain">
+      <div class="chain-head"><span class="seq">Seq</span><span class="head">Head</span><span class="ev">Event</span></div>
+      {% for e in recent %}
+        <div class="chain-row {% if e.is_commit %}hl{% endif %}"><span class="seq">{{ e.seq }}</span><span class="head">{{ e.entry_hash_hex|slice:":6" }}</span><span class="ev">{{ e.event_type }} — {{ e.summary }} <a href="{% url 'admin_audit:trace' %}?cid={{ e.correlation_id|urlencode }}" class="sub">{{ e.correlation_id|truncatechars:20 }}</a></span></div>
+      {% empty %}<div class="chain-row"><span class="ev">Chain empty or unreadable.</span></div>{% endfor %}
+    </div>
+  </div>
 
-<div class="card mb-3"><div class="card-body">
-  <h2 class="h6">Store &mdash; records <span class="badge bg-secondary">read-only</span></h2>
-  {% if store_error %}<div class="alert alert-secondary small mb-0">Store not reachable: {{ store_error }}</div>
-  {% elif records %}
-  <table class="table table-sm">
-    <thead><tr><th>record</th><th>patient</th><th>type</th><th>ciphertext</th><th>created</th></tr></thead>
-    <tbody>{% for r in records %}<tr>
-      <td><code>{{ r.record_id }}</code></td><td>{{ r.patient_id }}</td>
-      <td>{{ r.content_type }}</td><td>{{ r.ciphertext_bytes }} B</td><td class="small">{{ r.created_at }}</td>
-    </tr>{% endfor %}</tbody>
-  </table>
-  {% else %}<p class="text-muted small mb-0">No records yet (ingest lands in Phase 3).</p>{% endif %}
-</div></div>
-
-<div class="card"><div class="card-body">
-  <h2 class="h6">Store &mdash; audit chain <span class="badge bg-secondary">read-only</span></h2>
-  {% if audit %}
-  <table class="table table-sm">
-    <thead><tr><th>seq</th><th>event</th><th>actor</th><th>correlation</th><th>time</th></tr></thead>
-    <tbody>{% for a in audit %}<tr>
-      <td>{{ a.seq }}</td><td>{{ a.event_type }}</td><td>{{ a.actor_id }}</td>
-      <td><code>{{ a.correlation_id }}</code></td><td class="small">{{ a.recorded_at }}</td>
-    </tr>{% endfor %}</tbody>
-  </table>
-  {% elif not store_error %}<p class="text-muted small mb-0">No audit entries yet.</p>{% endif %}
-</div></div>
+  <div class="stack gap-6">
+    <div class="card card-accent">
+      <h3 class="card-title">Oversight at a glance</h3>
+      <div class="grid-stats">
+        <div><div class="kicker">Open emergencies</div><div class="stat">{{ cases_open }}</div></div>
+        <div><div class="kicker">Live consents</div><div class="stat">{{ consents_live }}</div></div>
+        <div><div class="kicker">Patient notices</div><div class="stat">{{ notifications }}</div></div>
+        <div><div class="kicker">Pending enrolments</div><div class="stat">{{ pending }}</div></div>
+      </div>
+      <div class="flex mt-3">
+        <a class="btn btn-primary btn-sm" href="{% url 'admin_audit:cases' %}">Review break-glass cases</a>
+        <a class="btn btn-secondary btn-sm" href="{% url 'admin_audit:federation' %}">Federation state</a>
+      </div>
+    </div>
+    <div class="card">
+      <h3 class="card-title">Events by type</h3>
+      <div class="table-wrap"><table class="table"><thead><tr><th>Event type</th><th class="right">Count</th></tr></thead>
+        <tbody>{% for c in event_counts %}<tr><td class="mono">{{ c.event_type }}</td><td class="right mono">{{ c.n }}</td></tr>{% empty %}<tr><td colspan="2" class="empty">Nothing logged yet.</td></tr>{% endfor %}</tbody></table></div>
+    </div>
+  </div>
+</div>
 {% endblock %}
