@@ -1,38 +1,96 @@
-<!doctype html>
+{% load static %}<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Federated EHR Portal{% endblock %}</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <title>{% block title %}{{ product_name }}{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=Lora:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'portal/custos.css' %}">
 </head>
-<body class="bg-body-tertiary">
-<nav class="navbar navbar-expand-lg bg-dark navbar-dark">
-  <div class="container">
-    <a class="navbar-brand" href="/">Federated EHR</a>
-    <div class="navbar-nav ms-auto">
-      {% if user.is_authenticated %}
-        <span class="navbar-text me-3">{{ user.username }}
-          {% if user.profile %}<span class="badge bg-secondary">{{ user.profile.get_role_display }}</span>{% endif %}
-        </span>
-        <form method="post" action="{% url 'accounts:logout' %}" class="d-inline">
-          {% csrf_token %}<button class="btn btn-outline-light btn-sm">Log out</button>
-        </form>
-      {% else %}
-        <a class="nav-link" href="{% url 'accounts:login' %}">Log in</a>
+<body>
+{% block shell %}
+<div class="shell">
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <a class="wordmark plain" href="/">{{ product_name }}</a>
+      <div class="sub">Federated key-lifecycle<br>protocol · v4.2</div>
+    </div>
+
+    {% if nav %}
+      <div class="sidebar-section">{{ crumb_role|default:"Portal" }}</div>
+      <nav class="sidebar-nav">
+        {% for name, label in nav %}
+          {% url name as target %}
+          <a href="{{ target }}" {% if request.path == target %}aria-current="page"{% endif %}>{{ label }}</a>
+        {% endfor %}
+      </nav>
+    {% endif %}
+
+    <div class="spacer"></div>
+
+    {% if user.is_authenticated %}
+    <div class="sidebar-user">
+      <div class="who">{{ user.username }}</div>
+      <div>{% if user.profile %}{{ user.profile.get_role_display }} · <span class="mono">{{ user.profile.subject_id }}</span>{% elif user.is_superuser %}Superuser{% endif %}</div>
+      <form method="post" action="{% url 'accounts:logout' %}">{% csrf_token %}<button class="btn btn-logout">Log out</button></form>
+    </div>
+    {% endif %}
+
+    <div class="sidebar-status">
+      <div><span>Portal role</span><span class="mono on">IDENTIFY ONLY</span></div>
+      <div><span>Key custody</span><span class="mono">2-of-3</span></div>
+      <div><span>Store</span><span class="mono">CIPHERTEXT ONLY</span></div>
+      <div><span>Access decided by</span><span class="mono on">KEYS</span></div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div class="crumb">{{ crumb_role|default:"Portal" }}<span class="sep">/</span><span class="screen">{{ crumb_screen|default:"" }}</span></div>
+      {% if active_case %}
+        <div class="alert-band">
+          <span>Emergency break-glass on <span class="mono">{{ active_case.record_id }}</span> by {{ active_case.clinician_id }} ({{ active_case.facility_id }}) — window closes in
+            <span class="mono" data-countdown="{{ active_case.expires_at|date:'c' }}">--:--</span></span>
+        </div>
       {% endif %}
     </div>
-  </div>
-</nav>
 
-<main class="container py-4">
-  <div class="alert alert-warning py-2 small">
-    <strong>Dev shell (ADR-0021).</strong> This portal identifies users and shows
-    data. It never decides access or decrypts. Actions marked
-    <em>not&nbsp;wired&nbsp;yet</em> reach a stub until their crypto backend lands.
-  </div>
-  {% if notice %}<div class="alert alert-info">{{ notice }}</div>{% endif %}
-  {% block content %}{% endblock %}
-</main>
+    <div class="content">
+      {% if messages %}
+        {% for m in messages %}
+          <div class="notice {% if m.tags == 'error' %}notice-error{% elif m.tags == 'success' %}notice-success{% else %}notice-info{% endif %}">{{ m }}</div>
+        {% endfor %}
+      {% endif %}
+      {% if notice %}<div class="notice notice-info">{{ notice }}</div>{% endif %}
+      {% if error %}<div class="notice notice-error">{{ error }}</div>{% endif %}
+      {% block content %}{% endblock %}
+      <div class="tiny text-muted">This portal identifies users and shows data. It never decides access and never holds a key — the Shamir threshold gate, the policy engine and the key wrappings do (ADR-0014 / ADR-0043).</div>
+    </div>
+  </main>
+</div>
+{% endblock %}
+<script>
+(function () {
+  function pad(n) { return String(n).padStart(2, "0"); }
+  function tick() {
+    var nodes = document.querySelectorAll("[data-countdown]");
+    var anyDead = false;
+    nodes.forEach(function (el) {
+      var end = Date.parse(el.getAttribute("data-countdown"));
+      if (isNaN(end)) { el.textContent = "—"; return; }
+      var s = Math.floor((end - Date.now()) / 1000);
+      if (s <= 0) { el.textContent = "00:00"; el.classList.add("dead"); anyDead = true; return; }
+      el.textContent = pad(Math.floor(s / 60)) + ":" + pad(s % 60);
+    });
+    if (anyDead && !window.__custosReloaded && document.body.hasAttribute("data-reload-on-expiry")) {
+      window.__custosReloaded = true;
+      setTimeout(function () { window.location.reload(); }, 1500);
+    }
+  }
+  tick(); setInterval(tick, 1000);
+})();
+</script>
 </body>
 </html>

@@ -194,9 +194,7 @@ def create_synthetic_dataset() -> SyntheticDataset:
             "chief_complaint": (
                 "Crushing retrosternal chest pain radiating to left arm and jaw"
             ),
-            "diagnosis": (
-                "Acute Myocardial Infarction (STEMI), anterolateral wall"
-            ),
+            "diagnosis": ("Acute Myocardial Infarction (STEMI), anterolateral wall"),
             "vitals": {
                 "heart_rate_bpm": 112,
                 "blood_pressure": "85/55 mmHg",
@@ -234,9 +232,7 @@ def create_synthetic_dataset() -> SyntheticDataset:
             "allergies": [
                 {
                     "substance": "Penicillin",
-                    "reaction": (
-                        "Anaphylaxis (severe bronchospasm and urticaria)"
-                    ),
+                    "reaction": ("Anaphylaxis (severe bronchospasm and urticaria)"),
                 }
             ],
             "notes": (
@@ -431,16 +427,10 @@ def seed_synthetic_data(
     else:
         from deploy.bootstrap import generate_federation_pki
 
-        _, fed_pki = generate_federation_pki(
-            ["facility-a", "facility-b"]
-        )
+        _, fed_pki = generate_federation_pki(["facility-a", "facility-b"])
         root_cert_pem = fed_pki.root_certificate_pem
-        fa_ca_priv, fa_ca_cert = _parse_ca_credentials(
-            fed_pki.facilities["facility-a"]
-        )
-        fb_ca_priv, fb_ca_cert = _parse_ca_credentials(
-            fed_pki.facilities["facility-b"]
-        )
+        fa_ca_priv, fa_ca_cert = _parse_ca_credentials(fed_pki.facilities["facility-a"])
+        fb_ca_priv, fb_ca_cert = _parse_ca_credentials(fed_pki.facilities["facility-b"])
 
     facility_cas = {
         "facility-a": (fa_ca_priv, fa_ca_cert),
@@ -463,7 +453,12 @@ def seed_synthetic_data(
         cert_pem = certificate_to_pem(cert).decode("ascii")
         pre_priv, pre_pub = generate_pre_keypair()
 
-        http.post(
+        # Issued credentials are kept (not just acknowledged) so the portal
+        # seed step (deploy/seed_portal.py, ADR-0043) can deposit them with
+        # each persona's key agent -- the custodian exchanges them for
+        # attribute keys at read time.
+        issued: list[dict[str, Any]] = []
+        role_res = http.post(
             f"{endpoints.authority_med}/credentials/issue",
             json={
                 "subject_id": clinician.clinician_id,
@@ -472,10 +467,12 @@ def seed_synthetic_data(
                     "value": clinician.role,
                 },
             },
-        ).raise_for_status()
+        )
+        role_res.raise_for_status()
+        issued.append(role_res.json()["credential"])
 
         if clinician.specialty:
-            http.post(
+            spec_res = http.post(
                 f"{endpoints.authority_net}/credentials/issue",
                 json={
                     "subject_id": clinician.clinician_id,
@@ -484,10 +481,13 @@ def seed_synthetic_data(
                         "value": clinician.specialty,
                     },
                 },
-            ).raise_for_status()
+            )
+            spec_res.raise_for_status()
+            issued.append(spec_res.json()["credential"])
 
         clinician_meta[clinician.clinician_id] = {
             "clinician": clinician,
+            "credentials": issued,
             "private_key": priv,
             "public_key": pub,
             "certificate": cert,
@@ -497,8 +497,9 @@ def seed_synthetic_data(
             "private_key_pem": private_key_to_pem(priv).decode("ascii"),
         }
 
+    patient_meta: dict[str, Any] = {}
     for patient in dataset.patients:
-        http.post(
+        owner_res = http.post(
             f"{endpoints.authority_net}/credentials/issue",
             json={
                 "subject_id": patient.patient_id,
@@ -508,7 +509,19 @@ def seed_synthetic_data(
                 },
                 "owner": True,
             },
-        ).raise_for_status()
+        )
+        owner_res.raise_for_status()
+        # Each patient gets a signing keypair so the portal's key agent can
+        # sign consent decisions on their behalf (ADR-0043). Kept in memory
+        # only, like every other key here.
+        pat_priv, pat_pub = generate_ec_keypair()
+        patient_meta[patient.patient_id] = {
+            "patient": patient,
+            "credentials": [owner_res.json()["credential"]],
+            "private_key": pat_priv,
+            "public_key": pat_pub,
+            "private_key_pem": private_key_to_pem(pat_priv).decode("ascii"),
+        }
 
     def get_author_key(
         base_url: str,
@@ -556,9 +569,7 @@ def seed_synthetic_data(
             "owner",
             patient.patient_id,
         )
-        attribute_keys[
-            f"authority-net:owner:{patient.patient_id}"
-        ] = k_owner
+        attribute_keys[f"authority-net:owner:{patient.patient_id}"] = k_owner
 
     record_meta: dict[str, Any] = {}
 
@@ -583,8 +594,7 @@ def seed_synthetic_data(
         audit_deposit_res.raise_for_status()
 
         record_keyring_b64 = {
-            k: base64.b64encode(v).decode("ascii")
-            for k, v in attribute_keys.items()
+            k: base64.b64encode(v).decode("ascii") for k, v in attribute_keys.items()
         }
 
         plaintext_bytes = json.dumps(rec.payload).encode("utf-8")
@@ -593,19 +603,13 @@ def seed_synthetic_data(
         ingest_res = http.post(
             f"{target_facility_url}/records/ingest",
             json={
-                "plaintext_b64": base64.b64encode(
-                    plaintext_bytes
-                ).decode("ascii"),
+                "plaintext_b64": base64.b64encode(plaintext_bytes).decode("ascii"),
                 "patient_id": rec.patient_id,
                 "owner_authority_id": "authority-net",
-                "clinical_policy": rec.clinical_policy.model_dump(
-                    mode="json"
-                ),
+                "clinical_policy": rec.clinical_policy.model_dump(mode="json"),
                 "attribute_keyring": record_keyring_b64,
                 "search_terms": rec.search_terms,
-                "emergency_key_b64": base64.b64encode(
-                    emergency_key
-                ).decode("ascii"),
+                "emergency_key_b64": base64.b64encode(emergency_key).decode("ascii"),
                 "record_id": rec.record_id,
             },
         )
@@ -622,14 +626,13 @@ def seed_synthetic_data(
             "share3": share3,
             "policy_id": ingest_data["policy_id"],
             "wrapping_id": ingest_data["wrapping_id"],
-            "search_terms_indexed": ingest_data[
-                "search_terms_indexed"
-            ],
+            "search_terms_indexed": ingest_data["search_terms_indexed"],
         }
 
     return {
         "dataset": dataset,
         "clinicians": clinician_meta,
+        "patients": patient_meta,
         "records": record_meta,
         "root_cert_pem": root_cert_pem,
         "facility_cas": facility_cas,

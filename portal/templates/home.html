@@ -1,12 +1,17 @@
 {% extends "base.html" %}
-{% block content %}
-<div class="p-4 bg-body rounded shadow-sm">
-  <h1 class="h4">Welcome to the Federated EHR portal</h1>
-  <p class="text-muted">Choose how to sign in or register.</p>
-  <div class="d-flex gap-2 flex-wrap">
-    <a class="btn btn-primary" href="{% url 'accounts:register_patient' %}">Register as patient</a>
-    <a class="btn btn-primary" href="{% url 'accounts:register_clinician' %}">Register as clinician</a>
-    <a class="btn btn-outline-secondary" href="{% url 'accounts:login' %}">Log in</a>
+{% block title %}{{ product_name }}{% endblock %}
+{% block shell %}
+<div class="auth">
+  <div class="auth-card">
+    <div class="wordmark">{{ product_name }}</div>
+    <div class="sub">Federated key-lifecycle protocol · v4.2</div>
+    <p class="small text-muted">Three portals — patient, clinician, admin &amp; audit — over one cryptographic core. Choose how to sign in or register.</p>
+    <div class="flex">
+      <a class="btn btn-primary" href="{% url 'accounts:login' %}">Log in</a>
+      <a class="btn btn-secondary" href="{% url 'accounts:register_patient' %}">Register as patient</a>
+      <a class="btn btn-secondary" href="{% url 'accounts:register_clinician' %}">Register as clinician</a>
+    </div>
+    {% if user.is_authenticated %}<div class="notice notice-info mt-4">Signed in as {{ user.username }} with no portal profile. {% if user.is_superuser %}<a href="{% url 'admin_audit:home' %}">Open the admin &amp; audit portal</a>.{% endif %}</div>{% endif %}
   </div>
 </div>
 {% endblock %}

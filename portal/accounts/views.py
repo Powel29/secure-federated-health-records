@@ -10,10 +10,17 @@ from __future__ import annotations
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.shortcuts import redirect, render
 
-from accounts.models import Profile, RegistrationRequest, RequestStatus, Role
+from accounts.models import (
+    PatientDirectory,
+    Profile,
+    RegistrationRequest,
+    RequestStatus,
+    Role,
+)
 
 
 @login_required
@@ -24,7 +31,7 @@ def home(request):
         return redirect("patient:home")
     if role == Role.CLINICIAN:
         return redirect("clinician:home")
-    if role == Role.ADMIN:
+    if role == Role.ADMIN or request.user.is_superuser:
         return redirect("admin_audit:home")
     return render(request, "home.html", {})
 
@@ -63,6 +70,23 @@ def register_patient(request):
         RegistrationRequest.objects.filter(user=user).update(
             requested_attributes=f"owner:{data['patient_id']}"
         )
+        # Optional directory row (ADR-0033): name + DOB is the only PII the
+        # portal keeps, and only here -- never in the crypto store.
+        family = data.get("family_name", "").strip()
+        dob = data.get("date_of_birth", "").strip()
+        if family and dob:
+            try:
+                PatientDirectory.objects.get_or_create(
+                    subject_id=data["patient_id"],
+                    defaults={
+                        "given_name": data.get("given_name", "").strip(),
+                        "family_name": family,
+                        "date_of_birth": dob,
+                        "home_facility_id": data.get("home_facility_id", "").strip(),
+                    },
+                )
+            except (ValueError, ValidationError):
+                pass  # a malformed date never blocks the login; the row is optional
         login(request, user)
         return redirect("patient:home")
     return render(request, "accounts/register_patient.html", {})

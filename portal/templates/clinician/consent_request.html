@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Request consent · {{ product_name }}{% endblock %}
+{% block content %}
+<div class="grid-2">
+  <div class="card card-accent">
+    <div class="subhead"><h3 class="card-title">Ask a patient for access</h3>{% if patient_id %}<span class="tag tag-outline">{{ patient_id }}</span>{% endif %}</div>
+    <div class="small text-muted">Request-then-approve (ADR-0014). Your key agent signs the request; the patient signs the decision; a <span class="mono">GRANTED</span> grant is a gate on top of the policy tree, never a replacement for it (ADR-0031).</div>
+    <form method="post" class="stack mt-2">
+      {% csrf_token %}
+      <div class="flex">
+        <div class="field grow"><label for="pid">Patient id</label><input class="input mono" id="pid" name="patient_id" value="{{ patient_id }}" placeholder="pat-101" required></div>
+        <div class="field"><label>&nbsp;</label><a class="btn btn-secondary btn-sm" href="{% url 'clinician:identify' %}?next=consent">Find by name + DOB</a></div>
+      </div>
+      <button class="btn btn-secondary btn-block" name="action" value="discover">Run federated discovery</button>
+      {% if discovered is not None %}
+        <div class="field mt-2">
+          <label>Scope — records to request (non-empty, fail closed)</label>
+          {% for r in discovered %}
+            <label class="check-row"><input type="checkbox" name="scope" value="{{ r.record_id }}" checked> <span class="mono">{{ r.record_id }}</span> <span class="small text-muted">· {{ r.facility_name|default:r.facility_id }} · {{ r.content_type }}</span></label>
+          {% empty %}<div class="empty">No sealed records found for this patient.</div>{% endfor %}
+        </div>
+      {% endif %}
+      <div class="field"><label for="purpose">Clinical purpose (the patient reads this)</label><textarea class="input" id="purpose" name="purpose" placeholder="Pre-operative haemodynamic evaluation prior to scheduled percutaneous mitral valvuloplasty.">{{ purpose|default:'' }}</textarea></div>
+      <div class="flex between tiny text-muted"><span>Request lapses after {{ ttl_days }} days unanswered</span><span>Signed by your custodian-held key · ECDSA P-256</span></div>
+      <button class="btn btn-primary btn-block" name="action" value="request" {% if not discovered %}disabled{% endif %}>Sign and send request</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="subhead"><h3 class="card-title">Your requests</h3></div>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Patient</th><th>Records</th><th>State</th><th class="right">Read</th></tr></thead>
+      <tbody>{% for r in mine %}
+        <tr><td class="mono">{{ r.patient_id }}<span class="sub">{{ r.requested_at|date:"Y-m-d H:i" }}</span></td><td class="mono small">{{ r.scope|join:", " }}</td>
+          <td>{% if r.status == "granted" %}<span class="tag tag-accent">granted{% if r.grant_expires_at %} · exp {{ r.grant_expires_at|date:"m-d" }}{% endif %}</span>{% elif r.status == "pending" %}<span class="tag tag-neutral">awaiting patient</span>{% else %}<span class="tag tag-outline">{{ r.status }}</span>{% endif %}</td>
+          <td class="right">{% if r.status == "granted" %}<a class="btn btn-primary btn-sm" href="{% url 'clinician:consent_read' r.request_id %}">Read</a>{% else %}<button class="btn btn-ghost btn-sm" disabled>—</button>{% endif %}</td></tr>
+      {% empty %}<tr><td colspan="4" class="empty">No requests signed yet.</td></tr>{% endfor %}</tbody></table></div>
+  </div>
+</div>
+{% endblock %}

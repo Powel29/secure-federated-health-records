@@ -4,9 +4,12 @@ Design/layout spec for the patient web portal (Django + Bootstrap, `portal/patie
 Component context is `ARCHITECTURE.md` §2 (C16) and ADR-0014/0016/0021; this file
 is the per-page layout and behaviour detail.
 
-**Status:** Proposal draft. P4-7 is **Avaneeth's** task (WORKFLOW.md; `PS-3`
-patient-portal future wiring is his). This is a design proposal for his review,
-not an agreed spec. It supersedes nothing on its own.
+**Status:** Superseded in part by ADR-0043 and the shipped `portal/patient/`
+pages (2026-09-13). The open question below — patient signing-key custody — is
+resolved by the Key Custodian service; the Bootstrap chrome described here was
+replaced by the shared Custos design (`portal/static/portal/custos.css`). The
+per-page behaviour and acceptance criteria still describe what was built and
+remain useful for review.
 
 **What this is:** the patient half of the three-portal UI that replaced the old
 terminal dashboard (ADR-0014). It lets a patient manage access to their records,

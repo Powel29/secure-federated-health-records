@@ -61,6 +61,18 @@ EVENT_ACCESS_DENIED = "access_denied"
 EVENT_FEDERATION_DISCOVERY = "federation.discovery"
 EVENT_FEDERATION_REWRAP = "federation.rewrap"
 
+# Portal-originated events (ADR-0033, ADR-0043). Both are appended through the
+# standalone Audit Service's ``POST /entries`` by the clinician/patient portals
+# (which never hold the chain signing key); the constants live here so the
+# event vocabulary has one home. ``event_data`` for both carries identifiers
+# and counts only -- a lookup logs the *hashed* query and the candidate
+# ``patient_id``s, never the name or date of birth entered (PII stays in the
+# portal DB, ADR-0011/0033); a notification logs its kind, the patient it
+# concerns, and the correlation_id of the flow it reports on.
+EVENT_PATIENT_LOOKUP = "patient.lookup"  # P4-8a: every name+DOB search, hit or miss
+EVENT_PATIENT_NOTIFICATION = "patient.notification"  # P4-10: break-glass / revoked
+EVENT_CONSENT_DECISION = "consent.decision"  # P4-7: grant / deny / revoke recorded
+
 # Suggested, non-exhaustive values for ``log_access_granted``'s ``access_via`` --
 # which read path released the record. Free text is still accepted; callers that
 # match one of these should use the constant so the admin/patient portal access-

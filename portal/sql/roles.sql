@@ -9,8 +9,10 @@
 -- Django's own tables live here.
 CREATE SCHEMA IF NOT EXISTS portal;
 
--- Read-only role the portal uses for the `store` alias. In dev (trust auth) it
--- connects without a password; in any real deployment, give it one.
+-- Read-only role the portal uses for the `store` alias. Created without a
+-- password here (trust auth in the README's throwaway container);
+-- deploy/run_portal_demo.py sets the dev-only password `portal_ro` afterwards
+-- for password-auth Postgres instances. In any real deployment, give it one.
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'portal_ro') THEN

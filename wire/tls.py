@@ -25,6 +25,7 @@ SERVICES = {
     "audit": 8020,
     "facility-a": 8001,
     "facility-b": 8002,
+    "custodian": 8030,  # Key Custodian (ADR-0043); same TLS profile as the rest
 }
 
 # Bounded lifetime -- ARCHITECTURE.md §8 "nothing issues forever"; long enough
