@@ -61,6 +61,7 @@ from contracts import AttributeCredential, Record, TransitionEvent
 from contracts.enums import ConsentStatus, PolicyNodeType
 from contracts.policy import PolicyTree
 from crypto_core import (
+    generate_ec_keypair,
     generate_key,
     private_key_from_pem,
     private_key_to_pem,
@@ -138,7 +139,19 @@ class CustodianEndpoints:
 
 
 class CustodianVault:
-    """Thread-safe registry of subject material, trust anchors and share 1s."""
+    """Thread-safe registry of subject material, trust anchors and share 1s.
+
+    Residual risk (ADR-0043, carried to the paper's limitations): every subject's
+    private key lives here in process memory for the custodian's whole lifetime.
+    There is no eviction and no zeroization -- Python cannot reliably wipe an
+    immutable key object, and this one process deliberately stands in for what a
+    real deployment would split across each subject's own device (smartcard /
+    enclave / browser keystore). A memory dump of this process yields every
+    deposited key at once. This does not weaken the threshold or logging
+    properties (share 3 is still committed-before-released by the audit service,
+    the policy engine still gates reads), but it is the demo's single largest
+    trust concentration and must be stated as such, not hidden.
+    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -269,10 +282,16 @@ def _holder_keyring(
 ) -> tuple[dict[str, str], list[str]]:
     """Exchange each held credential for its attribute key at the issuer.
 
-    A credential the issuing authority now refuses (expired, revoked, or the
-    authority is unknown) is simply not presented -- the facility's policy
-    engine then decides with whatever remains, and denies if that is not
-    enough. Refusals are logged, never hidden.
+    A credential the issuing authority genuinely *refuses* (4xx: expired,
+    revoked, or unknown) is simply not presented -- the facility's policy engine
+    then decides with whatever remains, and denies if that is not enough.
+
+    An authority *outage*, by contrast, is not a refusal and must not be
+    silently dropped: if it were, a missing key would surface downstream as a
+    generic policy denial and a legitimately-authorised clinician would be told
+    they lack access when the authority was merely unreachable. So a transport
+    failure or a 5xx raises a distinguishable 502 here, failing closed with a
+    cause an operator (and the portal) can tell apart from a real denial.
     """
     keyring: dict[str, str] = {}
     presented: list[str] = []
@@ -280,6 +299,10 @@ def _holder_keyring(
         authority_url = endpoints.authorities.get(cred.issuer_id)
         label = f"{cred.issuer_id}:{cred.attribute.name}:{cred.attribute.value}"
         if not authority_url:
+            # A credential from an authority this custodian does not federate
+            # with cannot be exchanged. This is static misconfiguration, not a
+            # transient outage: log it and skip (the policy engine denies if the
+            # leaf was required); an operator sees the warning.
             _logger.warning(
                 "no endpoint for issuer %s; skipping %s", cred.issuer_id, label
             )
@@ -290,10 +313,25 @@ def _holder_keyring(
                 json={"credential": cred.model_dump(mode="json")},
             )
         except httpx.HTTPError as exc:
-            _logger.warning("attribute-key release for %s unreachable: %s", label, exc)
-            continue
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=(
+                    f"attribute authority {cred.issuer_id!r} unavailable while "
+                    f"releasing {label}: {exc} (not a policy denial)"
+                ),
+            ) from exc
+        if resp.status_code >= 500:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=(
+                    f"attribute authority {cred.issuer_id!r} errored "
+                    f"({resp.status_code}) releasing {label} (not a policy denial)"
+                ),
+            )
         if resp.status_code != 200:
-            _logger.info("authority refused %s: %s", label, resp.text)
+            _logger.info(
+                "authority refused %s (%s): %s", label, resp.status_code, resp.text
+            )
             continue
         keyring[label] = resp.json()["key_b64"]
         presented.append(label)
@@ -865,16 +903,27 @@ def create_custodian_app(
         ]
 
         # 4. Threshold gate at the declaring facility.
-        # ``baseline_wrapping_key_b64`` is what P4-1's contract makes the
-        # caller supply for the timer's re-baseline at expiry. A clinician's
-        # agent cannot know a record's policy root secret, and since ADR-0040
-        # the facility keeps the timer's rotated wrapping in memory only, so
-        # the value's sole effect is to let the time-box register (and so
-        # expire, with its two signed transitions entering the chain) --
-        # ``deploy/run_scenario`` passes an authoring key for the same
-        # reason. A fresh random 32-byte value is presented: it is not a key
-        # to anything and is discarded with the rotation. Tracked as an
-        # open gap in ADR-0043 (re-baseline persistence, P5-4).
+        #
+        # The transition's ``lifecycle_signing_key`` is a *fresh, throwaway*
+        # keypair minted here and discarded -- exactly as ``deploy/run_scenario``
+        # and ``demo/driver`` do. The clinician's identity for this break-glass
+        # is already bound by the (clinician-signed) ``EmergencyAssertion`` above,
+        # and the facility records the actor from that assertion, not from this
+        # transition signature (``hospital.py`` uses ``assertion.clinician_id``).
+        # Signing the transition with the clinician's own key would put that
+        # private key on the wire and in facility memory, breaking the ADR-0043
+        # invariant that a subject's signing key never leaves the custodian --
+        # so a dedicated key signs the transition and never exists again.
+        #
+        # ``baseline_wrapping_key_b64`` is what P4-1's contract makes the caller
+        # supply for the timer's re-baseline at expiry. Since ADR-0040 the
+        # facility keeps the timer's rotated wrapping in memory only, so the
+        # value's sole effect is to let the time-box register (and so expire,
+        # with its two signed transitions entering the chain). A fresh random
+        # 32-byte value is presented: it is not a key to anything and is
+        # discarded with the rotation. Tracked as an open gap in ADR-0043
+        # (re-baseline persistence, P5-4).
+        lifecycle_priv, _lifecycle_pub = generate_ec_keypair()
         unlock = _post(
             http,
             f"{facility_url}/records/{payload.record_id}/breakglass",
@@ -890,9 +939,9 @@ def create_custodian_app(
                     [release["x"], release["share_hex"]],
                 ],
                 "pre_rewrap_key": material.pre_public_key,
-                "lifecycle_signing_key_pem": private_key_to_pem(
-                    material.signing_key
-                ).decode("ascii"),
+                "lifecycle_signing_key_pem": private_key_to_pem(lifecycle_priv).decode(
+                    "ascii"
+                ),
                 "correlation_id": corr_id,
                 "baseline_wrapping_key_b64": base64.b64encode(generate_key()).decode(
                     "ascii"

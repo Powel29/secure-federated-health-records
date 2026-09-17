@@ -95,7 +95,26 @@ process without Postgres.
   does not weaken the threshold property (the custodian holds share 1 only; the
   audit service still commits before releasing share 3; the policy engine
   still gates reads), but in a real deployment each subject's agent would be
-  their own device. The paper's limitations section must say so.
+  their own device. Every key lives in process memory for the custodian's
+  lifetime with no eviction and no zeroization (Python cannot reliably wipe an
+  immutable key object), so a memory dump of this one process yields every
+  deposited key at once. This is the demo's single largest trust concentration.
+  The paper's limitations section must say so.
+- **The clinician's own signing key never leaves the custodian.** It signs the
+  ``EmergencyAssertion`` (and consent artifacts) *inside* the process and only
+  the signed public artifact goes upstream. The lifecycle transition at
+  break-glass is signed with a *fresh, throwaway* keypair minted per unlock and
+  discarded -- the same pattern ``deploy/run_scenario`` and ``demo/driver`` use
+  -- because the facility records the actor from the (clinician-signed)
+  assertion, not from the transition signature. That throwaway key is still
+  transmitted to the facility (P4-1's ``/breakglass`` contract takes
+  ``lifecycle_signing_key_pem`` in the body), but it is single-use, carries no
+  identity, and its public half is never retained; the facility could equally
+  have minted it. Removing even that ephemeral key from the wire would mean the
+  facility minting its own transition key -- a change to ``hospital.py``'s
+  contract (Avaneeth), worth a later proposal PR, not required for the property
+  this ADR protects. A regression test asserts no subject signing key appears
+  in any body the custodian sends upstream.
 - The custodian trusts the portal's `subject_id`. That is the same trust a
   password manager places in an unlocked desktop session: Django
   authentication is the user's unlock, and ADR-0014/0021 already scope the

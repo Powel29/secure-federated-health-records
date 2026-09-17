@@ -365,6 +365,47 @@ def test_patient_without_owner_credential_is_refused(federation):
     assert "plaintext" not in r.text
 
 
+def test_authority_outage_is_distinct_from_a_policy_denial(federation):
+    """Finding #2: an authority being down must not masquerade as a denial.
+
+    If the custodian silently dropped a credential whose authority was
+    unreachable, a legitimately-authorised clinician would receive a 403
+    "Policy denied" and triage would hunt an authorisation bug instead of an
+    outage. The custodian must fail closed with a *distinguishable* 502 instead.
+    """
+    down = FastAPI()
+
+    @down.post("/attribute-keys/release")
+    def _release(payload: dict[str, Any]) -> dict[str, Any]:
+        raise HTTPException(status_code=503, detail="authority-med under maintenance")
+
+    audit = _audit_stub({RECORD: federation["shares"]["share3"]})
+    http = _router({**federation["apps"], "authority-med": down, "audit": audit})
+    app = create_custodian_app(
+        endpoints=CustodianEndpoints(
+            authorities={"authority-med": AUTH_MED, "authority-net": AUTH_NET},
+            facilities={"facility-a": FACILITY_A, "facility-b": FACILITY_B},
+            audit=AUDIT,
+        ),
+        http_client=http,
+        record_loader=federation["repo"].get_record,
+        root_certificate_pem=federation["root_pem"],
+    )
+    client = TestClient(app)
+    _deposit_all(client, federation)
+
+    # DOC_CARDIO needs role:physician from the (now down) authority-med.
+    r = client.post(
+        f"/subjects/{DOC_CARDIO}/read",
+        json={"record_id": RECORD, "facility_id": "facility-a"},
+    )
+    assert r.status_code == 502, r.text
+    detail = r.json()["detail"]
+    assert "authority-med" in detail
+    assert "not a policy denial" in detail
+    assert "Policy denied" not in detail
+
+
 # --- Consent (ADR-0014 request-then-approve, ADR-0031 gate) -------------------
 
 
@@ -516,6 +557,72 @@ def test_patient_cannot_declare_breakglass(federation):
         json={"patient_id": PATIENT, "record_id": RECORD, "reason_code": "stroke"},
     )
     assert r.status_code == 403
+
+
+def test_breakglass_never_puts_the_clinician_key_on_the_wire(federation):
+    """ADR-0043 invariant: a subject's own signing key never leaves the custodian.
+
+    The clinician's ECDSA key signs the EmergencyAssertion *inside* the
+    custodian and only the signed assertion goes upstream; the lifecycle
+    transition is signed with a throwaway key, not the clinician's. So the
+    clinician's private key must appear in no request body the custodian sends
+    to any facility, authority or the audit service. This is the outbound
+    counterpart of ``test_subject_summary_describes_keys_without_returning_them``
+    and the regression guard for the finding that the break-glass path used to
+    forward ``material.signing_key`` as ``lifecycle_signing_key_pem``.
+    """
+    captured: list[bytes] = []
+    audit = _audit_stub({RECORD: federation["shares"]["share3"]})
+    apps = {**federation["apps"], "audit": audit}
+    clients = {host: TestClient(app) for host, app in apps.items()}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request.content)
+        host = urlparse(str(request.url)).hostname or ""
+        resp = clients[host].request(
+            request.method,
+            request.url.path,
+            content=request.content,
+            headers={"content-type": "application/json"},
+        )
+        return httpx.Response(resp.status_code, content=resp.content)
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    app = create_custodian_app(
+        endpoints=CustodianEndpoints(
+            authorities={"authority-med": AUTH_MED, "authority-net": AUTH_NET},
+            facilities={"facility-a": FACILITY_A, "facility-b": FACILITY_B},
+            audit=AUDIT,
+        ),
+        http_client=http,
+        record_loader=federation["repo"].get_record,
+        root_certificate_pem=federation["root_pem"],
+        facility_ca_certificate_pems={
+            "facility-a": federation["fa_pem"],
+            "facility-b": federation["fb_pem"],
+        },
+    )
+    client = TestClient(app)
+    _deposit_all(client, federation)  # deposits go INTO the custodian, not captured
+
+    r = client.post(
+        f"/subjects/{DOC_ER}/breakglass",
+        json={"patient_id": PATIENT, "record_id": RECORD, "reason_code": "stroke"},
+    )
+    assert r.status_code == 200, r.text
+    assert captured, "the custodian made no upstream calls"
+
+    # The clinician key's base64 body lines are unaffected by JSON escaping, so
+    # they would appear verbatim in any body that carried the key.
+    er_pem = federation["material"][DOC_ER]["signing_key_pem"]
+    key_lines = [
+        ln for ln in er_pem.splitlines() if "PRIVATE KEY" not in ln and len(ln) > 20
+    ]
+    assert key_lines
+    for body in captured:
+        text = body.decode("utf-8", "replace")
+        for line in key_lines:
+            assert line not in text, "clinician signing key leaked to an upstream call"
 
 
 # --- Patient upload (P3-14 ingest through the key agent) -----------------------
