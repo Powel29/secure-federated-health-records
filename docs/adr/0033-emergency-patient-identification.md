@@ -1,6 +1,6 @@
 # ADR-0033: Emergency patient identification via name + DOB search
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-02
 - **Deciders:** Team (Powel, Nandini, Ojas, Avaneeth)
 - **Task / source:** Gap surfaced against ARCHITECTURE.md §8 and P3-10 — the

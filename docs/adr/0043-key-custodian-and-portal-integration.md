@@ -1,6 +1,6 @@
 # ADR-0043: Key Custodian service and how the portals reach the cryptographic core
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-13
 - **Deciders:** Ojas → all four (touches the C16 boundary every ADR since 0014 protects)
 - **Task / source:** P4-7, P4-8, P4-8a, P4-9, P4-10 (WORKFLOW.md); the open

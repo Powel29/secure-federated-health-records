@@ -1,6 +1,6 @@
 # ADR-0042: Traffic-capture harness and TLS capture profile (P4-6)
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-10
 - **Deciders:** Nandini (P4-6 owner) → all four for ratification
 - **Task / source:** P4-6 (WORKFLOW.md); PROJECT.md §4A (required course module); ARCHITECTURE.md §2 C17

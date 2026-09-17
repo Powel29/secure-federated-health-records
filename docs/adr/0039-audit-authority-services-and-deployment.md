@@ -1,6 +1,6 @@
 # ADR-0039: Audit/authority services as standalone processes; shared-entrypoint deployment
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-09
 - **Deciders:** Ojas (P4-2/P4-3 owner) → all four for ratification
 - **Task / source:** P4-2, P4-3 (WORKFLOW.md); ARCHITECTURE.md §5 step 3, §7;
