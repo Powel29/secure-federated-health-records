@@ -471,7 +471,9 @@ EmergencyAssertion {
 Validation, in order, before any share is requested: signature verifies against
 a currently-valid clinician certificate; `clinician_id` matches the certificate
 subject; `facility_id` matches the receiving node; `expires_at` is in the
-future; `assertion_id` has not been consumed. Failure at any step is
+future; `assertion_id` has not been consumed. Once the record is loaded, and
+before any state changes, its `patient_id` must equal the assertion's
+(ADR-0044). Failure at any step is
 fail-closed — no share request is made.
 
 **How `patient_id` gets into the assertion.** The clinician resolves the

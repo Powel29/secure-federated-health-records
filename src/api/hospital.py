@@ -196,6 +196,37 @@ def _log_event(
         )
 
 
+def _effective_lifecycle_state(
+    repo: StorageRepository,
+    exp_manager: EmergencyExpiryManager | None,
+    record_id: str,
+) -> LifecycleState:
+    """Current state, reconciling an expiry the store was never told about.
+
+    The expiry timer signs ``EMERGENCY_OPEN -> EXPIRED -> GRANTED`` into the
+    chain but does not write the store (ADR-0043, re-baseline persistence gap),
+    so ``lifecycle_state`` stays ``emergency_open`` after the time-box ends and
+    every later break-glass is refused as an illegal transition. If the store
+    says open but the timer holds no session for the record, the window has
+    ended (or the process restarted and lost it); record ``granted`` to match.
+    A session that is registered -- even one past its deadline but not yet
+    swept -- is left alone: the timer will expire it and this stays fail-closed.
+    """
+    state = repo.get_lifecycle_state(record_id) or LifecycleState.GRANTED
+    if state is not LifecycleState.EMERGENCY_OPEN or exp_manager is None:
+        return state
+    try:
+        exp_manager.get_active_emergency_key(record_id)
+    except SessionNotFoundError:
+        repo.upsert_lifecycle_state(
+            record_id=record_id, state=LifecycleState.GRANTED, last_event_id=None
+        )
+        return LifecycleState.GRANTED
+    except EmergencySessionExpiredError:
+        return state
+    return state
+
+
 def _log_denial(
     audit_url: str | None,
     repo: StorageRepository,
@@ -890,6 +921,27 @@ def create_hospital_app(
                 detail=f"Record {record_id!r} not found",
             )
 
+        # An assertion opens the patient it names and nobody else
+        # (ARCHITECTURE.md §8). Checked before any lifecycle change so a
+        # mismatched assertion has no side effect on the record.
+        if record.patient_id != payload.assertion.patient_id:
+            reason = "assertion patient_id does not match the record's patient"
+            _log_denial(
+                audit_url,
+                repo,
+                audit_key,
+                record_id=record_id,
+                requester_id=payload.assertion.clinician_id,
+                denied_by="breakglass_patient_binding",
+                reason=reason,
+                actor_id=facility_id,
+                correlation_id=payload.correlation_id or str(uuid4()),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Emergency assertion not valid for this record: {reason}",
+            )
+
         wrapping = repo.get_wrapping_for_record(record_id, wrapped_for="emergency")
         if not wrapping:
             wrapping = repo.get_wrapping_for_record(record_id)
@@ -899,7 +951,9 @@ def create_hospital_app(
                 detail=f"No DEK wrapping found for record {record_id!r}",
             )
 
-        source_state = repo.get_lifecycle_state(record_id) or LifecycleState.GRANTED
+        source_state = _effective_lifecycle_state(
+            repo, app.state.expiry_manager, record_id
+        )
 
         # 3. Parse shares and signing key
         try:

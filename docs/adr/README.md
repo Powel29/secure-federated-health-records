@@ -56,6 +56,7 @@ Each row links to a one-file ADR with the full context.
 | [0041](0041-demo-driver-and-synthetic-dataset.md) | Demo driver and synthetic clinical dataset: one-command 8-Act examiner runner, realistic cardiac/diabetes/trauma profiles, dead-token and hash-chain verification | Accepted | 2026-09-10 | Nandini → all four | P4-5 |
 | [0042](0042-traffic-capture-harness.md) | Traffic-capture harness + TLS capture profile: loopback-only dumpcap capture producing plain/tls pcaps, TLS certs via `crypto_core`, double-gated verify escape hatch; analysis stays P5-5 | Accepted | 2026-09-10 | Nandini → all four | P4-6 |
 | [0043](0043-key-custodian-and-portal-integration.md) | Key Custodian service (sixth process) as every subject's key agent; portals sign/read/break-glass through it and never hold keys; consent ledger mirror, break-glass cases and patient notifications in the portal DB with `patient.lookup` / `patient.notification` / `consent.decision` chain events; `pre.delivery` decode | Accepted | 2026-09-13 | Ojas → all four | P4-7/8/8a/9/10 |
+| [0044](0044-breakglass-patient-binding-and-expiry-state.md) | Break-glass endpoint enforces the assertion's patient binding (403 + denial logged, no side effect); store reconciles `emergency_open` to `granted` when the timer holds no session | Proposed | 2026-10-02 | Powel (proposal) → Avaneeth / lifecycle owner | e2e run, ADR-0043 gap |
 
 ## Owed, not yet written
 
