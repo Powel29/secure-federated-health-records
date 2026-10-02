@@ -102,3 +102,31 @@ class OverviewTests(TestCase):
             resp = self.client.get("/oversight/")
         self.assertContains(resp, "PASS")
         self.assertContains(resp, "Trace by correlation ID")
+
+
+class CaseReviewTests(TestCase):
+    def setUp(self) -> None:
+        admin()
+        self.client.login(username="auditor", password="pw12345")
+
+    def test_chain_only_flow_without_a_portal_case_renders(self) -> None:
+        """A break-glass in the chain with no ledger row must not 500 the page."""
+        flow = {
+            "correlation_id": "bg-chain-only", "first_seq": 5, "last_seq": 7, "entries": 3,
+            "started_at": timezone.now(), "released": True, "expired": False,
+        }
+        with mock.patch("portal_core.store_reader.breakglass_correlations", return_value=[flow]):
+            resp = self.client.get("/oversight/cases/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "chain only")
+
+    def test_failed_case_without_a_chain_flow_renders(self) -> None:
+        BreakglassCase.objects.create(
+            correlation_id="bg-failed", record_id="rec-002", patient_id="pat-102", clinician_id="doc-201",
+            facility_id="facility-b", reason_code="stroke", status=CaseStatus.FAILED,
+            failure_reason="custodian: refused",
+        )
+        with mock.patch("portal_core.store_reader.breakglass_correlations", return_value=[]):
+            resp = self.client.get("/oversight/cases/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "failed closed")

@@ -12,7 +12,7 @@
     <tbody>
     {% for r in rows %}
       <tr>
-        <td class="mono">{% if r.case %}{{ r.case.case_number }}{% else %}—{% endif %}<span class="sub">{{ r.flow.started_at|date:"Y-m-d H:i:s"|default:r.case.created_at|date:"Y-m-d H:i:s" }}</span></td>
+        <td class="mono">{% if r.case %}{{ r.case.case_number }}{% else %}—{% endif %}<span class="sub">{% if r.flow %}{{ r.flow.started_at|date:"Y-m-d H:i:s" }}{% elif r.case %}{{ r.case.created_at|date:"Y-m-d H:i:s" }}{% endif %}</span></td>
         <td class="mono">{% if r.case %}{{ r.case.record_id }}{% else %}?{% endif %}</td>
         <td>{% if r.case %}{{ r.case.clinician_id }}<span class="sub mono">{{ r.case.facility_id }} · {{ r.case.reason_code }}</span>{% else %}<span class="text-muted">chain only</span>{% endif %}</td>
         <td class="small">{% if r.case and r.case.shares %}{% for s in r.case.shares %}{{ s.holder }}{% if not forloop.last %} + {% endif %}{% endfor %}{% elif r.case %}none released{% else %}—{% endif %}</td>

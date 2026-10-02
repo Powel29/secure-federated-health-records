@@ -20,6 +20,7 @@ from crypto_core import (
     private_key_to_pem,
 )
 from crypto_core.symmetric import aes_gcm_decrypt
+from lifecycle.expiry import EmergencyExpiryManager
 from pre.elgamal import decapsulate_key
 
 
@@ -222,3 +223,115 @@ class TestHospitalBreakglassEndpoint:
 
         assert response.status_code == 400
         assert "FacilityMismatchError" in response.json()["detail"]
+
+    def test_breakglass_assertion_for_another_patient_is_refused(self, test_setup):
+        """An assertion bound to a different patient cannot open this record (403).
+
+        Negative security test: the refusal must have no side effect, so the
+        record stays GRANTED and a correct assertion still opens it afterwards.
+        """
+        client = test_setup["client"]
+        pki = test_setup["pki"]
+        em_shares = test_setup["em_shares"]
+        repo = test_setup["repo"]
+
+        def _post(patient_id: str):
+            assertion = create_emergency_assertion(
+                patient_id=patient_id,
+                clinician_id="dr-alice",
+                facility_id="facility-a",
+                reason_code=ReasonCode.UNCONSCIOUS_PATIENT,
+                signing_key=pki["alice_priv"],
+            )
+            return client.post(
+                "/records/rec-001/breakglass",
+                json={
+                    "assertion": assertion.model_dump(mode="json"),
+                    "clinician_certificate_pem": certificate_to_pem(
+                        pki["alice_cert"]
+                    ).decode("ascii"),
+                    "facility_ca_certificate_pem": certificate_to_pem(
+                        pki["fa_cert"]
+                    ).decode("ascii"),
+                    "trusted_root_certificate_pem": certificate_to_pem(
+                        pki["root"].certificate
+                    ).decode("ascii"),
+                    "shares": [
+                        (em_shares[0][0], em_shares[0][1].hex()),
+                        (em_shares[1][0], em_shares[1][1].hex()),
+                    ],
+                    "pre_rewrap_key": pki["alice_pre_pub"],
+                    "lifecycle_signing_key_pem": private_key_to_pem(
+                        pki["life_priv"]
+                    ).decode("ascii"),
+                },
+            )
+
+        wrong = _post("patient-999")
+        assert wrong.status_code == 403
+        assert "not valid for this record" in wrong.json()["detail"]
+        assert "rewrapped_dek_b64" not in wrong.text
+        assert repo.get_lifecycle_state("rec-001") == LifecycleState.GRANTED
+
+        right = _post("patient-001")
+        assert right.status_code == 200
+
+    def test_breakglass_reopens_after_the_timebox_expired(self, test_setup):
+        """After expiry the store must not stay EMERGENCY_OPEN and block re-entry."""
+        client = test_setup["client"]
+        pki = test_setup["pki"]
+        em_shares = test_setup["em_shares"]
+        repo = test_setup["repo"]
+        app = test_setup["app"]
+
+        def _open():
+            assertion = create_emergency_assertion(
+                patient_id="patient-001",
+                clinician_id="dr-alice",
+                facility_id="facility-a",
+                reason_code=ReasonCode.UNCONSCIOUS_PATIENT,
+                signing_key=pki["alice_priv"],
+            )
+            return client.post(
+                "/records/rec-001/breakglass",
+                json={
+                    "assertion": assertion.model_dump(mode="json"),
+                    "clinician_certificate_pem": certificate_to_pem(
+                        pki["alice_cert"]
+                    ).decode("ascii"),
+                    "facility_ca_certificate_pem": certificate_to_pem(
+                        pki["fa_cert"]
+                    ).decode("ascii"),
+                    "trusted_root_certificate_pem": certificate_to_pem(
+                        pki["root"].certificate
+                    ).decode("ascii"),
+                    "shares": [
+                        (em_shares[0][0], em_shares[0][1].hex()),
+                        (em_shares[1][0], em_shares[1][1].hex()),
+                    ],
+                    "pre_rewrap_key": pki["alice_pre_pub"],
+                    "lifecycle_signing_key_pem": private_key_to_pem(
+                        pki["life_priv"]
+                    ).decode("ascii"),
+                    "baseline_wrapping_key_b64": base64.b64encode(b"" * 32).decode(
+                        "ascii"
+                    ),
+                    "emergency_duration_seconds": 60,
+                },
+            )
+
+        first = _open()
+        assert first.status_code == 200
+        assert repo.get_lifecycle_state("rec-001") == LifecycleState.EMERGENCY_OPEN
+
+        # While the session is live a second unlock must still be refused.
+        assert _open().status_code == 403
+
+        # The timer has finished with the session (expiry, or a facility restart):
+        # it holds none for the record, but the store still says EMERGENCY_OPEN.
+        app.state.expiry_manager = EmergencyExpiryManager(
+            signing_key=pki["life_priv"], default_duration_seconds=60.0
+        )
+        second = _open()
+        assert second.status_code == 200, second.text
+        assert repo.get_lifecycle_state("rec-001") == LifecycleState.EMERGENCY_OPEN
