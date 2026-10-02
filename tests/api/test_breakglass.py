@@ -335,4 +335,3 @@ class TestHospitalBreakglassEndpoint:
         second = _open()
         assert second.status_code == 200, second.text
         assert repo.get_lifecycle_state("rec-001") == LifecycleState.EMERGENCY_OPEN
-
