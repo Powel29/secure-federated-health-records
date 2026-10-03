@@ -27,6 +27,7 @@ document (`PROJECT.md`, `ARCHITECTURE.md`, an ADR) or to code you can show.
 
 | # | File | One-line summary | Min |
 |---|---|---|---|
+| 0 | [00-quick-startup.md](00-quick-startup.md) | Commands to get the stack and portals running, plus fixes | 3 |
 | 1 | [01-big-picture.md](01-big-picture.md) | The problem, the idea, the parts, who is who | 6 |
 | 2 | [02-key-lifecycle-state-machine.md](02-key-lifecycle-state-machine.md) | Four states, signed transitions, revocation by changing the key | 6 |
 | 3 | [03-break-glass-and-threshold-gate.md](03-break-glass-and-threshold-gate.md) | 2-of-3 shares, log-before-release, the emergency assertion, auto-expiry | 8 |
@@ -35,6 +36,7 @@ document (`PROJECT.md`, `ARCHITECTURE.md`, an ADR) or to code you can show.
 | 6 | [06-traffic-analysis-module.md](06-traffic-analysis-module.md) | The required course module: what we capture and what we assert | 4 |
 | 7 | [07-honest-limits-and-what-we-found.md](07-honest-limits-and-what-we-found.md) | Caveats, plus the three bugs the stress test found and the fixes | 5 |
 | 8 | [08-demo-script-and-viva-qa.md](08-demo-script-and-viva-qa.md) | A step-by-step demo and 20 likely questions with short answers | 10 |
+| 9 | [09-technical-details.md](09-technical-details.md) | Parameters, protocol, ports, API, tables, tests, ADR index | 8 |
 
 ## The plan for tomorrow
 
