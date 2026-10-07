@@ -5,7 +5,8 @@
 #
 # The `custodian` service (ADR-0043) is the portals' key agent; the Django
 # portals themselves run outside Compose (see portal/README.md) and are pointed
-# at the published ports 8001/8002/8010/8011/8020/8030.
+# at the published ports 8001/8002/8010/8011/8020/8030, which are bound to
+# the host's loopback only (review F16): nothing listens on a LAN interface.
 
 services:
   store:
@@ -39,6 +40,7 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     environment:
+      HOST: "0.0.0.0"  # bind inside the bridge; host access below is loopback-only (F16)
       SERVICE_ROLE: authority
       PORT: "8010"
       AUTHORITY_ID: authority-med
@@ -52,7 +54,7 @@ services:
       timeout: 3s
       retries: 30
     ports:
-      - "8010:8010"
+      - "127.0.0.1:8010:8010"
     networks: [federation]
     volumes:
       - ../wire/certs:/tls:ro
@@ -62,6 +64,7 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     environment:
+      HOST: "0.0.0.0"  # bind inside the bridge; host access below is loopback-only (F16)
       SERVICE_ROLE: authority
       PORT: "8011"
       AUTHORITY_ID: authority-net
@@ -75,7 +78,7 @@ services:
       timeout: 3s
       retries: 30
     ports:
-      - "8011:8011"
+      - "127.0.0.1:8011:8011"
     networks: [federation]
     volumes:
       - ../wire/certs:/tls:ro
@@ -90,6 +93,7 @@ services:
       migrate:
         condition: service_completed_successfully
     environment:
+      HOST: "0.0.0.0"  # bind inside the bridge; host access below is loopback-only (F16)
       SERVICE_ROLE: audit
       PORT: "8020"
       DATABASE_URL: postgresql://postgres@store:5432/ehr
@@ -104,7 +108,7 @@ services:
       timeout: 3s
       retries: 30
     ports:
-      - "8020:8020"
+      - "127.0.0.1:8020:8020"
     networks: [federation]
     volumes:
       - ../wire/certs:/tls:ro
@@ -119,6 +123,7 @@ services:
       audit:
         condition: service_healthy
     environment:
+      HOST: "0.0.0.0"  # bind inside the bridge; host access below is loopback-only (F16)
       SERVICE_ROLE: facility
       PORT: "8001"
       FACILITY_ID: facility-a
@@ -134,7 +139,7 @@ services:
       timeout: 3s
       retries: 30
     ports:
-      - "8001:8001"
+      - "127.0.0.1:8001:8001"
     networks: [federation]
     volumes:
       - ../wire/certs:/tls:ro
@@ -149,6 +154,7 @@ services:
       audit:
         condition: service_healthy
     environment:
+      HOST: "0.0.0.0"  # bind inside the bridge; host access below is loopback-only (F16)
       SERVICE_ROLE: facility
       PORT: "8002"
       FACILITY_ID: facility-b
@@ -164,7 +170,7 @@ services:
       timeout: 3s
       retries: 30
     ports:
-      - "8002:8002"
+      - "127.0.0.1:8002:8002"
     networks: [federation]
     volumes:
       - ../wire/certs:/tls:ro
@@ -181,6 +187,7 @@ services:
       facility-b:
         condition: service_healthy
     environment:
+      HOST: "0.0.0.0"  # bind inside the bridge; host access below is loopback-only (F16)
       SERVICE_ROLE: custodian
       PORT: "8030"
       DATABASE_URL: postgresql://postgres@store:5432/ehr
@@ -197,7 +204,7 @@ services:
       timeout: 3s
       retries: 30
     ports:
-      - "8030:8030"
+      - "127.0.0.1:8030:8030"
     networks: [federation]
     volumes:
       - ../wire/certs:/tls:ro
