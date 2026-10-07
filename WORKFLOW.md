@@ -541,6 +541,7 @@ positive control: `test_share_released_only_after_successful_commit`.)*
 *What:* Handle the awkward cases — clock skew, missing shares, malformed input — and test them.
 *Needs first:* P4-4.
 *Done when:* each case is handled and tested.
+*Open (2026-10-07):* missing and malformed shares are handled and tested (`tests/breakglass/test_gate.py::TestOpenEmergencyAccessEdgeCases`). **Clock skew is not.** `breakglass.validate_emergency_assertion` rejects an expired assertion but accepts one whose `issued_at` is in the future, so a fast clinician clock silently extends the assertion's effective lifetime. Proposed fix: reject `issued_at > now + MAX_CLOCK_SKEW` (about 2 minutes) with a negative test. That adds a check ARCHITECTURE.md §8 does not specify, so it needs an ADR, and Powel (`breakglass` owner) has deferred the decision. P5-4 — and the Phase 5 gate — stays open until it is either implemented or recorded as out of scope with a reason.
 
 **P5-5 · Traffic analysis (PyShark)** *(was P5-5)* — Nandini — 13h
 *What:* Code that reads the captured traffic and automatically checks the wire-level claims — no plaintext leaks, no share released before its log entry, break-glass visible only as metadata. This is the required course module, delivered as code not screenshots.
