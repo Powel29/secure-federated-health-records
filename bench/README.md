@@ -40,5 +40,11 @@ Report median and p95 in the paper, never the mean alone.
 | `emergency_search_latency` | facility-b `/emergency-search` over HTTP (includes transport) |
 | `audit_verification` | `verify_full_chain` over the persisted chain |
 
-Not yet covered (PROJECT.md D4): re-wrap cost against record count, and
-scalability against number of patients and facilities.
+These are the seven metrics PROJECT.md D4 requires. **Scalability curves
+against number of patients and facilities were cut from scope** (D4, to fund
+the three web portals, ADR-0014). The paper states that as a limitation and
+must not imply the runs were done.
+
+`threshold_reconstruction` times `shamir.combine_shares` alone, not the whole
+break-glass gate (assertion validation, unwrap, PRE delivery). Label it that
+way in the evaluation section.
