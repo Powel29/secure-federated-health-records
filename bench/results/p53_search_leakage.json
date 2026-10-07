@@ -1,0 +1,54 @@
+{
+  "capture": "wire/captures/p53-search.pcap",
+  "search_requests": 4,
+  "unique_observable_requests": 1,
+  "repeated_requests": {
+    "/records/rec-001/emergency-search": 4
+  },
+  "request_frequency": {
+    "/records/rec-001/emergency-search": 4
+  },
+  "access_pattern": {
+    "": 2,
+    "127.0.0.1:51778": 2
+  },
+  "search_packet_count": 4,
+  "search_bytes": 671,
+  "total_tcp_packets": 827,
+  "total_capture_bytes": 145933,
+  "inter_search_seconds": [
+    0.0013670921325683594,
+    3.807553768157959,
+    0.0020890235900878906
+  ],
+  "searches": [
+    {
+      "timestamp": 1791304021.282953,
+      "method": "POST",
+      "host": "127.0.0.1:51778",
+      "uri": "/records/rec-001/emergency-search",
+      "bytes": 82
+    },
+    {
+      "timestamp": 1791304021.28432,
+      "method": "",
+      "host": "",
+      "uri": "/records/rec-001/emergency-search",
+      "bytes": 224
+    },
+    {
+      "timestamp": 1791304025.091874,
+      "method": "POST",
+      "host": "127.0.0.1:51778",
+      "uri": "/records/rec-001/emergency-search",
+      "bytes": 82
+    },
+    {
+      "timestamp": 1791304025.093963,
+      "method": "",
+      "host": "",
+      "uri": "/records/rec-001/emergency-search",
+      "bytes": 283
+    }
+  ]
+}

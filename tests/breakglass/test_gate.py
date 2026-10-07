@@ -9,7 +9,7 @@ Covers:
 """
 
 from __future__ import annotations
-
+from breakglass.exceptions import InsufficientSharesError
 import pytest
 from breakglass.emergency_key import (
     THRESHOLD,
@@ -96,6 +96,39 @@ class TestOpenEmergencyAccessHappyPath:
         assert result.emergency_key == unlock_scenario["emergency_key"]
         recovered_dek = _unwrap_rewrapped_dek(result.rewrapped_dek, pre_priv, RECORD_ID)
         assert recovered_dek == unlock_scenario["dek"]
+    def test_missing_share_fails_closed(self, unlock_scenario):
+        """Fewer than THRESHOLD unique shares must not unlock."""
+        _, pre_pub = generate_pre_keypair()
+
+        with pytest.raises(InsufficientSharesError):
+            open_emergency_access(
+                shares_presented=unlock_scenario["shares"][: THRESHOLD - 1],
+                dek_wrapping=unlock_scenario["wrapping"],
+                transition_source_state=LifecycleState.GRANTED,
+                record_id=RECORD_ID,
+                actor_id="dr-alice",
+                correlation_id="corr-missing-share",
+                reason_code=ReasonCode.CARDIAC_ARREST,
+                lifecycle_signing_key=unlock_scenario["lifecycle_priv"],
+                pre_rewrap_key=pre_pub,
+            )
+
+    def test_malformed_share_fails_closed(self, unlock_scenario):
+        """Malformed share data must not unlock emergency access."""
+        _, pre_pub = generate_pre_keypair()
+
+        with pytest.raises(Exception):
+            open_emergency_access(
+                shares_presented=[(1, b"malformed")],
+                dek_wrapping=unlock_scenario["wrapping"],
+                transition_source_state=LifecycleState.GRANTED,
+                record_id=RECORD_ID,
+                actor_id="dr-alice",
+                correlation_id="corr-malformed-share",
+                reason_code=ReasonCode.CARDIAC_ARREST,
+                lifecycle_signing_key=unlock_scenario["lifecycle_priv"],
+                pre_rewrap_key=pre_pub,
+            )
 
     def test_redundant_shares_also_unlock(self, unlock_scenario):
         """All TOTAL_SHARES presented (more than THRESHOLD) still unlocks."""
