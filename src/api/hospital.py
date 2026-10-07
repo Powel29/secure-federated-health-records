@@ -422,7 +422,8 @@ def create_hospital_app(
         Configured FastAPI application instance.
     """
     repo = repository or InMemoryStorageRepository()
-    consumed_assertions = ConsumedAssertionIds()
+    # Backed by the store so a facility restart does not re-open replay (F22).
+    consumed_assertions = ConsumedAssertionIds(backend=repo)
     audit_key: ECPrivateKey | None = (
         private_key_from_pem(audit_signing_key_pem.encode("utf-8"))
         if audit_signing_key_pem

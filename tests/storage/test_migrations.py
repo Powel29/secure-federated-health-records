@@ -15,6 +15,7 @@ _EXPECTED = {
     "transition_events",
     "audit_log",
     "search_index",
+    "consumed_ids",  # 0002, review F22
 }
 
 
