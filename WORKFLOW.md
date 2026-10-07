@@ -547,6 +547,7 @@ positive control: `test_share_released_only_after_successful_commit`.)*
 *What:* Code that reads the captured traffic and automatically checks the wire-level claims — no plaintext leaks, no share released before its log entry, break-glass visible only as metadata. This is the required course module, delivered as code not screenshots.
 *Needs first:* P4-6, P4-4.
 *Done when:* all four wire-level checks run and pass automatically.
+*Progress (2026-10-07):* implemented by Powel (handover from Nandini to be confirmed), ADR-0045. `wire/checks.py` asserts all four claims over reassembled captures against the scenario's canary manifest; `python -m wire.analyze_traffic` exits non-zero on any failure. Negative tests in `tests/wire/test_checks.py` run in CI. **Not yet run on real captures** (needs Wireshark/Npcap, Postgres and the federation up). Claim 1 fails by default until decision D6 (review F18) is made; `--claim1-scope tls` is the D6-b reading. Depends on the `deploy/run_scenario.py --canaries-out` proposal (Avaneeth).
 
 ---
 
