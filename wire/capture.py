@@ -9,7 +9,12 @@ Produces one packet-capture file per scenario in each of two modes:
 
 The *analysis* of these captures (asserting no plaintext leaks, log-before-
 release ordering, break-glass visible only as metadata) is P5-5's job
-(:mod:`wire.analyze_traffic`); this module only *produces* the ``.pcap``.
+(:mod:`wire.analyze_traffic`); this module only *produces* the ``.pcap`` and,
+beside it, the scenario's canary manifest ``<mode>.canaries.json`` (ADR-0045).
+
+The filter also includes the Postgres port: claim 2 (commit-before-release)
+is proven by seeing the audit service's ``COMMIT`` on the wire before the
+share-carrying release response.
 
 Capture tooling: shells out to ``dumpcap`` (ships with Wireshark/tshark), which
 ``pyshark`` then reads. If it is not on ``PATH`` this raises
@@ -34,6 +39,7 @@ from pathlib import Path
 from wire.tls import SERVICES
 
 CAPTURE_DIR = Path(__file__).resolve().parent / "captures"
+DEFAULT_DB_PORT = 5432
 
 # Default loopback interface name by platform family. dumpcap on Windows with
 # Npcap exposes loopback as this friendly name; Linux/macOS use "lo"/"lo0".
@@ -55,9 +61,9 @@ def default_loopback_interface() -> str:
     return _DEFAULT_LOOPBACK.get(sys.platform, "lo")
 
 
-def _federation_bpf() -> str:
+def _federation_bpf(db_port: int = DEFAULT_DB_PORT) -> str:
     """BPF filter pinning capture to the federation's own loopback ports."""
-    ports = sorted(SERVICES.values())
+    ports = sorted({*SERVICES.values(), db_port})
     return "tcp and (" + " or ".join(f"port {p}" for p in ports) + ")"
 
 
@@ -77,6 +83,7 @@ def capture_scenario(
     output_path: Path,
     interface: str | None = None,
     settle_seconds: float = 0.5,
+    db_port: int = DEFAULT_DB_PORT,
 ) -> Path:
     """Run ``scenario`` while capturing federation loopback traffic to a pcap.
 
@@ -89,6 +96,7 @@ def capture_scenario(
             loopback / Docker-bridge interface -- never a shared network.
         settle_seconds: Grace period after starting dumpcap (and before/after
             the scenario) so no packets are clipped at the edges.
+        db_port: Postgres port to include in the filter (claim 2 evidence).
 
     Returns:
         ``output_path``, now containing the capture.
@@ -101,7 +109,15 @@ def capture_scenario(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     proc = subprocess.Popen(
-        [dumpcap, "-i", iface, "-f", _federation_bpf(), "-w", str(output_path)],
+        [
+            dumpcap,
+            "-i",
+            iface,
+            "-f",
+            _federation_bpf(db_port),
+            "-w",
+            str(output_path),
+        ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -118,7 +134,9 @@ def capture_scenario(
     return output_path
 
 
-def _run_scenario_via_subprocess(scheme: str) -> Callable[[], None]:
+def _run_scenario_via_subprocess(
+    scheme: str, canaries_out: Path | None = None
+) -> Callable[[], None]:
     """Default scenario: drive an already-running federation over ``scheme``.
 
     Shells out to ``deploy.run_scenario`` (P4-4) rather than coupling in-process,
@@ -131,10 +149,10 @@ def _run_scenario_via_subprocess(scheme: str) -> Callable[[], None]:
     def _run() -> None:
         import sys
 
-        subprocess.run(
-            [sys.executable, "-m", "deploy.run_scenario", "--scheme", scheme],
-            check=True,
-        )
+        cmd = [sys.executable, "-m", "deploy.run_scenario", "--scheme", scheme]
+        if canaries_out is not None:
+            cmd += ["--canaries-out", str(canaries_out)]
+        subprocess.run(cmd, check=True)
 
     return _run
 
@@ -158,6 +176,12 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="output pcap path (default: wire/captures/<mode>.pcap)",
     )
+    parser.add_argument(
+        "--db-port",
+        type=int,
+        default=DEFAULT_DB_PORT,
+        help="Postgres port to include in the capture (claim-2 evidence)",
+    )
     args = parser.parse_args(argv)
 
     out = args.out or (CAPTURE_DIR / f"{args.mode}.pcap")
@@ -167,12 +191,15 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(str(exc))
 
     scheme = "https" if args.mode == "tls" else "http"
+    canaries = out.with_name(f"{out.stem}.canaries.json")
     capture_scenario(
-        _run_scenario_via_subprocess(scheme),
+        _run_scenario_via_subprocess(scheme, canaries),
         output_path=out,
         interface=args.interface,
+        db_port=args.db_port,
     )
     print(f"{args.mode} capture written to {out}")
+    print(f"canary manifest written to {canaries} (never commit it)")
     return 0
 
 
