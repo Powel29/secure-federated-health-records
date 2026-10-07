@@ -50,8 +50,40 @@ _DEFAULT_LOOPBACK = {
 }
 
 
+# CLAUDE.md: capture only our own synthetic federation, on loopback or the
+# Docker bridge -- never a campus, shared or third-party network (review F39).
+_LOOPBACK_INTERFACES = frozenset(
+    {
+        "lo",
+        "lo0",
+        "\\Device\\NPF_Loopback",
+        "Adapter for loopback traffic capture",
+    }
+)
+_BRIDGE_INTERFACES = frozenset({"docker0"})
+_BRIDGE_PREFIX = "br-"
+CAPTURE_RULE = (
+    "capture is allowed only on loopback (lo, lo0, \\Device\\NPF_Loopback, "
+    "'Adapter for loopback traffic capture') or the Docker bridge (docker0, br-*) "
+    "-- never a shared or third-party network (CLAUDE.md)"
+)
+
+
 class CaptureToolUnavailable(RuntimeError):
     """``dumpcap`` is not installed / not on PATH -- capture cannot run."""
+
+
+class CaptureInterfaceRefused(ValueError):
+    """The requested interface is not loopback or the Docker bridge."""
+
+
+def is_allowed_interface(name: str) -> bool:
+    """True only for loopback adapters and the Docker bridge (F39)."""
+    return (
+        name in _LOOPBACK_INTERFACES
+        or name in _BRIDGE_INTERFACES
+        or (name.startswith(_BRIDGE_PREFIX) and len(name) > len(_BRIDGE_PREFIX))
+    )
 
 
 def default_loopback_interface() -> str:
@@ -102,10 +134,13 @@ def capture_scenario(
         ``output_path``, now containing the capture.
 
     Raises:
+        CaptureInterfaceRefused: ``interface`` is not loopback / Docker bridge.
         CaptureToolUnavailable: ``dumpcap`` is not installed.
     """
-    dumpcap = _require_dumpcap()
     iface = interface or default_loopback_interface()
+    if not is_allowed_interface(iface):
+        raise CaptureInterfaceRefused(f"refusing interface {iface!r}: {CAPTURE_RULE}")
+    dumpcap = _require_dumpcap()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     proc = subprocess.Popen(
@@ -185,6 +220,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     out = args.out or (CAPTURE_DIR / f"{args.mode}.pcap")
+    if args.interface is not None and not is_allowed_interface(args.interface):
+        parser.error(f"refusing interface {args.interface!r}: {CAPTURE_RULE}")
     try:
         _require_dumpcap()
     except CaptureToolUnavailable as exc:
