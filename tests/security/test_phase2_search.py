@@ -87,6 +87,7 @@ def test_sec_documented_leakage_same_term_same_key_yields_equal_tokens() -> None
     assert token_a == token_b
 
 
+@pytest.mark.claim("C4", level="module")
 def test_sec_emergency_search_stops_after_expiry(monkeypatch) -> None:
     """P3-8: emergency search works before expiry and fails after expiry."""
     from datetime import datetime, timedelta, timezone

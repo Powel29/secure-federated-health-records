@@ -145,6 +145,7 @@ def test_release_share_without_registration_is_not_found(client: TestClient) -> 
     assert r.status_code == 404
 
 
+@pytest.mark.claim("C2", level="system")
 def test_release_share_fails_closed_on_commit_failure(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

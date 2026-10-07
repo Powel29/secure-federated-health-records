@@ -68,3 +68,6 @@ testpaths = ["tests"]
 # Makes `pytest` work from a clean clone even before `pip install -e .`,
 # so CI (T05) is green on an empty suite without an install step.
 pythonpath = ["src"]
+markers = [
+    "claim(id, level): ties a test to a P5-1 paper claim C1-C11 (tests/security/claims.py); level is 'module' or 'system' (ADR-0046)",
+]
