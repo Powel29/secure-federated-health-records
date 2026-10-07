@@ -4,12 +4,13 @@ Covers:
 - Happy path: exactly THRESHOLD shares unlock and the re-wrapped DEK
   decrypts back to the original plaintext DEK.
 - Redundancy: TOTAL_SHARES presented also unlocks.
+- Edge cases (P5-4): missing, empty, truncated and garbage shares fail closed.
 - Split -> combine round trip for the emergency key itself.
 - The emitted TransitionEvent carries EMERGENCY_OPEN.
 """
 
 from __future__ import annotations
-from breakglass.exceptions import InsufficientSharesError
+
 import pytest
 from breakglass.emergency_key import (
     THRESHOLD,
@@ -17,12 +18,14 @@ from breakglass.emergency_key import (
     generate_emergency_key,
     split_emergency_key,
 )
+from breakglass.exceptions import InsufficientSharesError
 from breakglass.gate import open_emergency_access
 from contracts.enums import LifecycleState, ReasonCode
 from crypto_core import generate_ec_keypair
 from crypto_core.symmetric import aes_gcm_decrypt
 from pre.elgamal import generate_keypair as generate_pre_keypair
 from records.service import unwrap_dek, wrap_dek
+from shamir.exceptions import InvalidShareError
 from shamir.split import combine_shares
 
 RECORD_ID = "rec-emergency-001"
@@ -96,39 +99,6 @@ class TestOpenEmergencyAccessHappyPath:
         assert result.emergency_key == unlock_scenario["emergency_key"]
         recovered_dek = _unwrap_rewrapped_dek(result.rewrapped_dek, pre_priv, RECORD_ID)
         assert recovered_dek == unlock_scenario["dek"]
-    def test_missing_share_fails_closed(self, unlock_scenario):
-        """Fewer than THRESHOLD unique shares must not unlock."""
-        _, pre_pub = generate_pre_keypair()
-
-        with pytest.raises(InsufficientSharesError):
-            open_emergency_access(
-                shares_presented=unlock_scenario["shares"][: THRESHOLD - 1],
-                dek_wrapping=unlock_scenario["wrapping"],
-                transition_source_state=LifecycleState.GRANTED,
-                record_id=RECORD_ID,
-                actor_id="dr-alice",
-                correlation_id="corr-missing-share",
-                reason_code=ReasonCode.CARDIAC_ARREST,
-                lifecycle_signing_key=unlock_scenario["lifecycle_priv"],
-                pre_rewrap_key=pre_pub,
-            )
-
-    def test_malformed_share_fails_closed(self, unlock_scenario):
-        """Malformed share data must not unlock emergency access."""
-        _, pre_pub = generate_pre_keypair()
-
-        with pytest.raises(Exception):
-            open_emergency_access(
-                shares_presented=[(1, b"malformed")],
-                dek_wrapping=unlock_scenario["wrapping"],
-                transition_source_state=LifecycleState.GRANTED,
-                record_id=RECORD_ID,
-                actor_id="dr-alice",
-                correlation_id="corr-malformed-share",
-                reason_code=ReasonCode.CARDIAC_ARREST,
-                lifecycle_signing_key=unlock_scenario["lifecycle_priv"],
-                pre_rewrap_key=pre_pub,
-            )
 
     def test_redundant_shares_also_unlock(self, unlock_scenario):
         """All TOTAL_SHARES presented (more than THRESHOLD) still unlocks."""
@@ -163,6 +133,53 @@ class TestOpenEmergencyAccessHappyPath:
             pre_rewrap_key=pre_pub,
         )
         assert result.transition_event.from_state == LifecycleState.REVOKED
+
+
+class TestOpenEmergencyAccessEdgeCases:
+    """P5-4: missing and malformed shares fail closed, for the right reason."""
+
+    @staticmethod
+    def _open(unlock_scenario, shares):
+        _, pre_pub = generate_pre_keypair()
+        return open_emergency_access(
+            shares_presented=shares,
+            dek_wrapping=unlock_scenario["wrapping"],
+            transition_source_state=LifecycleState.GRANTED,
+            record_id=RECORD_ID,
+            actor_id="dr-alice",
+            correlation_id="corr-edge",
+            reason_code=ReasonCode.CARDIAC_ARREST,
+            lifecycle_signing_key=unlock_scenario["lifecycle_priv"],
+            pre_rewrap_key=pre_pub,
+        )
+
+    def test_missing_share_fails_closed(self, unlock_scenario):
+        """Fewer than THRESHOLD unique shares must not unlock."""
+        with pytest.raises(InsufficientSharesError):
+            self._open(unlock_scenario, unlock_scenario["shares"][: THRESHOLD - 1])
+
+    def test_no_shares_fails_closed(self, unlock_scenario):
+        with pytest.raises(InsufficientSharesError):
+            self._open(unlock_scenario, [])
+
+    def test_truncated_share_fails_closed(self, unlock_scenario):
+        """A share of the wrong length is rejected by reconstruction.
+
+        One valid share is presented alongside the malformed one so the
+        threshold count is met -- the refusal must come from the malformed
+        bytes, not from the share count.
+        """
+        valid = unlock_scenario["shares"][0]
+        x, share_bytes = unlock_scenario["shares"][1]
+        malformed = (x, share_bytes[:-1])
+        with pytest.raises(InvalidShareError):
+            self._open(unlock_scenario, [valid, malformed])
+
+    def test_garbage_share_of_wrong_block_size_fails_closed(self, unlock_scenario):
+        x1, _ = unlock_scenario["shares"][0]
+        x2, _ = unlock_scenario["shares"][1]
+        with pytest.raises(InvalidShareError):
+            self._open(unlock_scenario, [(x1, b"malformed"), (x2, b"malformed")])
 
 
 class TestEmergencyKeySplitCombineRoundTrip:
