@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 
+import pytest
 from breakglass import create_emergency_assertion
 from contracts.base import GCM_NONCE_BYTES
 from contracts.enums import LifecycleState, ReasonCode
@@ -102,6 +103,7 @@ class TestHospitalBreakglassEndpoint:
         state = test_setup["repo"].get_lifecycle_state("rec-001")
         assert state == LifecycleState.EMERGENCY_OPEN
 
+    @pytest.mark.claim("C3", level="system")
     def test_breakglass_single_share_fails(self, test_setup):
         """Presenting fewer than 2 shares fails with HTTP 400."""
         client = test_setup["client"]
@@ -140,6 +142,7 @@ class TestHospitalBreakglassEndpoint:
         assert response.status_code == 400
         assert "Insufficient threshold shares" in response.json()["detail"]
 
+    @pytest.mark.claim("C8", level="system")
     def test_breakglass_replayed_assertion_fails(self, test_setup):
         """Replaying a previously used assertion is rejected (P3-11 -> 400)."""
         client = test_setup["client"]

@@ -66,6 +66,7 @@ def _granted_to_revoked(signing_key, *, record_id="rec-101", actor_id="dr-alice"
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.claim("C6", level="module")
 def test_sec_illegal_state_transition_is_rejected() -> None:
     """Security property: a from/to pair outside the legal set is refused.
 
@@ -117,6 +118,7 @@ def test_sec_self_transition_is_rejected() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.claim("C7", level="module")
 def test_sec_transition_event_with_invalid_signature_is_rejected() -> None:
     """Security property: an event signed by the wrong key fails verification.
 

@@ -112,10 +112,12 @@ class TestSingleShareRejected:
         result = _open(scenario, two)
         assert result.emergency_key == scenario["emergency_key"]
 
+    @pytest.mark.claim("C3", level="module")
     def test_single_facility_share_rejected(self, scenario):
         with pytest.raises(InsufficientSharesError):
             _open(scenario, [scenario["facility_share"]])
 
+    @pytest.mark.claim("C3", level="module")
     def test_single_authority_share_rejected(self, scenario):
         with pytest.raises(InsufficientSharesError):
             _open(scenario, [scenario["authority_share"]])
@@ -140,6 +142,7 @@ class TestAuditShareAloneCannotOpen:
         result = _open(scenario, [scenario["audit_share"], scenario["facility_share"]])
         assert result.emergency_key == scenario["emergency_key"]
 
+    @pytest.mark.claim("C3", level="module")
     def test_audit_share_alone_rejected(self, scenario):
         with pytest.raises(InsufficientSharesError):
             _open(scenario, [scenario["audit_share"]])

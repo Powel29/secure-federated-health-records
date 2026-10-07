@@ -59,6 +59,7 @@ def _chain_of_three(conn, signing_key):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.claim("C5", level="module")
 def test_tampered_event_data_detected_by_chain_verification(conn, audit_keypair):
     """Claim: a tampered audit log entry is detected by chain verification."""
     priv, pub = audit_keypair
@@ -74,6 +75,7 @@ def test_tampered_event_data_detected_by_chain_verification(conn, audit_keypair)
         verify_chain([genesis, tampered_e1, e2], pub)
 
 
+@pytest.mark.claim("C5", level="module")
 def test_broken_prev_hash_link_detected(conn, audit_keypair):
     """Claim: the log is tamper-evident -- a spliced/reordered entry is caught."""
     priv, pub = audit_keypair
@@ -90,6 +92,7 @@ def test_broken_prev_hash_link_detected(conn, audit_keypair):
         verify_chain([genesis, e2], pub)
 
 
+@pytest.mark.claim("C5", level="module")
 def test_replayed_entry_in_chain_position_detected(conn, audit_keypair):
     """Claim: the log is tamper-evident -- replaying an entry breaks the chain."""
     priv, pub = audit_keypair
@@ -109,6 +112,7 @@ def test_replayed_entry_in_chain_position_detected(conn, audit_keypair):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.claim("C2", level="module")
 def test_breakglass_share_not_released_when_log_commit_fails(
     conn, audit_keypair, monkeypatch
 ):
