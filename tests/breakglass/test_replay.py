@@ -140,3 +140,28 @@ class TestConsumedRequestIds:
 
         assert results.count("ok") == 1
         assert results.count("replay") == 9
+
+
+class TestDurableBackend:
+    """F22: a store backed by the repository survives a process restart."""
+
+    def test_new_store_on_same_backend_still_rejects_replay(self):
+        from api.repository import InMemoryStorageRepository
+
+        backend = InMemoryStorageRepository()
+        assertion_id = uuid4()
+        ConsumedAssertionIds(backend=backend).consume(assertion_id)
+
+        restarted = ConsumedAssertionIds(backend=backend)
+        assert restarted.has_seen(assertion_id)
+        with pytest.raises(ReplayedAssertionError):
+            restarted.consume(assertion_id)
+
+    def test_kinds_do_not_collide(self):
+        from api.repository import InMemoryStorageRepository
+
+        backend = InMemoryStorageRepository()
+        shared = uuid4()
+        ConsumedAssertionIds(backend=backend).consume(shared)
+        # The same UUID as a request id is a different one-time id.
+        ConsumedRequestIds(backend=backend).consume(shared)

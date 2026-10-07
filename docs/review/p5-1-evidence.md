@@ -23,7 +23,7 @@ rules. A claim **holds** only if every system-level test for it runs without
 | C5 tampered audit entry detected | holds, **Postgres-backed, not observed locally** | — |
 | C6 illegal transition rejected | fails | F11 / D7 |
 | C7 bad transition signature rejected | fails | D8 / F11 |
-| C8 replayed assertion rejected | fails (across a restart) | F22 |
+| C8 replayed assertion rejected | holds (2026-10-08, F22 fix on `proposal/phase5-fixes`) | — |
 | C9 BOLA denied before crypto/DB | fails | F34 / D5 |
 | C10 expired/revoked credential releases no key | fails | F14 |
 | C11 patient login alone releases no DEK | holds | — |
@@ -35,7 +35,6 @@ security assertion itself, not on setup:
 - C4: the old shares re-open the record and search matches again.
 - C6: the API returns 200.
 - C7: `InvalidSignatureError` under the clinician's key.
-- C8: the replay returns 200.
 - C9: the repository is touched before authorization.
 - C10: `/attribute-keys/author` returns 200.
 
@@ -50,7 +49,7 @@ security assertion itself, not on setup:
 | C5 | A tampered audit entry is detected by chain verification | holds | `tests/security/test_phase3_audit_security.py::test_tampered_event_data_detected_by_chain_verification`<br>`…::test_broken_prev_hash_link_detected`<br>`…::test_replayed_entry_in_chain_position_detected` | `tests/security/test_p51_system_claims.py::test_c5_tampered_db_row_fails_the_chain_verify_endpoint` |
 | C6 | An illegal state transition is rejected | fails today: F11/D7 | `tests/security/test_phase3_security.py::test_sec_illegal_state_transition_is_rejected` | `tests/security/test_p51_system_claims.py::test_c6_api_refuses_revocation_of_an_emergency_open_record` (xfail) |
 | C7 | A transition event with an invalid signature is rejected | fails today: D8/F11 | `tests/security/test_phase3_security.py::test_sec_transition_event_with_invalid_signature_is_rejected` | `tests/security/test_p51_system_claims.py::test_c7_breakglass_event_verifies_against_the_clinicians_certificate` (xfail) |
-| C8 | A replayed emergency assertion is rejected, not re-executed | fails today: F22 | `tests/security/test_phase3_assertion_security.py::TestAssertionReplay::test_replay_rejected` | `tests/api/test_breakglass.py::…::test_breakglass_replayed_assertion_fails`<br>`tests/security/test_p51_system_claims.py::test_c8_replayed_assertion_rejected_after_facility_restart` (xfail) |
+| C8 | A replayed emergency assertion is rejected, not re-executed | holds | `tests/security/test_phase3_assertion_security.py::TestAssertionReplay::test_replay_rejected` | `tests/api/test_breakglass.py::…::test_breakglass_replayed_assertion_fails`<br>`tests/security/test_p51_system_claims.py::test_c8_replayed_assertion_rejected_after_facility_restart` |
 | C9 | An authenticated but unauthorised caller is denied before any crypto or DB work (BOLA) | fails today: F34/D5 | none | `tests/security/test_p51_system_claims.py::test_c9_bola_authenticated_but_unauthorised_caller_denied_before_crypto_or_db` (xfail) |
 | C10 | An expired or revoked credential fails validation and releases no key | fails today: F14 | `tests/security/test_phase2_lifecycle.py::test_sec_revoked_credential_fails_validation_and_key_release`<br>`…::test_sec_expired_credential_fails_validation_and_key_release` | `tests/api/test_authority_service.py::test_revoked_credential_fails_verification_and_key_release`<br>`…::test_expired_credential_release_fails_closed`<br>`tests/security/test_p51_system_claims.py::test_c10_attribute_key_not_released_without_a_valid_credential` (xfail) |
 | C11 | A patient login alone never releases a DEK (ADR-0016) | holds | `tests/security/test_phase2_lifecycle.py::test_sec_revoked_owner_credential_denies_patient_self_access`<br>`tests/security/test_phase2_policy.py::test_sec_patient_without_owner_attribute_cannot_unwrap` | `tests/api/test_custodian_service.py::test_patient_without_owner_credential_is_refused` |
@@ -79,6 +78,7 @@ one of its claim's mutations turns it red. Baseline means no mutation.
 | C7 | `test_sec_transition_event_with_invalid_signature_is_rejected` | green | C7a red |
 | C8 | `test_breakglass_replayed_assertion_fails` (API) | green | C8a red |
 | C8 | `test_replay_rejected` | green | C8a red |
+| C8 | `test_c8_replayed_assertion_rejected_after_facility_restart` (added 2026-10-08) | green | C8a red |
 | C10 | both API credential tests, both module credential tests | green | C10a red |
 
 Mutations:

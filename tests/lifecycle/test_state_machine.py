@@ -9,6 +9,7 @@ live in ``tests/security/test_phase3_security.py``.
 from __future__ import annotations
 
 import datetime
+from uuid import uuid4
 
 import pytest
 from contracts.enums import LifecycleState, ReasonCode
@@ -17,6 +18,7 @@ from lifecycle import (
     LEGAL_TRANSITIONS,
     ConsumedEventIds,
     LifecycleStateMachine,
+    ReplayedEventError,
     create_transition_event,
     validate_transition,
     verify_transition_event,
@@ -235,3 +237,39 @@ def test_timestamps_are_utc_aware(actor_keys) -> None:
     )
     assert event.issued_at.tzinfo is not None
     assert event.issued_at.utcoffset() == datetime.timedelta(0)
+
+
+class TestConsumedEventIdsConcurrencyAndDurability:
+    """F12 lock and F22 backend for transition-event one-time ids."""
+
+    def test_concurrent_consumers_of_one_id_exactly_one_succeeds(self):
+        import threading
+
+        store = ConsumedEventIds()
+        event_id = uuid4()
+        outcomes: list[bool] = []
+        barrier = threading.Barrier(16)
+
+        def worker() -> None:
+            barrier.wait()
+            try:
+                store.consume(event_id)
+                outcomes.append(True)
+            except ReplayedEventError:
+                outcomes.append(False)
+
+        threads = [threading.Thread(target=worker) for _ in range(16)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert outcomes.count(True) == 1
+
+    def test_backend_survives_a_new_store(self):
+        from api.repository import InMemoryStorageRepository
+
+        backend = InMemoryStorageRepository()
+        event_id = uuid4()
+        ConsumedEventIds(backend=backend).consume(event_id)
+        with pytest.raises(ReplayedEventError):
+            ConsumedEventIds(backend=backend).consume(event_id)

@@ -427,11 +427,6 @@ def test_c7_breakglass_event_verifies_against_the_clinicians_certificate(hospita
 
 
 @pytest.mark.claim("C8", level="system")
-@pytest.mark.xfail(
-    strict=True,
-    reason="F22: consumed assertion ids live in process memory, so a facility "
-    "restart forgets them and the same assertion opens the record again",
-)
 def test_c8_replayed_assertion_rejected_after_facility_restart(hospital):
     """C8: replay protection survives a restart of the facility process."""
     payload = _unlock_payload(hospital, register_session=False)

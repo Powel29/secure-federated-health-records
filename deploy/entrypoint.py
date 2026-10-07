@@ -9,7 +9,8 @@ Environment:
     SERVICE_ROLE: One of ``"facility"``, ``"authority"``, ``"audit"``,
         ``"custodian"`` -- selects which ``deploy.asgi`` factory to run.
     PORT: TCP port to bind (default ``8000``).
-    HOST: Interface to bind (default ``0.0.0.0``).
+    HOST: Interface to bind (default ``127.0.0.1``; Compose sets ``0.0.0.0``
+        explicitly because it binds inside the bridge network -- review F16).
 
     Every other environment variable is role-specific -- see the matching
     ``deploy.asgi.<role>`` module's docstring.
@@ -41,7 +42,7 @@ def main() -> int:
         return 2
 
     port = int(os.environ.get("PORT", "8000"))
-    host = os.environ.get("HOST", "0.0.0.0")
+    host = os.environ.get("HOST", "127.0.0.1")
 
     tls_enabled = os.environ.get("TLS_ENABLED", "").lower() in {"1", "true", "yes"}
     ssl_certfile = os.environ.get("SSL_CERTFILE")
