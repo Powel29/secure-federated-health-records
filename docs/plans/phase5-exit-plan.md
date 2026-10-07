@@ -8,13 +8,37 @@
 > demonstrated **from a clean clone on a machine that is not the author's**,
 > not when it feels done.
 
+## Status (updated 2026-10-08)
+
+**Done** (on branches, awaiting owner review; nothing merged or pushed):
+
+| Item | Branch / commit | Owner to review |
+|---|---|---|
+| bench README D4 scope note | `phase5` `49a3a64` | Nandini |
+| `tests/api` `test_setup` emergency-wrapping fixture bug | `proposal/phase5-fixes` `d2303d1` | Avaneeth |
+| F22 durable one-time ids (assertions, requests, transition events) + facility wiring → **C8 now holds** | `proposal/phase5-fixes` `638c2c6` | Avaneeth (storage, api), Ojas (deploy), Powel (breakglass, lifecycle) |
+| F12 lock on `ConsumedEventIds` + compare-and-set primitive (handler wiring pending F11) | `proposal/phase5-fixes` `638c2c6` | Avaneeth, Powel |
+| F16 services bind to loopback; Compose ports on `127.0.0.1` only | `proposal/phase5-fixes` `1c51636` | Ojas |
+| F39 capture only on loopback / Docker bridge | `phase5-task5` `d127f0b` | Ojas |
+
+**Pending decisions:** D1, D2, D3, D4, D5, D6, D7, D8, CS, plus two new
+pending items:
+
+- **F14 interim:** which addresses count as trusted authoring callers. An
+  address allowlist breaks host-run scripts under Compose, so this is part of
+  D5.
+- **F40:** the capture path. Either move captures to `bench/captures/` or
+  amend ARCHITECTURE §7.
+
+Everything else in Part B waits on one of these.
+
 ## Where things stand
 
 | # | Exit criterion | Today |
 |---|---|---|
-| E1 | The full negative security suite in `tests/security/` passes | ❌ 4/11 claims hold; 7 strict-xfail against review findings |
+| E1 | The full negative security suite in `tests/security/` passes | ❌ 5/11 claims hold (C8 added 2026-10-08 on `proposal/phase5-fixes`); 6 strict-xfail against review findings |
 | E2 | The benchmark harness produces every metric in PROJECT.md D4 | ⚠️ All 7 metrics are coded; the committed numbers are stale |
-| E3 | Edge cases (clock skew, partial shares, replayed transition events) handled and tested | ⚠️ Partial shares done; clock skew open; replay lost on restart |
+| E3 | Edge cases (clock skew, partial shares, replayed transition events) handled and tested | ⚠️ Partial shares done; replayed transition events done (durable + locked); clock skew pending decision CS |
 | E4 | PyShark analysers run on both capture profiles and all four §4A claims pass | ❌ Analyser built, never run on real captures; claim 1 blocked on D6 |
 
 ---
@@ -26,17 +50,19 @@
 Nothing in E1, E3 or E4 can close until these are made. The recommendations
 are the review's unless noted.
 
-| ID | Decision | Recommended | Blocks | Note |
-|---|---|---|---|---|
-| **D1** | Who checks the Emergency Assertion before share 3 is released | (a) the audit service validates it itself | E1 C3 | |
-| **D2** | Share 2 is discarded, so break-glass is effectively 2-of-2 | (a) deposit with the home authority, or (b) amend the paper to "2-of-2 + reserved" | E1 C3 wording | (b) is honest and cheap |
-| **D3** | What expiry/revocation "forced rotation" rotates | (b) emergency path only: new emergency key, new shares, re-key search | E1 C4, C1 Postgres path | |
-| **D4** | Trusted source of patient public keys | (a) the home facility CA issues patient certs | F10 (C1 on Postgres), F13 | |
-| **D5** | Service-to-service authentication | (b) loopback/internal network now, then (a) signed `RequestEnvelope` | E1 **C9 needs D5-a** (D5-b gives no caller identity), C10 proper fix | If only D5-b fits, the team must decide whether to narrow C9; that is a claim change and needs an ADR |
-| **D6** | §4A property 1 vs. the current wire design | (a) client-side crypto (L, three owners), or (b) narrow property 1 to TLS and say so in PROJECT §4A and the paper | **E4 claim 1** | Fixes the analyser's `--claim1-scope` default |
-| **D7** | Expiry after a REVOKED → break-glass record | (a) add `EXPIRED → REVOKED`, session remembers `prior_state` | E1 C6 | |
-| **D8** | Who signs the break-glass `TransitionEvent` | (a) the custodian signs with the clinician key; the facility verifies | E1 **C7 needs D8-a** | |
-| **CS** | Clock-skew check on assertions (`issued_at > now + MAX_CLOCK_SKEW`) | Implement with a ~2-minute tolerance | **E3** | Powel's call (`breakglass` owner); the alternative is "out of scope", written down with a reason |
+| ID | Decision | Recommended | Blocks | Note | Status |
+|---|---|---|---|---|---|
+| **D1** | Who checks the Emergency Assertion before share 3 is released | (a) the audit service validates it itself | E1 C3 | | ⏳ Pending |
+| **D2** | Share 2 is discarded, so break-glass is effectively 2-of-2 | (a) deposit with the home authority, or (b) amend the paper to "2-of-2 + reserved" | E1 C3 wording | (b) is honest and cheap | ⏳ Pending |
+| **D3** | What expiry/revocation "forced rotation" rotates | (b) emergency path only: new emergency key, new shares, re-key search | E1 C4, C1 Postgres path | | ⏳ Pending |
+| **D4** | Trusted source of patient public keys | (a) the home facility CA issues patient certs | F10 (C1 on Postgres), F13 | | ⏳ Pending |
+| **D5** | Service-to-service authentication | (b) loopback/internal network now, then (a) signed `RequestEnvelope` | E1 **C9 needs D5-a** (D5-b gives no caller identity), C10 proper fix | If only D5-b fits, the team must decide whether to narrow C9; that is a claim change and needs an ADR | ⏳ Pending |
+| **D6** | §4A property 1 vs. the current wire design | (a) client-side crypto (L, three owners), or (b) narrow property 1 to TLS and say so in PROJECT §4A and the paper | **E4 claim 1** | Fixes the analyser's `--claim1-scope` default | ⏳ Pending |
+| **D7** | Expiry after a REVOKED → break-glass record | (a) add `EXPIRED → REVOKED`, session remembers `prior_state` | E1 C6 | | ⏳ Pending |
+| **D8** | Who signs the break-glass `TransitionEvent` | (a) the custodian signs with the clinician key; the facility verifies | E1 **C7 needs D8-a** | | ⏳ Pending |
+| **CS** | Clock-skew check on assertions (`issued_at > now + MAX_CLOCK_SKEW`) | Implement with a ~2-minute tolerance | **E3** | Powel's call (`breakglass` owner); the alternative is "out of scope", written down with a reason | ⏳ Pending |
+| **F14-i** | Trusted authoring callers for `/attribute-keys/author` (interim) | Ojas decides the deployment trust boundary, then the allowlist ships with F16 | E1 C10 | An address allowlist breaks host-run `run_scenario` / `seed_data` under Compose (they appear from the bridge gateway) | ⏳ Pending |
+| **F40** | Capture path | Move to `bench/captures/` or amend ARCHITECTURE §7 to `wire/captures/` | E4 hygiene | | ⏳ Pending |
 
 ### A2. The evidence machine (one, ideally not the author's)
 
@@ -62,8 +88,8 @@ clean-clone gate check runs.
 | Confirm the P5-5 handover; update the WORKFLOW owner | Nandini → Powel | P5-5 is listed as hers |
 | Review `phase5-task1` (P5-1) | Ojas | P5-1 is his task, and it tests Powel's controls |
 | Ratify ADR-0045 (P5-5 checks) and ADR-0046 (P5-1 evidence rules) | all four | Both are Proposed |
-| Fix the `test_setup` fixture that wraps the root secret as "emergency" | Avaneeth | `tests/api/conftest.py` |
-| Merge order | — | `phase5` → `proposal/scenario-canaries` → `phase5-task5` → `phase5-task1` → `main` |
+| ✅ Fixed the `test_setup` fixture that wrapped the root secret as "emergency" (`proposal/phase5-fixes`); Avaneeth to review | Avaneeth | `tests/api/conftest.py` |
+| Merge order | — | `phase5` → `proposal/scenario-canaries` → `phase5-task5` → `phase5-task1` → `proposal/phase5-fixes` → `main` |
 
 ---
 
@@ -78,13 +104,13 @@ under its mutation, C2/C5 included.
 
 | Claim | Fix | Owner(s) | Needs | Size | Test that flips |
 |---|---|---|---|---|---|
-| C3 | F2: the audit service validates the assertion, binds share to patient, one-time `request_id`; F4: no share overwrite | Ojas, Avaneeth | D1 (+ D2 wording) | M | `test_c3_audit_service_releases_no_share_without_a_valid_assertion` |
-| C4 | F9: expiry replaces the emergency wrapping and shares; search re-keyed | Powel, Avaneeth, Nandini, Ojas | D3 | L | `test_c4_pre_expiry_shares_do_not_restore_search`; also update `tests/api/test_breakglass.py::…reopens_after_the_timebox_expired`, which asserts today's behaviour |
-| C6 | F11 step 1: `_apply_and_persist` through `LifecycleStateMachine` for revoke, break-glass and expiry; F12 compare-and-set | Avaneeth, Powel | D7 | M | `test_c6_api_refuses_revocation_of_an_emergency_open_record` |
-| C7 | F11 step 2 / D8-a: pre-signed event from the custodian; remove `lifecycle_signing_key_pem` from the API | Avaneeth, Powel, Ojas | D8 | M | `test_c7_breakglass_event_verifies_against_the_clinicians_certificate` |
-| C8 | F22: `consumed_ids` table + `PostgresConsumedIds`, used for assertions and transition events | Powel, Avaneeth | — | M | `test_c8_replayed_assertion_rejected_after_facility_restart` (the restart test should also get a Postgres variant) |
-| C9 | F34: caller ↔ patient check before any repo call; denial logged | Avaneeth | **D5-a** | M | `test_c9_bola_…_denied_before_crypto_or_db` |
-| C10 | F14: interim allowlist of authoring callers (ships with F16), then a signed envelope under D5-a | Ojas | D5 (interim needs nothing) | S→M | `test_c10_attribute_key_not_released_without_a_valid_credential` |
+| C3 ⏳ | F2: the audit service validates the assertion, binds share to patient, one-time `request_id`; F4: no share overwrite | Ojas, Avaneeth | D1 (+ D2 wording) | M | `test_c3_audit_service_releases_no_share_without_a_valid_assertion` |
+| C4 ⏳ | F9: expiry replaces the emergency wrapping and shares; search re-keyed | Powel, Avaneeth, Nandini, Ojas | D3 | L | `test_c4_pre_expiry_shares_do_not_restore_search`; also update `tests/api/test_breakglass.py::…reopens_after_the_timebox_expired`, which asserts today's behaviour |
+| C6 ⏳ | F11 step 1: `_apply_and_persist` through `LifecycleStateMachine` for revoke, break-glass and expiry; F12 compare-and-set (**primitive + lock done**; wiring is part of F11) | Avaneeth, Powel | D7 | M | `test_c6_api_refuses_revocation_of_an_emergency_open_record` |
+| C7 ⏳ | F11 step 2 / D8-a: pre-signed event from the custodian; remove `lifecycle_signing_key_pem` from the API | Avaneeth, Powel, Ojas | D8 | M | `test_c7_breakglass_event_verifies_against_the_clinicians_certificate` |
+| C8 ✅ | F22: `consumed_ids` table + repository-backed stores for assertions, requests and transition events. **Done on `proposal/phase5-fixes`; marker removed; C8 holds.** Still to add: a Postgres variant of the restart test | Powel, Avaneeth | — | M | `test_c8_replayed_assertion_rejected_after_facility_restart` |
+| C9 ⏳ | F34: caller ↔ patient check before any repo call; denial logged | Avaneeth | **D5-a** | M | `test_c9_bola_…_denied_before_crypto_or_db` |
+| C10 ⏳ | F14: interim allowlist of authoring callers (ships with F16 — F16 is **done**), then a signed envelope under D5-a. Interim is now pending a trust-boundary decision (F14-i) | Ojas | D5, F14-i | S→M | `test_c10_attribute_key_not_released_without_a_valid_credential` |
 | C1 | F10: revoke works on Postgres, authz from a verified identity, goes through the state machine, audited. **Add a Postgres variant** of `test_c1_…` (today only the in-memory path is tested) | Avaneeth, Powel | D4, D3 | L | new `test_c1_…_postgres` |
 | C2, C5 | No fix expected. **Observe them running**: run the suite and `python -m tests.security.mutations C2 C5` with Postgres, then replace the "skipped" rows in `p5-1-evidence.md` | Ojas (or whoever has the evidence machine) | A2 | S | — |
 
@@ -123,8 +149,8 @@ negative test, at module and system level, all passing.
 | Case | State | Work | Owner | Size |
 |---|---|---|---|---|
 | Partial shares | ✅ Done: missing, empty, truncated and garbage shares, `tests/breakglass/test_gate.py` | — | — | — |
-| Clock skew | ❌ Open (WORKFLOW P5-4 note) | Decide CS. If implemented: add `MAX_CLOCK_SKEW` and an `AssertionNotYetValidError` check in `validate_emergency_assertion`, a module negative test, and a system test through `/records/{id}/breakglass` expecting 400 and a logged denial. Update ARCHITECTURE §8's validation list and write the ADR. Also consider capping assertion lifetime (review F6) | Powel | S |
-| Replayed transition events | ⚠️ Rejected in-process (`test_sec_replayed_event_id_is_rejected`, `test_sec_replayed_revocation_event_rejected`), but the consumed ids are in memory and not locked | F22 (persisted `consumed_ids` covering transition events too) + F12 (lock / compare-and-set). Add a restart test for a replayed transition event | Powel, Avaneeth | M (shared with E1 C8) |
+| Clock skew | ⏳ Pending decision CS (WORKFLOW P5-4 note) | Decide CS. If implemented: add `MAX_CLOCK_SKEW` and an `AssertionNotYetValidError` check in `validate_emergency_assertion`, a module negative test, and a system test through `/records/{id}/breakglass` expecting 400 and a logged denial. Update ARCHITECTURE §8's validation list and write the ADR. Also consider capping assertion lifetime (review F6) | Powel | S |
+| Replayed transition events | ✅ Done on `proposal/phase5-fixes`: `ConsumedEventIds` is locked (F12) and takes a durable backend (F22); the deployed facility's expiry state machine uses the store. Tests: a concurrent-consume test (exactly one succeeds) and a restart-on-same-backend test. No API accepts a client-supplied transition event, so module level is where replay applies | — | — | — |
 
 ### E4: analysers pass on both capture profiles
 
@@ -144,7 +170,7 @@ regenerated `p53_search_leakage.json` are committed.
    `lifecycle_signing_key_pem`; F13 / D4 removes the patient private key).
    Under D6-b they would still cross TLS, and the review treats that as a fix,
    not a scope note.
-3. **Capture hygiene** (Ojas, S): F39 (loopback-only interface allowlist), F40
+3. **Capture hygiene** (Ojas, S): F39 (loopback-only interface allowlist) ✅ **done** on `phase5-task5`; F40 ⏳ **pending**
    (capture path: `bench/captures/` vs. `wire/captures/`, so amend
    ARCHITECTURE §7 or move).
 4. **Merge** `proposal/scenario-canaries` and `phase5-task5` (A3).
