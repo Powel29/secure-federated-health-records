@@ -59,3 +59,6 @@ gemini.md
 # P4-6 local TLS capture certificates
 wire/certs/
 wire/captures/
+
+#graphify
+graphify-out/
