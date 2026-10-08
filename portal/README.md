@@ -73,9 +73,16 @@ Log in as `auditor` and paste the correlation id into *Trace*.
 ## Run against a separately deployed federation
 
 Path A (`python -m deploy.run_local`) and Path B (`docker compose -f
-deploy/docker-compose.yml up`) both start the custodian on port 8030. Seed with
-the demo driver, deposit into the custodian with `deploy.seed_portal`, then
-point the portal at the services through environment variables:
+deploy/docker-compose.yml up`) both start the custodian on port 8030 and seed
+it. Then one command creates the portal schema, the logins and the patient
+directory, and serves the portals:
+
+```bash
+DATABASE_URL=postgresql://postgres@127.0.0.1:55433/ehr python -m deploy.seed_portal
+```
+
+(Path B's store is on 55433; for Path A use its own `DATABASE_URL`.) The
+portal finds the services through these environment variables:
 
 | variable | default |
 |---|---|

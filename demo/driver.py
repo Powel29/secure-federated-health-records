@@ -953,15 +953,9 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             print(f"Warning: could not read {args.config}: {exc}", file=sys.stderr)
 
+    # The published localhost ports, as deploy.run_scenario does: the config's
+    # own endpoints are Compose-internal hostnames under Path B.
     endpoints = ScenarioEndpoints()
-    if config_data:
-        endpoints = ScenarioEndpoints(
-            authority_med=config_data["authorities"]["authority-med"]["endpoint"],
-            authority_net=config_data["authorities"]["authority-net"]["endpoint"],
-            audit=config_data["audit"]["endpoint"],
-            facility_a="http://127.0.0.1:8001",
-            facility_b="http://127.0.0.1:8002",
-        )
 
     if args.seed_only:
         print("Seeding synthetic data into running federation...")

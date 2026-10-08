@@ -20,6 +20,8 @@ COPY src/ ./src/
 RUN pip install --no-cache-dir -e .
 
 COPY deploy/ ./deploy/
+# The synthetic dataset the bootstrap step seeds (P4-5).
+COPY demo/ ./demo/
 
 ENV PYTHONUNBUFFERED=1
 

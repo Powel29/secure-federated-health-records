@@ -15,8 +15,10 @@ and the traffic-capture module need.
 Both paths run the same bootstrap sequence (`deploy/bootstrap.py`): apply
 migrations, generate the federation PKI (root anchor + facility CAs), start
 the authorities and register their certificates with the root, start the
-audit service, start the facility nodes, then verify the audit chain from
-genesis before declaring success. **If that last check fails, nothing else
+audit service, start the facility nodes, record the authorities, facilities
+and synthetic patient ids in the store, seed the synthetic dataset (three
+records) and deposit its key material with the custodian, then verify the
+audit chain from genesis before declaring success. **If that last check fails, nothing else
 is considered up** (ARCHITECTURE.md §7).
 
 ## Path A — local processes (no Docker)
@@ -36,6 +38,8 @@ DATABASE_URL="postgresql://postgres@localhost:55432/ehr_local" python -m deploy.
 
 This prints each bootstrap step as it happens, then the six services' URLs
 (the custodian on 8030 last). Press Ctrl+C to stop everything together.
+Each run resets the database's `public` schema first: every service keeps
+its keys in memory, so a previous run's data is unreadable anyway.
 
 ## Path B — Docker Compose
 
@@ -47,17 +51,38 @@ docker compose -f deploy/docker-compose.yml up --build
 
 Compose brings up Postgres (`store`), the six application services, and a
 one-shot `bootstrap` container that runs once every other service reports
-healthy. Watch its logs for the same step-by-step output as Path A:
+healthy. The store lives in tmpfs, so it starts empty whenever its container
+starts (same reason as Path A's reset); re-running `up` on a running stack
+leaves it alone. Watch the bootstrap logs for the same step-by-step output as
+Path A:
 
 ```bash
 docker compose -f deploy/docker-compose.yml logs -f bootstrap
 ```
 
-Tear down (including the named Postgres volume):
+Look at the database (published on host port 55433):
 
 ```bash
-docker compose -f deploy/docker-compose.yml down -v
+docker compose -f deploy/docker-compose.yml exec store psql -U postgres -d ehr
 ```
+
+Run the three portals against it (http://127.0.0.1:8000/, same logins as the
+portal demo):
+
+```bash
+DATABASE_URL=postgresql://postgres@127.0.0.1:55433/ehr python -m deploy.seed_portal
+```
+
+Tear down:
+
+```bash
+docker compose -f deploy/docker-compose.yml down
+```
+
+`SEED_DATA=false` (either path) skips the seeding, for drivers that seed the
+same dataset themselves (`python -m demo.driver`, `python -m
+deploy.run_scenario`); the authorities, facilities and patient ids are still
+registered.
 
 ## What gets written where
 
@@ -77,9 +102,11 @@ encryption (`crypto_core`/`records`/`pre`), not from transport security. A
 TLS variant (`capture-tls`, defence-in-depth) is P4-6's addition, not this
 one's.
 
-## What this does not do
+## Known limitation
 
-Seeding synthetic patient data and running the demo scenario is P4-5's job
-(the demo driver), not the bootstrap sequence's — bootstrap only proves the
-federation's trust and audit machinery are correctly wired, with nothing
-patient-specific in it yet.
+Facility nodes keep compiled policies in process memory
+(`api.repository.PostgresStorageRepository`), so a *routine* read at a
+facility other than the one that ingested the record returns 500 here
+instead of a policy decision. Break-glass is unaffected. `deploy.run_scenario`
+and the demo driver's out-of-network refusal step hit this; their in-process
+runs (`--standalone`, `tests/deploy`) share one process and do not.

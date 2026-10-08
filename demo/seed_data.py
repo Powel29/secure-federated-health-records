@@ -26,7 +26,7 @@ from crypto_core import (
 )
 from identity.certificates import issue_clinician_certificate
 from pre.elgamal import generate_keypair as generate_pre_keypair
-from storage.repositories import insert_patient
+from storage.repositories import get_patient, insert_patient
 
 from deploy.run_scenario import ScenarioEndpoints
 
@@ -405,11 +405,13 @@ def seed_synthetic_data(
         conn = psycopg.connect(database_url)
         try:
             for patient in dataset.patients:
-                insert_patient(
-                    conn,
-                    patient.patient_id,
-                    patient.owner_authority,
-                )
+                # Path A/B bootstrap already registers these (populate_registry).
+                if get_patient(conn, patient.patient_id) is None:
+                    insert_patient(
+                        conn,
+                        patient.patient_id,
+                        patient.owner_authority,
+                    )
             conn.commit()
         finally:
             conn.close()

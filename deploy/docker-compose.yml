@@ -4,8 +4,14 @@
 # TLS is enabled with TLS_ENABLED=true for the P4-6 defense-in-depth mode.
 #
 # The `custodian` service (ADR-0043) is the portals' key agent; the Django
-# portals themselves run outside Compose (see portal/README.md) and are pointed
-# at the published ports 8001/8002/8010/8011/8020/8030.
+# portals themselves run outside Compose (`python -m deploy.seed_portal`, see
+# portal/README.md) and are pointed at the published ports
+# 8001/8002/8010/8011/8020/8030 and the store on 55433.
+#
+# Every service keeps its keys in memory, so the federation is fresh whenever
+# the stack starts (ADR-0039): the store lives in tmpfs and is empty on each
+# start, and `bootstrap` seeds the synthetic dataset into it (SEED_DATA=false
+# skips that). Re-running `up` on a running stack leaves it alone.
 
 services:
   store:
@@ -18,8 +24,10 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
-    volumes:
-      - store-data:/var/lib/postgresql/data
+    ports:
+      - "55433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
     networks: [federation]
 
   migrate:
@@ -222,11 +230,13 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://postgres@store:5432/ehr
-      AUDIT_SERVICE_URL: "${AUDIT_SERVICE_URL:-https://audit:8020}"
-      AUTHORITY_MED_URL: "${AUTHORITY_MED_URL:-https://authority-med:8010}"
-      AUTHORITY_NET_URL: "${AUTHORITY_NET_URL:-https://authority-net:8011}"
-      FACILITY_A_URL: "${FACILITY_A_URL:-https://facility-a:8001}"
-      FACILITY_B_URL: "${FACILITY_B_URL:-https://facility-b:8002}"
+      AUDIT_SERVICE_URL: "${AUDIT_SERVICE_URL:-http://audit:8020}"
+      AUTHORITY_MED_URL: "${AUTHORITY_MED_URL:-http://authority-med:8010}"
+      AUTHORITY_NET_URL: "${AUTHORITY_NET_URL:-http://authority-net:8011}"
+      FACILITY_A_URL: "${FACILITY_A_URL:-http://facility-a:8001}"
+      FACILITY_B_URL: "${FACILITY_B_URL:-http://facility-b:8002}"
+      CUSTODIAN_URL: "${CUSTODIAN_URL:-http://custodian:8030}"
+      SEED_DATA: "${SEED_DATA:-true}"
       TLS_VERIFY: "${TLS_VERIFY:-true}"
     volumes:
       - ./pki:/pki
@@ -234,6 +244,3 @@ services:
 
 networks:
   federation: {}
-
-volumes:
-  store-data: {}

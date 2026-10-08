@@ -55,6 +55,18 @@ def apply_migrations(conn: psycopg.Connection) -> list[str]:
     return applied
 
 
+def reset_schema(conn: psycopg.Connection) -> None:
+    """Drop every table in the ``public`` schema (fresh-federation runs only).
+
+    Every deployment run bootstraps a fresh federation with fresh keys
+    (ADR-0039), so a store left over from a previous run would fail
+    audit-chain verification at boot.
+    """
+    with conn.cursor() as cur:
+        cur.execute("DROP SCHEMA IF EXISTS public CASCADE")
+        cur.execute("CREATE SCHEMA public")
+
+
 def main() -> int:
     """Apply migrations against ``DATABASE_URL`` and report what ran."""
     with connect() as conn:
