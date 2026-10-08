@@ -37,6 +37,7 @@ from policy import (
 from policy.exceptions import PolicyDeniedError
 
 
+@pytest.mark.claim("C10", level="module")
 def test_sec_revoked_credential_fails_validation_and_key_release() -> None:
     """Security property: a revoked credential fails validation and yields no key."""
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -72,6 +73,7 @@ def test_sec_revoked_credential_fails_validation_and_key_release() -> None:
         authority.get_attribute_key(cred)
 
 
+@pytest.mark.claim("C10", level="module")
 def test_sec_expired_credential_fails_validation_and_key_release() -> None:
     """Security property: an expired credential fails validation and yields no key."""
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -87,6 +89,13 @@ def test_sec_expired_credential_fails_validation_and_key_release() -> None:
         valid_from,
         valid_until,
     )
+
+    # Positive control: inside its validity window the same credential
+    # verifies and releases a key, so the refusal below is the expiry check
+    # and not a broken fixture.
+    inside_window = valid_from + datetime.timedelta(days=1)
+    verify_credential(cred, authority.public_key, at=inside_window)
+    assert len(authority.get_attribute_key(cred, at=inside_window)) == 32
 
     # Negative: verify_credential raises CredentialExpiredError at check time
     with pytest.raises(CredentialExpiredError):
@@ -189,6 +198,7 @@ def test_sec_revoked_attribute_credential_denies_policy_decryption() -> None:
         reconstruct_root_secret(compiled, {})
 
 
+@pytest.mark.claim("C11", level="module")
 def test_sec_revoked_owner_credential_denies_patient_self_access() -> None:
     """Security property: patient self-access fails if owner credential is revoked."""
     now = datetime.datetime.now(datetime.timezone.utc)

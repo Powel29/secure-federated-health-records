@@ -349,6 +349,7 @@ def test_patient_reads_own_record_via_owner_leaf(federation):
     assert body["attributes_presented"] == [f"authority-net:owner:{PATIENT}"]
 
 
+@pytest.mark.claim("C11", level="system")
 def test_patient_without_owner_credential_is_refused(federation):
     """ADR-0016 / P5-1: a login alone, with no owner attribute, decrypts nothing."""
     client = _custodian(federation)

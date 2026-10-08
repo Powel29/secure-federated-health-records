@@ -526,6 +526,7 @@ positive control: `test_share_released_only_after_successful_commit`.)*
 *What:* The eleven "attack fails" tests — each proves a security claim by showing the system refuses. These are the evidence for the paper. Includes the **patient-self-access fail-closed test** (ADR-0016): a logged-in patient is refused decryption when the `owner:<patient_id>` attribute is absent, proving portal login alone never releases a DEK.
 *Needs first:* P4-4.
 *Done when:* all eleven negative tests pass and each maps to a specific paper claim.
+*Progress (2026-10-07):* implemented by Powel; Ojas (owner) to review (ADR-0046). All eleven claims are tagged (`@pytest.mark.claim`) with module- and system-level tests; `python -m tests.security.claims --table` prints the claim table and `python -m tests.security.mutations` shows each holding test going red with its control off. **Today: 5 hold (C1, C2, C5, C8, C11), 6 fail at system level** as strict xfails against review findings — C3 (F2/D1), C4 (F9/D3), C6 (F11/D7), C7 (D8), C9 (F34/D5), C10 (F14). C8 flipped 2026-10-08 with the F22 fix (durable consumed ids). P5-1 closes as those fixes land and the markers come off. Evidence and open items: `docs/review/p5-1-evidence.md` (C2/C5 mutation rows still need a Postgres run).
 
 **P5-2 · Benchmark harness** *(was P5-2)* — Nandini — 12h
 *What:* Measure and plot performance — timings, ciphertext expansion — reproducibly from one command.
@@ -541,11 +542,13 @@ positive control: `test_share_released_only_after_successful_commit`.)*
 *What:* Handle the awkward cases — clock skew, missing shares, malformed input — and test them.
 *Needs first:* P4-4.
 *Done when:* each case is handled and tested.
+*Open (2026-10-07):* missing and malformed shares are handled and tested (`tests/breakglass/test_gate.py::TestOpenEmergencyAccessEdgeCases`). **Clock skew is not.** `breakglass.validate_emergency_assertion` rejects an expired assertion but accepts one whose `issued_at` is in the future, so a fast clinician clock silently extends the assertion's effective lifetime. Proposed fix: reject `issued_at > now + MAX_CLOCK_SKEW` (about 2 minutes) with a negative test. That adds a check ARCHITECTURE.md §8 does not specify, so it needs an ADR, and Powel (`breakglass` owner) has deferred the decision. P5-4 — and the Phase 5 gate — stays open until it is either implemented or recorded as out of scope with a reason.
 
 **P5-5 · Traffic analysis (PyShark)** *(was P5-5)* — Nandini — 13h
 *What:* Code that reads the captured traffic and automatically checks the wire-level claims — no plaintext leaks, no share released before its log entry, break-glass visible only as metadata. This is the required course module, delivered as code not screenshots.
 *Needs first:* P4-6, P4-4.
 *Done when:* all four wire-level checks run and pass automatically.
+*Progress (2026-10-07):* implemented by Powel (handover from Nandini to be confirmed), ADR-0045. `wire/checks.py` asserts all four claims over reassembled captures against the scenario's canary manifest; `python -m wire.analyze_traffic` exits non-zero on any failure. Negative tests in `tests/wire/test_checks.py` run in CI. **Not yet run on real captures** (needs Wireshark/Npcap, Postgres and the federation up). Claim 1 fails by default until decision D6 (review F18) is made; `--claim1-scope tls` is the D6-b reading. Depends on the `deploy/run_scenario.py --canaries-out` proposal (Avaneeth).
 
 ---
 

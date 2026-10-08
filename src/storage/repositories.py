@@ -10,6 +10,7 @@ contract use plain arguments and return ``dict`` rows.
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
 import psycopg
 from contracts import AuditEntry, DEKWrapping, Facility, Record, TransitionEvent
@@ -291,6 +292,52 @@ def get_lifecycle_state(
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute("SELECT * FROM lifecycle_state WHERE record_id = %s", (record_id,))
         return cur.fetchone()
+
+
+def transition_lifecycle_state(
+    conn: psycopg.Connection,
+    record_id: str,
+    expected: LifecycleState,
+    new: LifecycleState,
+    last_event_id: str | None = None,
+) -> bool:
+    """Compare-and-set a record's state (review F12).
+
+    Updates only if the stored state is still ``expected``, so two concurrent
+    transitions from the same state cannot both succeed. Returns ``True`` if
+    this call made the change, ``False`` if the state had moved on (the caller
+    must treat that as a conflict, never as success).
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE lifecycle_state SET state = %s, last_event_id = %s,"
+            " updated_at = now() WHERE record_id = %s AND state = %s",
+            (new.value, last_event_id, record_id, expected.value),
+        )
+        return cur.rowcount == 1
+
+
+# --- one-time ids (review F22) ------------------------------------------------
+
+
+def consume_id(conn: psycopg.Connection, kind: str, item_id: UUID) -> bool:
+    """Record a one-time id; ``True`` on first use, ``False`` on a replay."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO consumed_ids (kind, id) VALUES (%s, %s)"
+            " ON CONFLICT (kind, id) DO NOTHING",
+            (kind, item_id),
+        )
+        return cur.rowcount == 1
+
+
+def has_consumed_id(conn: psycopg.Connection, kind: str, item_id: UUID) -> bool:
+    """Whether a one-time id has been consumed (diagnostics and tests only)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM consumed_ids WHERE kind = %s AND id = %s", (kind, item_id)
+        )
+        return cur.fetchone() is not None
 
 
 def insert_search_term(

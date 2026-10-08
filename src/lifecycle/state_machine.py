@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import datetime
 import secrets
+import threading
+from typing import Protocol
 from uuid import UUID, uuid4
 
 from contracts import TransitionEvent
@@ -229,13 +231,26 @@ def verify_transition_event(
     validate_transition(event.from_state, event.to_state, event.reason_code)
 
 
+class ConsumedIdBackend(Protocol):
+    """Durable one-time-id storage (review F22).
+
+    ``consume_once`` returns ``True`` on first use and ``False`` on a replay.
+    The stores below turn ``False`` into their replay error, so the
+    fail-closed contract stays in one place.
+    """
+
+    def consume_once(self, kind: str, item_id: UUID) -> bool: ...
+
+    def has_consumed(self, kind: str, item_id: UUID) -> bool: ...
+
+
 class ConsumedEventIds:
-    """In-memory one-time-id store for ``TransitionEvent.event_id`` values.
+    """One-time-id store for ``TransitionEvent.event_id`` values.
 
     The ``TransitionEvent`` contract declares that ``event_id`` is one-time and
-    that a consumed-id store rejects reuse. This class is P3-1's minimal
-    implementation of that store; a persisted version rides with the audit
-    chain in P3-3 and later swaps in via the same interface.
+    that a consumed-id store rejects reuse. In memory by default; pass a
+    :class:`ConsumedIdBackend` (the facility's storage repository) to make the
+    consumed set survive a restart (review F22).
 
     Security property:
         :meth:`consume` is idempotent-fail-closed: the *first* consume of a
@@ -244,18 +259,32 @@ class ConsumedEventIds:
         that would push the fail-open decision onto the caller.
     """
 
-    def __init__(self) -> None:
+    _KIND = "transition_event"
+
+    def __init__(self, backend: ConsumedIdBackend | None = None) -> None:
+        # The lock mirrors breakglass.replay (review F12): two threads must not
+        # both pass the membership check for the same id.
+        self._lock = threading.Lock()
         self._seen: set[UUID] = set()
+        self._backend = backend
 
     def consume(self, event_id: UUID) -> None:
         """Mark ``event_id`` consumed; raise if it was already consumed."""
-        if event_id in self._seen:
-            raise ReplayedEventError(f"event_id {event_id} already consumed")
-        self._seen.add(event_id)
+        with self._lock:
+            if self._backend is not None:
+                first_use = self._backend.consume_once(self._KIND, event_id)
+            else:
+                first_use = event_id not in self._seen
+                self._seen.add(event_id)
+            if not first_use:
+                raise ReplayedEventError(f"event_id {event_id} already consumed")
 
     def has_seen(self, event_id: UUID) -> bool:
         """Check without consuming -- for tests and diagnostics only."""
-        return event_id in self._seen
+        with self._lock:
+            if self._backend is not None:
+                return self._backend.has_consumed(self._KIND, event_id)
+            return event_id in self._seen
 
 
 class LifecycleStateMachine:

@@ -114,6 +114,7 @@ def test_sec_tampered_leaf_ciphertext_fails_closed() -> None:
         reconstruct_root_secret(tampered, holder)
 
 
+@pytest.mark.claim("C11", level="module")
 def test_sec_patient_without_owner_attribute_cannot_unwrap() -> None:
     """ADR-0016 fail-closed: a logged-in patient without the owner key is denied.
 
@@ -133,6 +134,11 @@ def test_sec_patient_without_owner_attribute_cannot_unwrap() -> None:
     wrapping = wrap_dek(
         dek, record_id="rec-1", wrapping_key=root_secret, wrapped_for="pol-1"
     )
+
+    # Positive control: the same patient holding the owner key does unwrap,
+    # so the refusal below is the missing key and not a broken fixture.
+    owner_only = {(NET, "owner", "patient-1"): keyring[(NET, "owner", "patient-1")]}
+    assert unwrap_dek_via_policy(compiled, owner_only, wrapping) == dek
 
     # "Logged in" but holds no attribute key at all.
     with pytest.raises(PolicyDeniedError):
