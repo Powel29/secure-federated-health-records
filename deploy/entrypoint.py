@@ -9,7 +9,8 @@ Environment:
     SERVICE_ROLE: One of ``"facility"``, ``"authority"``, ``"audit"``,
         ``"custodian"`` -- selects which ``deploy.asgi`` factory to run.
     PORT: TCP port to bind (default ``8000``).
-    HOST: Interface to bind (default ``0.0.0.0``).
+    HOST: Interface to bind (default ``127.0.0.1``; Compose sets ``0.0.0.0``
+        explicitly because it binds inside the bridge network -- review F16).
 
     Every other environment variable is role-specific -- see the matching
     ``deploy.asgi.<role>`` module's docstring.

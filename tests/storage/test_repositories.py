@@ -208,3 +208,30 @@ def test_find_record_ids_by_patient_returns_only_ids_for_that_patient(conn):
     # Every element is a bare record-id string; there is no attribute path
     # from the discovery result to ciphertext, nonce, or aad.
     assert all(isinstance(x, str) for x in ids)
+
+
+def test_lifecycle_compare_and_set_moves_only_from_the_expected_state(conn):
+    """F12: a transition succeeds only from the state the caller expected."""
+    _seed_refs(conn)
+    rid = _seed_record(conn)
+    repo.upsert_lifecycle_state(conn, rid, LifecycleState.GRANTED)
+
+    assert repo.transition_lifecycle_state(
+        conn, rid, LifecycleState.GRANTED, LifecycleState.EMERGENCY_OPEN
+    )
+    # A second transition from the now-stale GRANTED loses, and changes nothing.
+    assert not repo.transition_lifecycle_state(
+        conn, rid, LifecycleState.GRANTED, LifecycleState.REVOKED
+    )
+    assert repo.get_lifecycle_state(conn, rid)["state"] == "emergency_open"
+
+
+def test_consumed_id_is_first_use_once_then_replay(conn):
+    """F22: the durable one-time-id table reports a replay as such."""
+    item = uuid4()
+    assert not repo.has_consumed_id(conn, "assertion", item)
+    assert repo.consume_id(conn, "assertion", item)
+    assert not repo.consume_id(conn, "assertion", item)
+    assert repo.has_consumed_id(conn, "assertion", item)
+    # Kinds are separate namespaces.
+    assert repo.consume_id(conn, "transition_event", item)

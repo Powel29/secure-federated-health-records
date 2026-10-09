@@ -1,4 +1,4 @@
-# ADR-0045: Shared facility state and reproducible local deployment
+# ADR-0047: Shared facility state and reproducible local deployment
 
 - **Status:** Proposed
 - **Date:** 2026-10-09

@@ -25,19 +25,30 @@ from policy.engine import CompiledPolicy
 from psycopg.types.json import Jsonb
 from storage.policy_codec import decode_policy, encode_policy
 from storage.repositories import (
+    consume_id,
     find_records_by_search_term,
     get_chain_head,
     get_dek_wrapping,
     get_lifecycle_state,
     get_record,
     get_transition_event,
+    has_consumed_id,
     insert_audit_entry,
     insert_dek_wrapping,
     insert_record,
     insert_search_term,
     insert_transition_event,
+    transition_lifecycle_state,
     upsert_lifecycle_state,
 )
+
+
+class StateConflictError(Exception):
+    """A compare-and-set lost: the record's state was not what the caller expected.
+
+    Two concurrent transitions from the same state must not both succeed
+    (review F12). Callers map this to HTTP 409 and never treat it as success.
+    """
 
 
 class StorageRepository(Protocol):
@@ -142,6 +153,24 @@ class StorageRepository(Protocol):
         """
         ...
 
+    def transition_lifecycle_state(
+        self,
+        record_id: str,
+        expected: LifecycleState,
+        new: LifecycleState,
+        last_event_id: str | None = None,
+    ) -> None:
+        """Compare-and-set the state; raise :class:`StateConflictError` if it moved."""
+        ...
+
+    def consume_once(self, kind: str, item_id: UUID) -> bool:
+        """Record a one-time id; ``True`` on first use, ``False`` on replay (F22)."""
+        ...
+
+    def has_consumed(self, kind: str, item_id: UUID) -> bool:
+        """Whether a one-time id has been consumed (diagnostics and tests only)."""
+        ...
+
 
 class InMemoryStorageRepository:
     """Thread-safe, fully in-memory repository implementation."""
@@ -158,6 +187,7 @@ class InMemoryStorageRepository:
         self.compiled_policies: dict[str, CompiledPolicy] = {}
         self.consent_requests: dict[UUID, ConsentRequest] = {}
         self.consent_grants: dict[UUID, ConsentGrant] = {}
+        self.consumed_ids: set[tuple[str, UUID]] = set()
 
     def get_record(self, record_id: str) -> Record | None:
         with self._lock:
@@ -200,6 +230,32 @@ class InMemoryStorageRepository:
     ) -> None:
         with self._lock:
             self.lifecycle_states[record_id] = state
+
+    def transition_lifecycle_state(
+        self,
+        record_id: str,
+        expected: LifecycleState,
+        new: LifecycleState,
+        last_event_id: str | None = None,
+    ) -> None:
+        with self._lock:
+            current = self.lifecycle_states.get(record_id)
+            if current is not expected:
+                raise StateConflictError(
+                    f"record {record_id!r} is {current}, expected {expected}"
+                )
+            self.lifecycle_states[record_id] = new
+
+    def consume_once(self, kind: str, item_id: UUID) -> bool:
+        with self._lock:
+            if (kind, item_id) in self.consumed_ids:
+                return False
+            self.consumed_ids.add((kind, item_id))
+            return True
+
+    def has_consumed(self, kind: str, item_id: UUID) -> bool:
+        with self._lock:
+            return (kind, item_id) in self.consumed_ids
 
     def insert_transition_event(self, event: TransitionEvent) -> None:
         with self._lock:
@@ -323,6 +379,26 @@ class PostgresStorageRepository:
         last_event_id: str | None = None,
     ) -> None:
         upsert_lifecycle_state(self._conn, record_id, state, last_event_id)
+
+    def transition_lifecycle_state(
+        self,
+        record_id: str,
+        expected: LifecycleState,
+        new: LifecycleState,
+        last_event_id: str | None = None,
+    ) -> None:
+        if not transition_lifecycle_state(
+            self._conn, record_id, expected, new, last_event_id
+        ):
+            raise StateConflictError(
+                f"record {record_id!r} is no longer {expected}; transition refused"
+            )
+
+    def consume_once(self, kind: str, item_id: UUID) -> bool:
+        return consume_id(self._conn, kind, item_id)
+
+    def has_consumed(self, kind: str, item_id: UUID) -> bool:
+        return has_consumed_id(self._conn, kind, item_id)
 
     def insert_transition_event(self, event: TransitionEvent) -> None:
         insert_transition_event(self._conn, event)

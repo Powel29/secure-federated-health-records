@@ -99,6 +99,7 @@ def test_issuing_outside_owned_namespace_is_rejected(client: TestClient) -> None
     assert r.status_code == 403
 
 
+@pytest.mark.claim("C10", level="system")
 def test_revoked_credential_fails_verification_and_key_release(
     client: TestClient,
 ) -> None:
@@ -124,6 +125,7 @@ def test_revoked_credential_fails_verification_and_key_release(
     assert release.status_code == 403
 
 
+@pytest.mark.claim("C10", level="system")
 def test_expired_credential_release_fails_closed(client: TestClient) -> None:
     import datetime
 

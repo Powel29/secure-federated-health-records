@@ -347,6 +347,7 @@ class TestAssertionExpiry:
 class TestAssertionReplay:
     """Paper claim: a replayed assertion is rejected, not re-run."""
 
+    @pytest.mark.claim("C8", level="module")
     def test_replay_rejected(self, federation):
         store = ConsumedAssertionIds()
         assertion = _valid_assertion(federation)

@@ -133,6 +133,7 @@ class TestRevokedClinicianCannotReconstruct:
     new policy tree cannot reconstruct the new root secret — the policy
     engine fails closed."""
 
+    @pytest.mark.claim("C1", level="module")
     def test_sec_revoked_user_cannot_decrypt_after_rotation(self) -> None:
         fx = _revoked_fixture("pat-sec-801", b"post-revocation forward secrecy")
 
@@ -170,6 +171,7 @@ class TestOldDekCannotDecryptRotated:
     """Paper claim: a cached OLD DEK cannot decrypt the newly-encrypted
     ciphertext — because rotation minted a fresh DEK, not just a re-wrap."""
 
+    @pytest.mark.claim("C1", level="module")
     def test_sec_old_dek_cannot_decrypt_rotated_record_ciphertext(self) -> None:
         fx = _revoked_fixture("pat-sec-802", b"old DEK must not decrypt new ct")
 

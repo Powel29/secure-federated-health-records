@@ -172,15 +172,10 @@ def test_setup(federation_pki, attribute_materials):
     for _term, token in ingest_res.search_tokens.items():
         repo.insert_search_term(ingest_res.record.record_id, token)
 
-    # Wrap DEK for emergency as well
-    from records.service import wrap_dek
-
-    em_wrapping = wrap_dek(
-        dek=ingest_res.root_secret,  # in ingest, DEK is wrapped under root_secret
-        record_id="rec-001",
-        wrapping_key=em_key,
-        wrapped_for="emergency",
-    )
+    # The emergency wrapping ingest produced: the record's DEK under the
+    # emergency key. (Wrapping the policy root secret here instead would hand
+    # a break-glass clinician the wrong key.)
+    em_wrapping = ingest_res.emergency_dek_wrapping
     repo.insert_dek_wrapping(em_wrapping)
 
     app = create_hospital_app(

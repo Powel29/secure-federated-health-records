@@ -113,6 +113,7 @@ def run_scenario(
     *,
     emergency_duration_seconds: float = 3.0,
     verbose: bool = True,
+    canaries_out: Path | None = None,
 ) -> bool:
     """Execute the full cross-hospital break-glass scenario.
 
@@ -121,6 +122,10 @@ def run_scenario(
         config: Optional parsed federation.json config containing PKI certs.
         emergency_duration_seconds: Time-box window before auto-expiry.
         verbose: Print progress steps to stdout.
+        canaries_out: If set, write the secrets this run handled to this JSON
+            file so the P5-5 wire analyser can search the capture for them
+            (ADR-0045). Synthetic, throwaway values -- the file belongs under
+            the gitignored ``wire/captures/`` and must never be committed.
 
     Returns:
         True if all scenario steps succeed and all invariants hold.
@@ -508,10 +513,61 @@ def run_scenario(
             f"  * Head Seq: {h_seq}, Verified: {v_status}"
         )
 
+    if canaries_out is not None:
+        _write_canaries(
+            canaries_out,
+            record_id=record_id,
+            secrets={
+                "record_plaintext": ("phi", plaintext),
+                "dek": ("dek", recovered_dek),
+                "emergency_key": ("emergency_key", emergency_key),
+                "share1": ("share", share1[1]),
+                "share3": ("share", share3[1]),
+                "attr_key:authority-med:role:physician": (
+                    "attribute_key",
+                    k_physician,
+                ),
+                "attr_key:authority-med:role:emergency-physician": (
+                    "attribute_key",
+                    k_em_physician,
+                ),
+                "attr_key:authority-net:specialty:cardiology": (
+                    "attribute_key",
+                    k_cardio,
+                ),
+                "attr_key:authority-net:owner:pat-101": ("attribute_key", k_owner),
+                "lifecycle_signing_key_pem": (
+                    "private_key",
+                    life_priv_pem.encode("ascii"),
+                ),
+                "clinician_signing_key_pem": (
+                    "private_key",
+                    private_key_to_pem(carol_priv),
+                ),
+            },
+        )
+        log(f"  * Canary manifest written to {canaries_out}")
+
     log("\n=======================================================================")
     log("ALL 9 STEPS OF THE CROSS-HOSPITAL BREAK-GLASS SCENARIO SUCCEEDED!")
     log("=======================================================================\n")
     return True
+
+
+def _write_canaries(
+    path: Path, *, record_id: str, secrets: dict[str, tuple[str, bytes]]
+) -> None:
+    """Write the run's secrets for the P5-5 canary search (ADR-0045)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "warning": "synthetic capture canaries -- never commit this file",
+        "record_id": record_id,
+        "canaries": {
+            name: {"class": cls, "hex": value.hex()}
+            for name, (cls, value) in secrets.items()
+        },
+    }
+    path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
 def main() -> int:
@@ -536,6 +592,13 @@ def main() -> int:
         choices=("http", "https"),
         default="https" if tls_enabled() else "http",
         help="Transport scheme for the scenario endpoints.",
+    )
+    parser.add_argument(
+        "--canaries-out",
+        type=Path,
+        default=None,
+        help="Write the run's secrets here for the P5-5 wire analyser "
+        "(keep under the gitignored wire/captures/).",
     )
     args = parser.parse_args()
     if args.scheme == "https":
@@ -574,6 +637,7 @@ def main() -> int:
             config=config_data,
             emergency_duration_seconds=args.duration,
             verbose=True,
+            canaries_out=args.canaries_out,
         )
         return 0 if success else 1
     except Exception as exc:

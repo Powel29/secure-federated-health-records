@@ -17,14 +17,25 @@ from storage.migrate import apply_migrations
 _URL = os.environ.get("DATABASE_URL")
 
 
+def skip_or_fail_without_postgres(reason: str) -> None:
+    """Skip on a laptop, fail in CI (review F42).
+
+    The audit-commit and chain-tamper claims (P5-1 C2, C5) are Postgres-backed;
+    in CI a missing database must not silently drop them from the evidence.
+    """
+    if os.environ.get("CI", "").lower() == "true":
+        pytest.fail(f"{reason} -- Postgres is required in CI", pytrace=False)
+    pytest.skip(reason)
+
+
 @pytest.fixture(scope="session")
 def _base_conn():
     if not _URL:
-        pytest.skip("DATABASE_URL not set; this test needs Postgres")
+        skip_or_fail_without_postgres("DATABASE_URL not set; this test needs Postgres")
     try:
         conn = psycopg.connect(_URL)
     except psycopg.OperationalError as exc:
-        pytest.skip(f"cannot reach Postgres: {exc}")
+        skip_or_fail_without_postgres(f"cannot reach Postgres: {exc}")
     conn.autocommit = True
     with conn.cursor() as cur:
         cur.execute("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;")

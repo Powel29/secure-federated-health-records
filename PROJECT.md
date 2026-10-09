@@ -284,7 +284,7 @@ than this is the fastest way to lose credibility in the viva.
 
 ---
 
-**Deployed expiry limitation (ADR-0043/0044/0045).** The timer invalidates
+**Deployed expiry limitation (ADR-0043/0044/0047).** The timer invalidates
 emergency search and the deployment mirrors its audited state transitions into
 the store. Its rotated ciphertext and baseline wrapping are still not persisted:
 the custodian supplies a throwaway baseline key. Consequently the deployed demo

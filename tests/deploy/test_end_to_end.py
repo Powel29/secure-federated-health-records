@@ -26,6 +26,7 @@ Verifies:
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -48,7 +49,7 @@ from storage import repositories as repo_mod
 from storage.migrate import apply_migrations
 
 from deploy import bootstrap
-from deploy.run_scenario import ScenarioEndpoints, run_scenario
+from deploy.run_scenario import ScenarioEndpoints, _write_canaries, run_scenario
 
 _DATABASE_URL = os.environ.get("DATABASE_URL")
 
@@ -226,7 +227,21 @@ def postgres_federation():
     conn.close()
 
 
-def test_full_scenario_with_postgres(postgres_federation):
+def test_canary_manifest_round_trips(tmp_path):
+    """The P5-5 manifest records every secret as class + hex, nothing else."""
+    out = tmp_path / "captures" / "plain.canaries.json"
+    _write_canaries(
+        out,
+        record_id="rec-001",
+        secrets={"share1": ("share", b"\x01\x02"), "dek": ("dek", b"\xff" * 32)},
+    )
+    manifest = json.loads(out.read_text(encoding="utf-8"))
+    assert manifest["record_id"] == "rec-001"
+    assert manifest["canaries"]["share1"] == {"class": "share", "hex": "0102"}
+    assert bytes.fromhex(manifest["canaries"]["dek"]["hex"]) == b"\xff" * 32
+
+
+def test_full_scenario_with_postgres(postgres_federation, tmp_path):
     """Run full 9-step scenario on PostgreSQL and verify expiry shutoff."""
     endpoints = postgres_federation["endpoints"]
     config = postgres_federation["config"]
@@ -238,8 +253,11 @@ def test_full_scenario_with_postgres(postgres_federation):
         config=config,
         emergency_duration_seconds=1.0,
         verbose=True,
+        canaries_out=tmp_path / "canaries.json",
     )
     assert success is True
+    manifest = json.loads((tmp_path / "canaries.json").read_text(encoding="utf-8"))
+    assert {"share1", "share3", "dek", "emergency_key"} <= set(manifest["canaries"])
 
     # 2. Wait for the 1.0s window to elapse, then trigger the expiry manager sweep
     time.sleep(1.2)

@@ -394,13 +394,14 @@ def seed_synthetic_data(
     dataset: SyntheticDataset | None = None,
     client: httpx.Client | None = None,
     *,
+    database_url: str | None = None,
     verbose: bool = False,
 ) -> dict[str, Any]:
 
     if dataset is None:
         dataset = create_synthetic_dataset()
 
-    database_url = os.environ.get("DATABASE_URL")
+    database_url = database_url or os.environ.get("DATABASE_URL")
     if database_url:
         conn = psycopg.connect(database_url)
         try:

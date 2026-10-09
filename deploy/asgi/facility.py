@@ -32,6 +32,7 @@ from api.repository import PostgresStorageRepository
 from crypto_core import generate_ec_keypair
 from fastapi import FastAPI
 from lifecycle.expiry import EmergencyExpiryManager
+from lifecycle.state_machine import ConsumedEventIds, LifecycleStateMachine
 
 _DEFAULT_EMERGENCY_DURATION_SECONDS = 900.0
 
@@ -67,6 +68,9 @@ def app() -> FastAPI:
         timer_actor_id=f"system:hsm-timer:{facility_id}",
         default_duration_seconds=duration,
         audit_logger=audit_logger,
+        # Transition-event ids persist in the store, so a restart cannot
+        # replay a consumed expiry event (review F22).
+        state_machine=LifecycleStateMachine(ConsumedEventIds(backend=repo)),
     )
     expiry_manager.start_monitor()
 

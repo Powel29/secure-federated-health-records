@@ -4,7 +4,7 @@
 # TLS is enabled with TLS_ENABLED=true for the P4-6 defense-in-depth mode.
 #
 # The portal starts after bootstrap succeeds and is served at localhost:8000.
-# Published database and service ports are restricted to loopback.
+# Published database and service ports are restricted to loopback (review F16).
 # This is a disposable local demo, not an internet-facing deployment.
 # For verified federation TLS: python -m wire.tls, then TLS_ENABLED=true.
 # Recreate the entire stack after key-service restarts; keys are ephemeral.
@@ -48,6 +48,7 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     environment:
+      HOST: "0.0.0.0"  # bind inside the bridge; host access below is loopback-only (F16)
       SERVICE_ROLE: authority
       PORT: "8010"
       AUTHORITY_ID: authority-med
@@ -71,6 +72,7 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     environment:
+      HOST: "0.0.0.0"  # bind inside the bridge; host access below is loopback-only (F16)
       SERVICE_ROLE: authority
       PORT: "8011"
       AUTHORITY_ID: authority-net
@@ -99,6 +101,7 @@ services:
       migrate:
         condition: service_completed_successfully
     environment:
+      HOST: "0.0.0.0"  # bind inside the bridge; host access below is loopback-only (F16)
       SERVICE_ROLE: audit
       PORT: "8020"
       DATABASE_URL: postgresql://postgres@store:5432/ehr
@@ -128,6 +131,7 @@ services:
       audit:
         condition: service_healthy
     environment:
+      HOST: "0.0.0.0"  # bind inside the bridge; host access below is loopback-only (F16)
       SERVICE_ROLE: facility
       PORT: "8001"
       FACILITY_ID: facility-a
@@ -158,6 +162,7 @@ services:
       audit:
         condition: service_healthy
     environment:
+      HOST: "0.0.0.0"  # bind inside the bridge; host access below is loopback-only (F16)
       SERVICE_ROLE: facility
       PORT: "8002"
       FACILITY_ID: facility-b
@@ -190,6 +195,7 @@ services:
       facility-b:
         condition: service_healthy
     environment:
+      HOST: "0.0.0.0"  # bind inside the bridge; host access below is loopback-only (F16)
       SERVICE_ROLE: custodian
       PORT: "8030"
       DATABASE_URL: postgresql://postgres@store:5432/ehr
