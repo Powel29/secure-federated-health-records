@@ -71,3 +71,15 @@ def test_migrations_without_reset_may_target_any_host(connect_calls):
     with pytest.raises(_Connected):
         bootstrap.run_migrations(dsn)
     assert connect_calls == [dsn]
+
+
+def test_portal_schema_reset_refuses_a_remote_database_before_connecting(
+    connect_calls,
+):
+    from deploy import run_portal_demo
+
+    with pytest.raises(bootstrap.BootstrapError, match="non-local host"):
+        run_portal_demo._prepare_portal_schema(
+            "postgresql://u@db.example.com/ehr", reset=True
+        )
+    assert connect_calls == []

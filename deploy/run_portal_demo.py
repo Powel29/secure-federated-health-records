@@ -39,6 +39,8 @@ from urllib.parse import urlparse
 import psycopg
 from psycopg import sql
 
+from deploy.bootstrap import _require_local_database as require_local_database
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PORTAL_DIR = REPO_ROOT / "portal"
 ROLES_SQL = PORTAL_DIR / "sql" / "roles.sql"
@@ -60,6 +62,8 @@ def _db_parts(database_url: str) -> dict[str, str]:
 
 def _prepare_portal_schema(database_url: str, *, reset: bool = True) -> None:
     """Create the portal schema + read-only store role (portal/sql/roles.sql)."""
+    if reset:
+        require_local_database(database_url)
     roles_sql = ROLES_SQL.read_text(encoding="utf-8")
     with psycopg.connect(database_url, autocommit=True) as conn:
         with conn.cursor() as cur:
