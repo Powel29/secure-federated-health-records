@@ -56,7 +56,7 @@ def _db_parts(database_url: str) -> dict[str, str]:
         "port": str(u.port or 5432),
         "name": (u.path or "/postgres").lstrip("/"),
         "user": u.username or "postgres",
-        "password": u.password or "",
+        "password": u.password or os.environ.get("PGPASSWORD", ""),
     }
 
 

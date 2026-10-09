@@ -41,7 +41,8 @@ services:
       store:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@store:5432/ehr
+      DATABASE_URL: postgresql://postgres@store:5432/ehr
+      PGPASSWORD: "${POSTGRES_PASSWORD}"
     entrypoint: ["python", "-m", "storage.migrate"]
     networks: [federation]
 
@@ -104,7 +105,8 @@ services:
       HOST: "0.0.0.0"  # bind inside the bridge; host access below is loopback-only (F16)
       SERVICE_ROLE: audit
       PORT: "8020"
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@store:5432/ehr
+      DATABASE_URL: postgresql://postgres@store:5432/ehr
+      PGPASSWORD: "${POSTGRES_PASSWORD}"
       AUDIT_ACTOR_ID: audit-service
       TLS_ENABLED: "${TLS_ENABLED:-false}"
       TLS_VERIFY: "${TLS_VERIFY:-true}"
@@ -134,7 +136,8 @@ services:
       SERVICE_ROLE: facility
       PORT: "8001"
       FACILITY_ID: facility-a
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@store:5432/ehr
+      DATABASE_URL: postgresql://postgres@store:5432/ehr
+      PGPASSWORD: "${POSTGRES_PASSWORD}"
       AUDIT_SERVICE_URL: "${AUDIT_SERVICE_URL:-http://audit:8020}"
       TLS_ENABLED: "${TLS_ENABLED:-false}"
       TLS_VERIFY: "${TLS_VERIFY:-true}"
@@ -164,7 +167,8 @@ services:
       SERVICE_ROLE: facility
       PORT: "8002"
       FACILITY_ID: facility-b
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@store:5432/ehr
+      DATABASE_URL: postgresql://postgres@store:5432/ehr
+      PGPASSWORD: "${POSTGRES_PASSWORD}"
       AUDIT_SERVICE_URL: "${AUDIT_SERVICE_URL:-http://audit:8020}"
       TLS_ENABLED: "${TLS_ENABLED:-false}"
       TLS_VERIFY: "${TLS_VERIFY:-true}"
@@ -195,7 +199,8 @@ services:
       HOST: "0.0.0.0"  # bind inside the bridge; host access below is loopback-only (F16)
       SERVICE_ROLE: custodian
       PORT: "8030"
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@store:5432/ehr
+      DATABASE_URL: postgresql://postgres@store:5432/ehr
+      PGPASSWORD: "${POSTGRES_PASSWORD}"
       AUDIT_SERVICE_URL: "${AUDIT_SERVICE_URL:-http://audit:8020}"
       AUTHORITY_URLS: "${AUTHORITY_URLS:-authority-med=http://authority-med:8010,authority-net=http://authority-net:8011}"
       FACILITY_URLS: "${FACILITY_URLS:-facility-a=http://facility-a:8001,facility-b=http://facility-b:8002}"
@@ -232,7 +237,8 @@ services:
       custodian:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@store:5432/ehr
+      DATABASE_URL: postgresql://postgres@store:5432/ehr
+      PGPASSWORD: "${POSTGRES_PASSWORD}"
       AUDIT_SERVICE_URL: "${AUDIT_SERVICE_URL:-http://audit:8020}"
       AUTHORITY_MED_URL: "${AUTHORITY_MED_URL:-http://authority-med:8010}"
       AUTHORITY_NET_URL: "${AUTHORITY_NET_URL:-http://authority-net:8011}"
@@ -256,7 +262,8 @@ services:
       bootstrap:
         condition: service_completed_successfully
     environment:
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@store:5432/ehr
+      DATABASE_URL: postgresql://postgres@store:5432/ehr
+      PGPASSWORD: "${POSTGRES_PASSWORD}"
       CUSTODIAN_URL: http://custodian:8030
       AUDIT_SERVICE_URL: http://audit:8020
       AUTHORITY_URLS: authority-med=http://authority-med:8010,authority-net=http://authority-net:8011

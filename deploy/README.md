@@ -81,7 +81,7 @@ same logins as the portal demo. To run a portal separately against a services-on
 stack (start Compose with `up --build bootstrap`):
 
 ```bash
-DATABASE_URL=postgresql://postgres:<POSTGRES_PASSWORD>@127.0.0.1:55433/ehr python -m deploy.seed_portal
+PGPASSWORD=<POSTGRES_PASSWORD> DATABASE_URL=postgresql://postgres@127.0.0.1:55433/ehr python -m deploy.seed_portal
 ```
 
 Tear down:
