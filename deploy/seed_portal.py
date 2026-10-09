@@ -35,6 +35,7 @@ import httpx
 from crypto_core import certificate_to_pem
 
 from demo.seed_data import SyntheticDataset, create_synthetic_dataset
+from deploy.config import configure_transport, tls_enabled
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PORTAL_DIR = REPO_ROOT / "portal"
@@ -229,6 +230,7 @@ def main(argv: list[str] | None = None) -> int:
         description="Run the portals against a running federation."
     )
     parser.add_argument("--port", type=int, default=8000, help="Django dev server port")
+    parser.add_argument("--host", default="127.0.0.1", help="Django bind address")
     parser.add_argument(
         "--no-server", action="store_true", help="seed the portal side, then exit"
     )
@@ -242,7 +244,20 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    _prepare_portal_schema(database_url)
+    # Restarting only the portal must preserve consents and case history.
+    _prepare_portal_schema(database_url, reset=False)
+    if tls_enabled():
+        os.environ.setdefault("CUSTODIAN_URL", "https://127.0.0.1:8030")
+        os.environ.setdefault("AUDIT_SERVICE_URL", "https://127.0.0.1:8020")
+        os.environ.setdefault(
+            "FACILITY_URLS",
+            "facility-a=https://127.0.0.1:8001,facility-b=https://127.0.0.1:8002",
+        )
+        os.environ.setdefault(
+            "AUTHORITY_URLS",
+            "authority-med=https://127.0.0.1:8010,authority-net=https://127.0.0.1:8011",
+        )
+    configure_transport()
     db = _db_parts(database_url)
     env = {
         "PORTAL_DB_HOST": db["host"],
@@ -276,7 +291,7 @@ def main(argv: list[str] | None = None) -> int:
                 sys.executable,
                 str(PORTAL_DIR / "manage.py"),
                 "runserver",
-                f"127.0.0.1:{args.port}",
+                f"{args.host}:{args.port}",
                 "--noreload",
             ],
             cwd=str(PORTAL_DIR),

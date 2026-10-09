@@ -58,6 +58,8 @@ Each row links to a one-file ADR with the full context.
 | [0043](0043-key-custodian-and-portal-integration.md) | Key Custodian service (sixth process) as every subject's key agent; portals sign/read/break-glass through it and never hold keys; consent ledger mirror, break-glass cases and patient notifications in the portal DB with `patient.lookup` / `patient.notification` / `consent.decision` chain events; `pre.delivery` decode | Accepted | 2026-09-13 | Ojas → all four | P4-7/8/8a/9/10 |
 | [0044](0044-breakglass-patient-binding-and-expiry-state.md) | Break-glass endpoint enforces the assertion's patient binding (403 + denial logged, no side effect); store reconciles `emergency_open` to `granted` when the timer holds no session | Proposed | 2026-10-02 | Powel (proposal) → Avaneeth / lifecycle owner | e2e run, ADR-0043 gap |
 
+| [0045](0045-local-deployment-state-and-tls.md) | Shared encrypted policy and signed consent storage; verified bootstrap completion; loopback Compose portal and verified TLS | Proposed | 2026-10-09 | Tejas request; team ratification pending | deployment review |
+
 ## Owed, not yet written
 
 Decisions already made in the docs that still need their own ADR (whoever owns

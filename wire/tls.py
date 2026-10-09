@@ -36,6 +36,7 @@ _TLS_VALID_DAYS = 90
 def generate(output_dir: Path) -> None:
     """Create one self-signed local certificate per federation service."""
     output_dir.mkdir(parents=True, exist_ok=True)
+    certificates: list[bytes] = []
 
     for service in SERVICES:
         priv, _pub = generate_ec_keypair()
@@ -47,7 +48,12 @@ def generate(output_dir: Path) -> None:
             valid_days=_TLS_VALID_DAYS,
         )
         (output_dir / f"{service}.key").write_bytes(private_key_to_pem(priv))
-        (output_dir / f"{service}.crt").write_bytes(certificate_to_pem(cert))
+        cert_pem = certificate_to_pem(cert)
+        (output_dir / f"{service}.crt").write_bytes(cert_pem)
+        certificates.append(cert_pem)
+
+    # Trust the exact demo servers instead of disabling certificate verification.
+    (output_dir / "ca-bundle.crt").write_bytes(b"".join(certificates))
 
     print(f"TLS certificates written to {output_dir}")
 

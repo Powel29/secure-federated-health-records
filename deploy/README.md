@@ -49,7 +49,7 @@ From the repository root:
 docker compose -f deploy/docker-compose.yml up --build
 ```
 
-Compose brings up Postgres (`store`), the six application services, and a
+Compose brings up Postgres (`store`), the six application services, the portal, and a
 one-shot `bootstrap` container that runs once every other service reports
 healthy. The store lives in tmpfs, so it starts empty whenever its container
 starts (same reason as Path A's reset); re-running `up` on a running stack
@@ -66,8 +66,9 @@ Look at the database (published on host port 55433):
 docker compose -f deploy/docker-compose.yml exec store psql -U postgres -d ehr
 ```
 
-Run the three portals against it (http://127.0.0.1:8000/, same logins as the
-portal demo):
+The three portals start automatically at **http://127.0.0.1:8000/**, with the
+same logins as the portal demo. To run a portal separately against a services-only
+stack (start Compose with `up --build bootstrap`):
 
 ```bash
 DATABASE_URL=postgresql://postgres@127.0.0.1:55433/ehr python -m deploy.seed_portal
@@ -98,15 +99,54 @@ between runs; every run regenerates it from scratch.
 Inter-service traffic is plain HTTP by default — this *is* the
 `capture-plain` profile `PROJECT.md` §4A's traffic-analysis module captures
 against, deliberately: confidentiality here comes from the application-layer
-encryption (`crypto_core`/`records`/`pre`), not from transport security. A
-TLS variant (`capture-tls`, defence-in-depth) is P4-6's addition, not this
-one's.
+encryption (`crypto_core`/`records`/`pre`), not from transport security. The verified
+TLS profile is described below.
 
-## Known limitation
+## TLS (verified certificates)
 
-Facility nodes keep compiled policies in process memory
-(`api.repository.PostgresStorageRepository`), so a *routine* read at a
-facility other than the one that ingested the record returns 500 here
-instead of a policy decision. Break-glass is unaffected. `deploy.run_scenario`
-and the demo driver's out-of-network refusal step hit this; their in-process
-runs (`--standalone`, `tests/deploy`) share one process and do not.
+Generate the local certificates before starting the TLS profile:
+
+```powershell
+python -m wire.tls
+$env:TLS_ENABLED="true"
+docker compose -f deploy/docker-compose.yml up --build -d
+```
+
+All federation clients, including bootstrap and the portal, use HTTPS and trust
+`wire/certs/ca-bundle.crt`. No `TLS_VERIFY=false` is needed. The browser portal
+itself stays at HTTP on loopback. To return to plain HTTP, tear down the TLS stack,
+remove `TLS_ENABLED`, and start again. Do not regenerate certificates while the
+TLS stack is running.
+
+Path A also supports `TLS_ENABLED=true` after certificate generation. Run the
+scenario with `python -m deploy.run_scenario --scheme https`; it uses the same
+trust bundle. As before, start a fresh federation with `SEED_DATA=false` when
+using a scenario/driver that seeds its own records.
+
+## Restarts and recovery
+
+Compiled policies and signed consent artifacts are shared through PostgreSQL,
+so routine cross-facility reads now return a real policy decision. Private keys,
+emergency sessions and replay caches remain in process memory by design.
+
+A successful bootstrap records the live service instance IDs only after seeding
+and audit verification finish. Re-running bootstrap on the same live stack
+checks those IDs and the audit chain. A partial bootstrap, changed seed mode or
+restarted key service is refused with a recovery instruction. Recreate the whole
+**disposable demo** (this removes its synthetic data):
+
+```powershell
+docker compose -f deploy/docker-compose.yml down
+docker compose -f deploy/docker-compose.yml up --build -d
+docker compose -f deploy/docker-compose.yml logs bootstrap
+```
+
+Restarting only the portal preserves its database tables. The demo publishes
+ports only on `127.0.0.1`; its trusted-local custodian API and throwaway database
+must not be exposed to a shared network. This setup does not provide persistent
+key custody or internet-facing authentication.
+
+The timer now mirrors its audited expiry states into the store automatically.
+The existing ADR-0043/0044 limitation remains: rotated ciphertext is not persisted
+because the caller supplies a throwaway re-baseline key. Search expiry is enforced;
+persisted post-expiry DEK rotation is not demonstrated by this deployment.

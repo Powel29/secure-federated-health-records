@@ -268,7 +268,9 @@ def standalone_federation(
         signing_key=timer_priv_a,
         timer_actor_id="system:hsm-timer:facility-a",
         default_duration_seconds=default_duration,
-        audit_logger=make_lifecycle_audit_logger(audit_url),
+        audit_logger=make_lifecycle_audit_logger(
+            audit_url, state_writer=repo_fa.upsert_lifecycle_state
+        ),
     )
     exp_mgr_a.start_monitor(poll_interval=0.25)
 
@@ -276,7 +278,9 @@ def standalone_federation(
         signing_key=timer_priv_b,
         timer_actor_id="system:hsm-timer:facility-b",
         default_duration_seconds=default_duration,
-        audit_logger=make_lifecycle_audit_logger(audit_url),
+        audit_logger=make_lifecycle_audit_logger(
+            audit_url, state_writer=repo_fb.upsert_lifecycle_state
+        ),
     )
     exp_mgr_b.start_monitor(poll_interval=0.25)
 

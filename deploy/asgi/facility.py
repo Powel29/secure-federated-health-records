@@ -56,7 +56,11 @@ def app() -> FastAPI:
     # deployment's fresh-bootstrap-every-run model (ADR-0039).
     timer_private_key, _timer_public_key = generate_ec_keypair()
     audit_logger = (
-        make_lifecycle_audit_logger(audit_service_url) if audit_service_url else None
+        make_lifecycle_audit_logger(
+            audit_service_url, state_writer=repo.upsert_lifecycle_state
+        )
+        if audit_service_url
+        else None
     )
     expiry_manager = EmergencyExpiryManager(
         signing_key=timer_private_key,

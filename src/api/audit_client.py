@@ -22,6 +22,7 @@ import os
 from typing import Any, Callable
 
 import httpx
+from contracts.enums import LifecycleState
 
 DEFAULT_TIMEOUT_SECONDS = 5.0
 
@@ -106,13 +107,19 @@ def append_entry(
 
 
 def make_lifecycle_audit_logger(
-    audit_service_url: str, *, timeout: float = DEFAULT_TIMEOUT_SECONDS
+    audit_service_url: str,
+    *,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    state_writer: Callable[[str, LifecycleState, str | None], None] | None = None,
 ) -> Callable[[dict[str, Any]], None]:
     """Build the ``audit_logger`` callback ``EmergencyExpiryManager`` expects.
 
     Args:
         audit_service_url: Base URL of the standalone Audit Service.
         timeout: Per-request HTTP timeout in seconds.
+        state_writer: Optional store update after the audit append succeeds.
+            Mirrors timer state only; does not persist the rotated ciphertext
+            or claim to close ADR-0043's re-baseline persistence gap.
 
     Returns:
         A ``Callable[[dict[str, Any]], None]`` suitable for
@@ -132,5 +139,9 @@ def make_lifecycle_audit_logger(
             correlation_id=entry["correlation_id"],
             timeout=timeout,
         )
+        if state_writer is not None:
+            state_writer(
+                entry["record_id"], LifecycleState(entry["to_state"]), entry["event_id"]
+            )
 
     return _log

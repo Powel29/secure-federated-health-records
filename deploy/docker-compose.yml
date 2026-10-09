@@ -3,10 +3,11 @@
 # Plain HTTP is the default capture mode.
 # TLS is enabled with TLS_ENABLED=true for the P4-6 defense-in-depth mode.
 #
-# The `custodian` service (ADR-0043) is the portals' key agent; the Django
-# portals themselves run outside Compose (`python -m deploy.seed_portal`, see
-# portal/README.md) and are pointed at the published ports
-# 8001/8002/8010/8011/8020/8030 and the store on 55433.
+# The portal starts after bootstrap succeeds and is served at localhost:8000.
+# Published database and service ports are restricted to loopback.
+# This is a disposable local demo, not an internet-facing deployment.
+# For verified federation TLS: python -m wire.tls, then TLS_ENABLED=true.
+# Recreate the entire stack after key-service restarts; keys are ephemeral.
 #
 # Every service keeps its keys in memory, so the federation is fresh whenever
 # the stack starts (ADR-0039): the store lives in tmpfs and is empty on each
@@ -25,7 +26,7 @@ services:
       timeout: 3s
       retries: 30
     ports:
-      - "55433:5432"
+      - "127.0.0.1:55433:5432"
     tmpfs:
       - /var/lib/postgresql/data
     networks: [federation]
@@ -60,7 +61,7 @@ services:
       timeout: 3s
       retries: 30
     ports:
-      - "8010:8010"
+      - "127.0.0.1:8010:8010"
     networks: [federation]
     volumes:
       - ../wire/certs:/tls:ro
@@ -83,7 +84,7 @@ services:
       timeout: 3s
       retries: 30
     ports:
-      - "8011:8011"
+      - "127.0.0.1:8011:8011"
     networks: [federation]
     volumes:
       - ../wire/certs:/tls:ro
@@ -112,7 +113,7 @@ services:
       timeout: 3s
       retries: 30
     ports:
-      - "8020:8020"
+      - "127.0.0.1:8020:8020"
     networks: [federation]
     volumes:
       - ../wire/certs:/tls:ro
@@ -142,7 +143,7 @@ services:
       timeout: 3s
       retries: 30
     ports:
-      - "8001:8001"
+      - "127.0.0.1:8001:8001"
     networks: [federation]
     volumes:
       - ../wire/certs:/tls:ro
@@ -172,7 +173,7 @@ services:
       timeout: 3s
       retries: 30
     ports:
-      - "8002:8002"
+      - "127.0.0.1:8002:8002"
     networks: [federation]
     volumes:
       - ../wire/certs:/tls:ro
@@ -205,7 +206,7 @@ services:
       timeout: 3s
       retries: 30
     ports:
-      - "8030:8030"
+      - "127.0.0.1:8030:8030"
     networks: [federation]
     volumes:
       - ../wire/certs:/tls:ro
@@ -236,10 +237,39 @@ services:
       FACILITY_A_URL: "${FACILITY_A_URL:-http://facility-a:8001}"
       FACILITY_B_URL: "${FACILITY_B_URL:-http://facility-b:8002}"
       CUSTODIAN_URL: "${CUSTODIAN_URL:-http://custodian:8030}"
+      TLS_ENABLED: "${TLS_ENABLED:-false}"
       SEED_DATA: "${SEED_DATA:-true}"
       TLS_VERIFY: "${TLS_VERIFY:-true}"
     volumes:
       - ./pki:/pki
+      - ../wire/certs:/tls:ro
+    networks: [federation]
+
+  portal:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    entrypoint: ["python", "-m", "deploy.seed_portal", "--host", "0.0.0.0"]
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://postgres@store:5432/ehr
+      CUSTODIAN_URL: http://custodian:8030
+      AUDIT_SERVICE_URL: http://audit:8020
+      AUTHORITY_URLS: authority-med=http://authority-med:8010,authority-net=http://authority-net:8011
+      FACILITY_URLS: facility-a=http://facility-a:8001,facility-b=http://facility-b:8002
+      TLS_ENABLED: "${TLS_ENABLED:-false}"
+      EMERGENCY_DURATION_SECONDS: "${EMERGENCY_DURATION_SECONDS:-120}"
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/accounts/login/', timeout=3)"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - ../wire/certs:/tls:ro
     networks: [federation]
 
 networks:

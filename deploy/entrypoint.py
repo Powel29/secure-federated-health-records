@@ -22,6 +22,8 @@ import sys
 
 import uvicorn
 
+from deploy.config import configure_transport
+
 _FACTORIES = {
     "facility": "deploy.asgi.facility:app",
     "authority": "deploy.asgi.authority:app",
@@ -41,7 +43,10 @@ def main() -> int:
         return 2
 
     port = int(os.environ.get("PORT", "8000"))
-    host = os.environ.get("HOST", "0.0.0.0")
+    host = os.environ.get("HOST", "127.0.0.1")
+    configure_transport(
+        os.environ.get("FACILITY_ID") or os.environ.get("AUTHORITY_ID") or role
+    )
 
     tls_enabled = os.environ.get("TLS_ENABLED", "").lower() in {"1", "true", "yes"}
     ssl_certfile = os.environ.get("SSL_CERTFILE")
@@ -55,7 +60,7 @@ def main() -> int:
         return 2
 
     uvicorn.run(
-        _FACTORIES[role],
+        "deploy.asgi:app",
         host=host,
         port=port,
         factory=True,

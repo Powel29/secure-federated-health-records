@@ -617,6 +617,14 @@ def section_f(s: dict[str, Portal], expiry_wait: float) -> str | None:
                 is_plaintext(re_open),
                 f"HTTP {re_open.status_code}",
             )
+            # The newly opened session is legitimately EMERGENCY_OPEN. Wait
+            # for its own deadline before checking for stuck records below.
+            time.sleep(expiry_wait)
+            R.check(
+                "F",
+                "the second session also expires in the store",
+                lifecycle_states(aud).get("rec-003") == "granted",
+            )
         else:
             R.skip(
                 "F",

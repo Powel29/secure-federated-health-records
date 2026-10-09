@@ -58,7 +58,7 @@ def _db_parts(database_url: str) -> dict[str, str]:
     }
 
 
-def _prepare_portal_schema(database_url: str) -> None:
+def _prepare_portal_schema(database_url: str, *, reset: bool = True) -> None:
     """Create the portal schema + read-only store role (portal/sql/roles.sql)."""
     roles_sql = ROLES_SQL.read_text(encoding="utf-8")
     with psycopg.connect(database_url, autocommit=True) as conn:
@@ -66,7 +66,8 @@ def _prepare_portal_schema(database_url: str) -> None:
             # Fresh portal state every run, matching the fresh federation
             # (ADR-0039): stale case files would point at a chain that no
             # longer exists.
-            cur.execute("DROP SCHEMA IF EXISTS portal CASCADE")
+            if reset:
+                cur.execute("DROP SCHEMA IF EXISTS portal CASCADE")
             cur.execute(roles_sql)
             # Password auth for the read-only role (the Docker Postgres most
             # people run uses scram, not trust). Dev-only, documented.

@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from deploy import bootstrap
+from deploy.config import configure_transport, tls_enabled
 from deploy.run_scenario import ScenarioEndpoints
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -122,7 +123,8 @@ def _spawn(spec: ServiceSpec) -> subprocess.Popen:
 
 
 def _base_url(port: int) -> str:
-    return f"http://127.0.0.1:{port}"
+    scheme = "https" if tls_enabled() else "http"
+    return f"{scheme}://127.0.0.1:{port}"
 
 
 def main() -> int:
@@ -136,6 +138,7 @@ def main() -> int:
         )
         return 2
 
+    configure_transport()
     audit_base_url = _base_url(_AUDIT_PORT)
     specs = _default_specs(database_url, audit_base_url)
     processes: dict[str, subprocess.Popen] = {}
@@ -210,7 +213,15 @@ def main() -> int:
         print(f"      federation config written to {FEDERATION_CONFIG_PATH}")
         if bootstrap.seed_enabled():
             summary = bootstrap.seed_federation(
-                ScenarioEndpoints(), config, _base_url(_CUSTODIAN_PORT)
+                ScenarioEndpoints(
+                    authority_med=_base_url(8010),
+                    authority_net=_base_url(8011),
+                    audit=audit_base_url,
+                    facility_a=_base_url(8001),
+                    facility_b=_base_url(8002),
+                ),
+                config,
+                _base_url(_CUSTODIAN_PORT),
             )
             print(f"      {summary}")
         else:

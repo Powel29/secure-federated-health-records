@@ -67,10 +67,10 @@ from deploy.seed_portal import deposit_custodian
 class BootstrapError(RuntimeError):
     """The bootstrap sequence could not complete -- fail closed, start nothing."""
 
+
 def _http_verify() -> bool:
     """Return whether HTTPS certificate verification is enabled."""
     return os.environ.get("TLS_VERIFY", "true").lower() not in {"0", "false", "no"}
-
 
 
 @dataclass(frozen=True)
@@ -170,7 +170,9 @@ def wait_for_health(
     last_exc: Exception | None = None
     while time.monotonic() < deadline:
         try:
-            resp = httpx.get(f"{base_url}/health", timeout=interval, verify=_http_verify())
+            resp = httpx.get(
+                f"{base_url}/health", timeout=interval, verify=_http_verify()
+            )
             if resp.status_code == 200:
                 return
         except httpx.HTTPError as exc:
@@ -308,7 +310,9 @@ def check_audit_chain(base_url: str, *, timeout: float = 10.0) -> int:
             empty, or verification failed.
     """
     try:
-        resp = httpx.get(f"{base_url}/chain/verify", timeout=timeout, verify=_http_verify())
+        resp = httpx.get(
+            f"{base_url}/chain/verify", timeout=timeout, verify=_http_verify()
+        )
         resp.raise_for_status()
     except httpx.HTTPError as exc:
         raise BootstrapError(f"cannot verify audit chain at {base_url}: {exc}") from exc

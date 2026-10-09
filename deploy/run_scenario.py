@@ -54,6 +54,8 @@ from identity.certificates import issue_clinician_certificate
 from pre.elgamal import decapsulate_key
 from pre.elgamal import generate_keypair as generate_pre_keypair
 
+from deploy.config import configure_transport, tls_enabled
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = REPO_ROOT / "deploy" / "pki" / "federation.json"
 
@@ -226,7 +228,6 @@ def run_scenario(
         },
     ).raise_for_status()
 
-
     # Obtain authoring attribute keys for compilation
     def get_auth_key(base_url: str, name: str, val: str) -> bytes:
         r = client.post(
@@ -358,7 +359,7 @@ def run_scenario(
     log("  * Policy satisfied: Dr. Bob successfully decrypted Alice's record!")
 
     # -------------------------------------------------------------------------
-      # Step 5: Out-of-Network Emergency Attempt & Denial
+    # Step 5: Out-of-Network Emergency Attempt & Denial
     log("[5/9] Out-of-network emergency: Alice unconscious at Facility B...")
 
     carol_routine_keyring = {
@@ -378,10 +379,10 @@ def run_scenario(
 
     if read_carol_denied.status_code != 403:
         raise RuntimeError(
-        f"Expected 403 at Facility B, got "
-        f"{read_carol_denied.status_code}: "
-        f"{read_carol_denied.text}"
-    )
+            f"Expected 403 at Facility B, got "
+            f"{read_carol_denied.status_code}: "
+            f"{read_carol_denied.text}"
+        )
 
     log("  ✓ Facility B routine access correctly denied (403)")
     # -------------------------------------------------------------------------
@@ -533,10 +534,13 @@ def main() -> int:
     parser.add_argument(
         "--scheme",
         choices=("http", "https"),
-        default="http",
+        default="https" if tls_enabled() else "http",
         help="Transport scheme for the scenario endpoints.",
     )
     args = parser.parse_args()
+    if args.scheme == "https":
+        os.environ["TLS_ENABLED"] = "true"
+        configure_transport()
 
     config_data: dict[str, Any] | None = None
     if args.config.exists():
