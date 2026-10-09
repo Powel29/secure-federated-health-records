@@ -78,7 +78,7 @@ it. Then one command creates the portal schema, the logins and the patient
 directory, and serves the portals:
 
 ```bash
-DATABASE_URL=postgresql://postgres@127.0.0.1:55433/ehr python -m deploy.seed_portal
+DATABASE_URL=postgresql://postgres:<POSTGRES_PASSWORD>@127.0.0.1:55433/ehr python -m deploy.seed_portal
 ```
 
 (Path B's store is on 55433; for Path A use its own `DATABASE_URL`.) The

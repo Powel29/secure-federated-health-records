@@ -19,13 +19,21 @@ from wire.tls import SERVICES, generate
 def test_generate_writes_a_cert_and_key_per_service(tmp_path):
     generate(tmp_path)
     for service in SERVICES:
-        assert (tmp_path / f"{service}.crt").exists()
-        assert (tmp_path / f"{service}.key").exists()
+        assert (tmp_path / service / f"{service}.crt").exists()
+        assert (tmp_path / service / f"{service}.key").exists()
+        # Each service directory holds only that service's key (ADR-0047).
+        assert sorted(p.name for p in (tmp_path / service).iterdir()) == [
+            f"{service}.crt",
+            f"{service}.key",
+        ]
+    assert sorted(p.name for p in (tmp_path / "trust").iterdir()) == ["ca-bundle.crt"]
 
 
 def test_cert_has_expected_sans_and_cn(tmp_path):
     generate(tmp_path)
-    cert = certificate_from_pem((tmp_path / "facility-a.crt").read_bytes())
+    cert = certificate_from_pem(
+        (tmp_path / "facility-a" / "facility-a.crt").read_bytes()
+    )
 
     cn = cert.subject.get_attributes_for_oid(x509.oid.NameOID.COMMON_NAME)[0].value
     assert cn == "facility-a"
@@ -40,7 +48,7 @@ def test_cert_has_expected_sans_and_cn(tmp_path):
 def test_cert_validity_is_bounded_not_forever(tmp_path):
     """ARCHITECTURE.md §8: nothing issues forever -- not even a capture cert."""
     generate(tmp_path)
-    cert = certificate_from_pem((tmp_path / "audit.crt").read_bytes())
+    cert = certificate_from_pem((tmp_path / "audit" / "audit.crt").read_bytes())
     lifetime = cert.not_valid_after_utc - cert.not_valid_before_utc
     assert lifetime <= datetime.timedelta(days=366)
 

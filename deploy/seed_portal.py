@@ -293,6 +293,9 @@ def main(argv: list[str] | None = None) -> int:
                 "runserver",
                 f"{args.host}:{args.port}",
                 "--noreload",
+                # Serve the portal's CSS when DJANGO_DEBUG=0 (Compose);
+                # runserver serves static files only in DEBUG otherwise.
+                "--insecure",
             ],
             cwd=str(PORTAL_DIR),
             env={**os.environ, **env},

@@ -56,6 +56,7 @@ from identity.certificates import (
     issue_facility_ca_certificate,
 )
 from identity.root_anchor import RootAnchor, generate_root_anchor
+from psycopg.conninfo import conninfo_to_dict
 from storage.migrate import apply_migrations, reset_schema
 from storage.repositories import insert_authority, insert_facility, insert_patient
 
@@ -95,6 +96,25 @@ def seed_enabled() -> bool:
     return os.environ.get("SEED_DATA", "true").lower() not in {"0", "false", "no"}
 
 
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def _require_local_database(database_url: str) -> None:
+    """Refuse a destructive reset unless the DSN can only reach this machine."""
+    params = conninfo_to_dict(database_url)
+    targets = [
+        params.get("host") or os.environ.get("PGHOST", ""),
+        params.get("hostaddr") or os.environ.get("PGHOSTADDR", ""),
+    ]
+    for target in targets:
+        for host in filter(None, target.split(",")):
+            # A leading "/" is a Unix-socket directory, which is local.
+            if host not in _LOCAL_HOSTS and not host.startswith("/"):
+                raise BootstrapError(
+                    f"refusing to drop the schema on non-local host {host!r}"
+                )
+
+
 def run_migrations(database_url: str, *, reset: bool = False) -> list[str]:
     """Apply the shared store's schema migrations (ARCHITECTURE.md §7, P0-8).
 
@@ -102,11 +122,17 @@ def run_migrations(database_url: str, *, reset: bool = False) -> list[str]:
         database_url: DSN for the shared Postgres store.
         reset: Drop the ``public`` schema first -- a fresh federation's new
             audit key cannot verify a previous run's chain (ADR-0039).
+            Refused unless every target host is loopback or a local socket.
 
     Returns:
         The migration filenames that were newly applied (empty if the
         schema was already up to date).
+
+    Raises:
+        BootstrapError: ``reset`` was requested against a non-local host.
     """
+    if reset:
+        _require_local_database(database_url)
     conn = psycopg.connect(database_url)
     try:
         if reset:

@@ -2,7 +2,7 @@
 
 - **Status:** Proposed
 - **Date:** 2026-10-09
-- **Deciders:** Implementation requested by Tejas; team ratification pending
+- **Deciders:** Avaneeth (proposal); Ojas to review the `deploy/` and `wire/` parts; team ratification pending
 - **Task / source:** Full local/demo deployment review
 - **Affects:** storage, API repository, deployment, TLS harness; ADR-0039/0043
 
@@ -37,6 +37,30 @@ timer's rotated ciphertext: the caller still supplies a throwaway baseline key
 cryptographic re-baseline persistence work remains separate from this deployment
 fix. The live checker waits for the second session it deliberately reopens before
 classifying an emergency-open record as stuck.
+
+### Review follow-ups (2026-10-09)
+
+- **Schema reset guard.** `deploy.bootstrap.run_migrations(reset=True)` refuses,
+  before connecting, any target host (DSN `host`/`hostaddr` or `PGHOST`/`PGHOSTADDR`)
+  that is not loopback or a local socket. Rejected: an expected-database-name check,
+  which a remote store with the same name would pass.
+- **Store password.** The Compose store requires `POSTGRES_PASSWORD` from the
+  git-ignored `deploy/.env`; trust authentication is removed. The port stays
+  published on loopback for host-side `psql`, the GUI and the separate-portal path.
+  Rejected: unpublishing the port, which breaks those documented paths.
+- **Portal settings.** Compose runs the portal with `DJANGO_DEBUG=0` and
+  `DJANGO_ALLOWED_HOSTS=127.0.0.1,localhost`; `runserver --insecure` keeps serving
+  the static CSS. It is still the development server, which suits a loopback demo.
+- **Per-service TLS keys.** `wire.tls` writes `certs/<service>/` per service and
+  `certs/trust/ca-bundle.crt`. Each container mounts only its own key directory and
+  the bundle. Directory mounts, not file mounts, because Docker turns a missing
+  file mount into an empty directory when TLS certificates were never generated.
+  The certificate SANs already include the Compose hostnames.
+- **Store mirror failure.** If the store write after a committed expiry audit entry
+  fails, it is logged at ERROR and not raised, because raising stops the expiry
+  monitor thread (review F20). Access is already closed past `expires_at`, and the
+  facility reconciles the stale `emergency_open` on its next state read (ADR-0044).
+  Rejected: retrying inline, which would block the monitor sweep.
 
 ## Consequences
 

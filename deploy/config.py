@@ -27,7 +27,9 @@ def configure_transport(service_name: str | None = None) -> None:
     if not tls_enabled():
         return
     cert_dir = Path(os.environ.get("TLS_CERT_DIR", "wire/certs")).resolve()
-    bundle = Path(os.environ.get("SSL_CERT_FILE", str(cert_dir / "ca-bundle.crt")))
+    bundle = Path(
+        os.environ.get("SSL_CERT_FILE", str(cert_dir / "trust" / "ca-bundle.crt"))
+    )
     if not bundle.is_file():
         raise RuntimeError("TLS trust bundle missing; run python -m wire.tls first")
     os.environ["SSL_CERT_FILE"] = str(bundle)
@@ -35,5 +37,9 @@ def configure_transport(service_name: str | None = None) -> None:
         if name in os.environ:
             os.environ[name] = os.environ[name].replace("http://", "https://")
     if service_name:
-        os.environ.setdefault("SSL_CERTFILE", str(cert_dir / f"{service_name}.crt"))
-        os.environ.setdefault("SSL_KEYFILE", str(cert_dir / f"{service_name}.key"))
+        os.environ.setdefault(
+            "SSL_CERTFILE", str(cert_dir / service_name / f"{service_name}.crt")
+        )
+        os.environ.setdefault(
+            "SSL_KEYFILE", str(cert_dir / service_name / f"{service_name}.key")
+        )

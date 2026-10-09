@@ -34,8 +34,12 @@ _TLS_VALID_DAYS = 90
 
 
 def generate(output_dir: Path) -> None:
-    """Create one self-signed local certificate per federation service."""
-    output_dir.mkdir(parents=True, exist_ok=True)
+    """Create one self-signed local certificate per federation service.
+
+    Each service's key and certificate go in ``<output_dir>/<service>/`` and
+    the shared client trust bundle in ``<output_dir>/trust/``, so a container
+    can mount only its own key plus the bundle (ADR-0047).
+    """
     certificates: list[bytes] = []
 
     for service in SERVICES:
@@ -47,13 +51,17 @@ def generate(output_dir: Path) -> None:
             ip_addresses=("127.0.0.1",),
             valid_days=_TLS_VALID_DAYS,
         )
-        (output_dir / f"{service}.key").write_bytes(private_key_to_pem(priv))
+        service_dir = output_dir / service
+        service_dir.mkdir(parents=True, exist_ok=True)
+        (service_dir / f"{service}.key").write_bytes(private_key_to_pem(priv))
         cert_pem = certificate_to_pem(cert)
-        (output_dir / f"{service}.crt").write_bytes(cert_pem)
+        (service_dir / f"{service}.crt").write_bytes(cert_pem)
         certificates.append(cert_pem)
 
     # Trust the exact demo servers instead of disabling certificate verification.
-    (output_dir / "ca-bundle.crt").write_bytes(b"".join(certificates))
+    trust_dir = output_dir / "trust"
+    trust_dir.mkdir(parents=True, exist_ok=True)
+    (trust_dir / "ca-bundle.crt").write_bytes(b"".join(certificates))
 
     print(f"TLS certificates written to {output_dir}")
 

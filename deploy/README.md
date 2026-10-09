@@ -43,7 +43,16 @@ its keys in memory, so a previous run's data is unreadable anyway.
 
 ## Path B — Docker Compose
 
-From the repository root:
+From the repository root, create a store password once. It goes in
+`deploy/.env`, which is git-ignored and kept out of the image build context.
+Compose refuses to start without it:
+
+```bash
+python -c "import secrets, pathlib; pathlib.Path('deploy/.env').write_text('POSTGRES_PASSWORD=' + secrets.token_urlsafe(16) + '
+')"
+```
+
+Then:
 
 ```bash
 docker compose -f deploy/docker-compose.yml up --build
@@ -60,7 +69,8 @@ Path A:
 docker compose -f deploy/docker-compose.yml logs -f bootstrap
 ```
 
-Look at the database (published on host port 55433):
+Look at the database (published on host port 55433, loopback only, password
+from `deploy/.env`):
 
 ```bash
 docker compose -f deploy/docker-compose.yml exec store psql -U postgres -d ehr
@@ -71,7 +81,7 @@ same logins as the portal demo. To run a portal separately against a services-on
 stack (start Compose with `up --build bootstrap`):
 
 ```bash
-DATABASE_URL=postgresql://postgres@127.0.0.1:55433/ehr python -m deploy.seed_portal
+DATABASE_URL=postgresql://postgres:<POSTGRES_PASSWORD>@127.0.0.1:55433/ehr python -m deploy.seed_portal
 ```
 
 Tear down:
@@ -113,7 +123,8 @@ docker compose -f deploy/docker-compose.yml up --build -d
 ```
 
 All federation clients, including bootstrap and the portal, use HTTPS and trust
-`wire/certs/ca-bundle.crt`. No `TLS_VERIFY=false` is needed. The browser portal
+`wire/certs/trust/ca-bundle.crt`. Each container mounts only its own
+`wire/certs/<service>/` key directory plus that bundle. No `TLS_VERIFY=false` is needed. The browser portal
 itself stays at HTTP on loopback. To return to plain HTTP, tear down the TLS stack,
 remove `TLS_ENABLED`, and start again. Do not regenerate certificates while the
 TLS stack is running.

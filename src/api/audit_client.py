@@ -18,11 +18,14 @@ deferred to Phase 4:
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Callable
 
 import httpx
 from contracts.enums import LifecycleState
+
+_logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT_SECONDS = 5.0
 
@@ -119,7 +122,8 @@ def make_lifecycle_audit_logger(
         timeout: Per-request HTTP timeout in seconds.
         state_writer: Optional store update after the audit append succeeds.
             Mirrors timer state only; does not persist the rotated ciphertext
-            or claim to close ADR-0043's re-baseline persistence gap.
+            or claim to close ADR-0043's re-baseline persistence gap. A
+            writer failure is logged at ERROR, never raised (ADR-0047).
 
     Returns:
         A ``Callable[[dict[str, Any]], None]`` suitable for
@@ -139,9 +143,21 @@ def make_lifecycle_audit_logger(
             correlation_id=entry["correlation_id"],
             timeout=timeout,
         )
-        if state_writer is not None:
+        if state_writer is None:
+            return
+        try:
             state_writer(
                 entry["record_id"], LifecycleState(entry["to_state"]), entry["event_id"]
+            )
+        except Exception:
+            # The chain entry is committed and cannot be rolled back. Raising
+            # here would stop the expiry monitor thread (review F20), so log
+            # loudly instead. Access is already closed (the session key is
+            # refused past expires_at), and the facility reconciles the stale
+            # emergency_open on its next state read (ADR-0044, ADR-0047).
+            _logger.exception(
+                "expiry audited but store state not written for record %s",
+                entry["record_id"],
             )
 
     return _log

@@ -8,7 +8,8 @@ from deploy.config import configure_transport
 
 
 def test_tls_upgrades_all_endpoint_maps_and_uses_bundle(monkeypatch, tmp_path):
-    bundle = tmp_path / "ca-bundle.crt"
+    bundle = tmp_path / "trust" / "ca-bundle.crt"
+    bundle.parent.mkdir()
     bundle.write_text("test trust bundle")
     monkeypatch.setenv("TLS_ENABLED", "true")
     monkeypatch.setenv("TLS_CERT_DIR", str(tmp_path))
@@ -23,7 +24,7 @@ def test_tls_upgrades_all_endpoint_maps_and_uses_bundle(monkeypatch, tmp_path):
     assert os.environ["AUDIT_SERVICE_URL"] == "https://audit:8020"
     assert os.environ["AUTHORITY_URLS"] == "med=https://med:8010,net=https://net:8011"
     assert Path(os.environ["SSL_CERT_FILE"]) == bundle
-    assert Path(os.environ["SSL_CERTFILE"]) == tmp_path / "audit.crt"
+    assert Path(os.environ["SSL_CERTFILE"]) == tmp_path / "audit" / "audit.crt"
 
 
 def test_tls_missing_trust_bundle_fails_before_starting(monkeypatch, tmp_path):
