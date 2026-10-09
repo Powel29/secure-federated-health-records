@@ -39,6 +39,8 @@ from urllib.parse import urlparse
 import psycopg
 from psycopg import sql
 
+from deploy.bootstrap import _require_local_database as require_local_database
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PORTAL_DIR = REPO_ROOT / "portal"
 ROLES_SQL = PORTAL_DIR / "sql" / "roles.sql"
@@ -54,19 +56,22 @@ def _db_parts(database_url: str) -> dict[str, str]:
         "port": str(u.port or 5432),
         "name": (u.path or "/postgres").lstrip("/"),
         "user": u.username or "postgres",
-        "password": u.password or "",
+        "password": u.password or os.environ.get("PGPASSWORD", ""),
     }
 
 
-def _prepare_portal_schema(database_url: str) -> None:
+def _prepare_portal_schema(database_url: str, *, reset: bool = True) -> None:
     """Create the portal schema + read-only store role (portal/sql/roles.sql)."""
+    if reset:
+        require_local_database(database_url)
     roles_sql = ROLES_SQL.read_text(encoding="utf-8")
     with psycopg.connect(database_url, autocommit=True) as conn:
         with conn.cursor() as cur:
             # Fresh portal state every run, matching the fresh federation
             # (ADR-0039): stale case files would point at a chain that no
             # longer exists.
-            cur.execute("DROP SCHEMA IF EXISTS portal CASCADE")
+            if reset:
+                cur.execute("DROP SCHEMA IF EXISTS portal CASCADE")
             cur.execute(roles_sql)
             # Password auth for the read-only role (the Docker Postgres most
             # people run uses scram, not trust). Dev-only, documented.

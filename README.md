@@ -162,8 +162,13 @@ check fails, nothing is considered running. Ctrl+C stops everything.
 docker compose -f deploy/docker-compose.yml up
 ```
 
-Compose brings up its own `store`, runs migrations and bootstrap, and serves the
-six roles at the published ports `8001/8002/8010/8011/8020/8030`.
+Compose brings up its own `store`, runs migrations and bootstrap, serves the
+six roles at `8001/8002/8010/8011/8020/8030`, and starts the three portals at
+**http://127.0.0.1:8000/**. All published ports bind to loopback. Use
+`docker compose -f deploy/docker-compose.yml up --build -d` to include code changes.
+After a key-service restart or a failed bootstrap, recreate the disposable demo
+with `down` followed by `up --build -d`; this resets its synthetic records. See
+[deploy/README.md](deploy/README.md) for verified TLS and recovery details.
 
 ---
 

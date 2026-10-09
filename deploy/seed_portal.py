@@ -15,11 +15,18 @@ synthetic records and issued credentials:
 
 Dev-only credentials (documented, synthetic, never reused): every seeded
 login's password is ``demo1234``.
+
+Run as a script, it does step 2 (step 1 is part of the Path A/B bootstrap)
+and serves the portals against an already running federation::
+
+    DATABASE_URL=postgresql://postgres@127.0.0.1:55433/ehr python -m deploy.seed_portal
 """
 
 from __future__ import annotations
 
+import argparse
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -27,7 +34,8 @@ from typing import Any
 import httpx
 from crypto_core import certificate_to_pem
 
-from demo.seed_data import SyntheticDataset
+from demo.seed_data import SyntheticDataset, create_synthetic_dataset
+from deploy.config import configure_transport, tls_enabled
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PORTAL_DIR = REPO_ROOT / "portal"
@@ -207,3 +215,94 @@ def seed_portal_accounts(dataset: SyntheticDataset) -> dict[str, int]:
     )
     directory += 1
     return {"users": users, "directory": directory}
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Seed the portal schema + logins, then serve the portals on localhost."""
+    from deploy.run_portal_demo import (
+        STORE_RO_PASSWORD,
+        STORE_RO_USER,
+        _db_parts,
+        _prepare_portal_schema,
+    )
+
+    parser = argparse.ArgumentParser(
+        description="Run the portals against a running federation."
+    )
+    parser.add_argument("--port", type=int, default=8000, help="Django dev server port")
+    parser.add_argument("--host", default="127.0.0.1", help="Django bind address")
+    parser.add_argument(
+        "--no-server", action="store_true", help="seed the portal side, then exit"
+    )
+    args = parser.parse_args(argv)
+
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        print(
+            "DATABASE_URL is not set (Path B: postgresql://postgres@127.0.0.1:55433/ehr)",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Restarting only the portal must preserve consents and case history.
+    _prepare_portal_schema(database_url, reset=False)
+    if tls_enabled():
+        os.environ.setdefault("CUSTODIAN_URL", "https://127.0.0.1:8030")
+        os.environ.setdefault("AUDIT_SERVICE_URL", "https://127.0.0.1:8020")
+        os.environ.setdefault(
+            "FACILITY_URLS",
+            "facility-a=https://127.0.0.1:8001,facility-b=https://127.0.0.1:8002",
+        )
+        os.environ.setdefault(
+            "AUTHORITY_URLS",
+            "authority-med=https://127.0.0.1:8010,authority-net=https://127.0.0.1:8011",
+        )
+    configure_transport()
+    db = _db_parts(database_url)
+    env = {
+        "PORTAL_DB_HOST": db["host"],
+        "PORTAL_DB_PORT": db["port"],
+        "PORTAL_DB_NAME": db["name"],
+        "PORTAL_DB_USER": db["user"],
+        "PORTAL_DB_PASSWORD": db["password"],
+        "STORE_DB_USER": STORE_RO_USER,
+        "STORE_DB_PASSWORD": STORE_RO_PASSWORD,
+        "DJANGO_SETTINGS_MODULE": "config.settings",
+    }
+    # CUSTODIAN_URL, FACILITY_URLS, ... default to the published localhost
+    # ports (portal/config/settings.py); set them to point elsewhere.
+    django_setup(env)
+    from django.core.management import call_command
+
+    call_command("migrate", verbosity=0)
+    seeded = seed_portal_accounts(create_synthetic_dataset())
+    print(f"{seeded['users']} portal logins, {seeded['directory']} directory rows")
+    if args.no_server:
+        return 0
+
+    print(
+        f"portals at http://127.0.0.1:{args.port}/  (password for all: {DEMO_PASSWORD})"
+    )
+    for username, (subject_id, role) in PORTAL_LOGINS.items():
+        print(f"  {username:10s} {role:10s} {subject_id}")
+    try:
+        return subprocess.call(
+            [  # noqa: S603 - this repo's own manage.py via sys.executable
+                sys.executable,
+                str(PORTAL_DIR / "manage.py"),
+                "runserver",
+                f"{args.host}:{args.port}",
+                "--noreload",
+                # Serve the portal's CSS when DJANGO_DEBUG=0 (Compose);
+                # runserver serves static files only in DEBUG otherwise.
+                "--insecure",
+            ],
+            cwd=str(PORTAL_DIR),
+            env={**os.environ, **env},
+        )
+    except KeyboardInterrupt:
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

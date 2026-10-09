@@ -1,12 +1,18 @@
-# Fix proposals — whole-repo review (2026-10-07, HEAD `3c42094`)
+# Fix proposals — whole-repo review
 
 **To:** Powel, Nandini, Ojas, Avaneeth
 **From:** Avaneeth (review run with Claude Code)
-**Status:** draft for review. Nothing here is implemented.
+**Status:** draft for review. Nothing here is implemented by this document.
 
-Every item comes from a four-way review of the whole repo (standards ×
-spec, core modules × api/portal/deploy). Smells are left out; this covers
-rule violations and bugs only.
+| Review | Range | What it covered |
+|---|---|---|
+| 1st, 2026-10-07 | whole repo at `3c42094` | Rule violations and bugs → decisions **D1–D11**, fixes **F1–F44** |
+| 2nd, 2026-10-09 | `3c42094...4ddc201` (branch `full-deploy`, 106 files) | Status of every D/F item, plus new findings **N1–N16** from the Phase 5 and full-deploy code |
+
+Both reviews were four- or three-way parallel reviews (standards × spec),
+and the main findings were re-checked by hand. Smells are left out; this
+covers rule violations and bugs only. Status lines marked **Status at
+`4ddc201`** come from the second review.
 
 ## How to review
 
@@ -29,19 +35,46 @@ rule violations and bugs only.
 
 ## 0. Design decisions needed first
 
+**All eleven are still pending at `4ddc201`.** `docs/plans/phase5-exit-plan.md:55-62` lists D1–D8 as "⏳ Pending"; D9–D11 have no ADR.
+
 | ID | Decision | Current state | Options | Recommendation |
 |---|---|---|---|---|
 | **D1** | Who checks the Emergency Assertion before share 3 is released? | Nobody. The audit service releases share 3 to any caller that knows the `share_key` (= record_id). The custodian asks for it *before* the facility has checked anything, and ADR-0044 accepts that order. | (a) The audit service checks it itself, against its own trust anchor, before commit-then-release. (b) The facility pre-checks it first and the custodian calls audit afterwards. | **(a)**. A share holder that releases without checking anything is the actual hole; ordering at the custodian doesn't fix that. Amend §8 to say "each share holder validates before release". Supersede ADR-0044's acceptance of the current ordering. |
 | **D2** | Share 2 (home authority) | Generated at ingest and thrown away (`custodian_service.py:764`). Break-glass is effectively 2-of-2: custodian (share 1) + audit service (share 3). | (a) Deposit share 2 with the patient's home-authority service and gate its release the same way as share 3. The gate then accepts any 2 of {1,2,3}. (b) Amend §5 and the paper to say "2-of-2 custodian + audit; share 2 reserved". | **(a)** if time allows, since the paper claims 2-of-3 with a delegate fallback. Otherwise (b) and state it honestly. |
-| **D3** | What does "forced rotation" on expiry (and on revocation) actually rotate? | Nothing. Expiry computes a rotated record and wrapping, then discards them; the custodian sends a random "baseline key". Old shares, the emergency wrapping and search tokens all keep working. Revocation rotates the DEK but crashes on Postgres and leaves the emergency wrapping on the old DEK. | (a) **Full**: new DEK, re-encrypt, re-author the policy root secret (needs authoring keys from the authorities), new emergency key with re-split and redistributed shares, re-index search. (b) **Emergency path only**: replace the emergency wrapping with a fresh emergency key and new shares, and re-key search tokens. The DEK is not rotated; state that as a limitation. | **(b) now, (a) as stretch.** Today *nothing* is rotated (F9). (b) is achievable at the facility (it holds the DEK during the session), kills old shares and tokens, and is honest. (a) needs a facility→authority authoring call (depends on D5). |
+| **D3** | What does "forced rotation" on expiry (and on revocation) actually rotate? | Nothing. Expiry computes a rotated record and wrapping, then discards them; the custodian sends a random "baseline key". Old shares, the emergency wrapping and search tokens all keep working. Revocation rotates the DEK but crashes on Postgres and leaves the emergency wrapping on the old DEK. **Since `4ddc201`:** the expiry timer now *mirrors* `EXPIRED → GRANTED` into the store (ADR-0047) without persisting a rotated ciphertext, so the store claims a re-baseline that never happened. | (a) **Full**: new DEK, re-encrypt, re-author the policy root secret (needs authoring keys from the authorities), new emergency key with re-split and redistributed shares, re-index search. (b) **Emergency path only**: replace the emergency wrapping with a fresh emergency key and new shares, and re-key search tokens. The DEK is not rotated; state that as a limitation. | **(b) now, (a) as stretch.** Today *nothing* is rotated (F9). (b) is achievable at the facility (it holds the DEK during the session), kills old shares and tokens, and is honest. (a) needs a facility→authority authoring call (depends on D5). |
 | **D4** | Trusted source of **patient** public keys | There isn't one. The caller sends the patient's public key in the request body (consent read, grant submit), so a self-signed grant passes. Revocation trusts a caller-supplied `actor_id`. Revoking a grant sends the patient's *private* key to the facility. | (a) The home facility CA issues each patient an X.509 cert at enrolment, validated against the configured root like clinicians. (b) A registry at the home authority that signs (patient_id → public key) bindings. | **(a)**. It reuses `identity` and the F1 trust anchor and adds no new construction. Unblocks F10, F13, F15. |
-| **D5** | Service-to-service authentication | None. Every service is unauthenticated and listens on all interfaces; Compose publishes every port. `requester_id` / `subject_id` are whatever the caller types. `breakglass/envelopes.py` exists but nothing calls it. | (a) Every inter-service call carries a signed `RequestEnvelope` (the existing contract and `breakglass/envelopes.py`, currently unused), signed by a service key with a bootstrap-issued cert, with one-time `request_id`. (b) Network-only: bind to loopback / Compose internal network, and document "no exposure" as an assumption. | **(b) immediately (F16), then (a)**. (a) also satisfies §2 rule 9 for share requests and gives BOLA (F34) a caller identity. |
-| **D6** | PROJECT §4A property 1 ("no PHI, DEKs, attribute keys or shares in the clear") vs. the current wire design | The facility decrypts and returns `plaintext_b64`. Ingest sends the plaintext and the full emergency key. Attribute keys, shares and two private keys travel in request/response bodies. The analyser checks none of this and prints "PASSED". | (a) **Client-side crypto**: the custodian decrypts and encrypts. The facility returns ciphertext + wrapping, ingest sends ciphertext + wrappings, and shares are delivered wrapped to the recipient's key using the existing `encapsulate_key` + AES-GCM delivery pattern the gate already uses. (b) Narrow property 1 to the five federation services, exclude the custodian↔facility hop, and force TLS on it. | **(a)** is what the claim needs; it is large (L, three owners). **(b)** is the fallback if time runs out, written into the paper as scope. Either way the analyser (F18) must test whatever claim is kept. |
-| **D7** | Where expiry returns a record that was REVOKED before break-glass | Expiry always ends at `GRANTED`, so REVOKED → break-glass → expiry silently un-revokes the record. ADR-0044's reset writes `granted` too. | (a) Add `EXPIRED → REVOKED` to `LEGAL_TRANSITIONS`; the session remembers `prior_state`. (b) Forbid break-glass on REVOKED records. | **(a)**. Break-glass on a revoked record is an intended legal transition today; it must not silently un-revoke. |
+| **D5** | Service-to-service authentication | None. Every service is unauthenticated and listens on all interfaces; Compose publishes every port. `requester_id` / `subject_id` are whatever the caller types. `breakglass/envelopes.py` exists but nothing calls it. **Since `4ddc201`:** (b) is done. Services bind to `127.0.0.1` and Compose publishes on `127.0.0.1` (F16). Postgres is newly published with `trust` auth (N12). | (a) Every inter-service call carries a signed `RequestEnvelope` (the existing contract and `breakglass/envelopes.py`, currently unused), signed by a service key with a bootstrap-issued cert, with one-time `request_id`. (b) Network-only: bind to loopback / Compose internal network, and document "no exposure" as an assumption. | **(b) immediately (F16), then (a)**. (a) also satisfies §2 rule 9 for share requests and gives BOLA (F34) a caller identity. |
+| **D6** | PROJECT §4A property 1 ("no PHI, DEKs, attribute keys or shares in the clear") vs. the current wire design | The facility decrypts and returns `plaintext_b64`. Ingest sends the plaintext and the full emergency key. Attribute keys, shares and two private keys travel in request/response bodies. The analyser checks none of this and prints "PASSED". **Since `4ddc201`:** the analyser now asserts property 1, with a `--claim1-scope plain\|tls` switch that leaves D6 open (ADR-0045). Never run on real captures. | (a) **Client-side crypto**: the custodian decrypts and encrypts. The facility returns ciphertext + wrapping, ingest sends ciphertext + wrappings, and shares are delivered wrapped to the recipient's key using the existing `encapsulate_key` + AES-GCM delivery pattern the gate already uses. (b) Narrow property 1 to the five federation services, exclude the custodian↔facility hop, and force TLS on it. | **(a)** is what the claim needs; it is large (L, three owners). **(b)** is the fallback if time runs out, written into the paper as scope. Either way the analyser (F18) must test whatever claim is kept. |
+| **D7** | Where expiry returns a record that was REVOKED before break-glass | Expiry always ends at `GRANTED`, so REVOKED → break-glass → expiry silently un-revokes the record. ADR-0044's reset writes `granted` too. **Since `4ddc201`:** worse. The new state mirror writes `GRANTED` into the shared store unconditionally, so the un-revoke is persistent (N1). **Now urgent.** | (a) Add `EXPIRED → REVOKED` to `LEGAL_TRANSITIONS`; the session remembers `prior_state`. (b) Forbid break-glass on REVOKED records. | **(a)**. Break-glass on a revoked record is an intended legal transition today; it must not silently un-revoke. |
 | **D8** | Who signs the break-glass `TransitionEvent` | A throwaway keypair minted per unlock (`custodian_service.py:926`). Its private key is sent to the facility, and nobody can verify the event afterwards. | (a) The custodian signs it **inside the custodian** with the clinician's key and sends only the signed event; the facility verifies it against the cert already validated by F1. (b) A facility service key signs as witness. | **(a)**. The clinician's key never leaves the custodian (ADR-0043), and the event becomes verifiable (today it is signed with a throwaway key). |
 | **D9** | Fix for ambiguous signed payloads | Seven modules join fields with `0x1f`, with no length prefix and no type tag. `Identifier` allows `0x1f`, so one set of signed bytes can be read as different fields. The same clinician key signs assertions and transition events. | (a) A length-prefixed encoding with a per-type domain tag, in `crypto_core`. (b) Forbid `0x1f` in `Identifier` (a `contract:` PR). | **(a)**. It also fixes cross-type signature reuse. It is an encoding change, not a new primitive, but it touches five modules: one ADR, one coordinated PR. |
 | **D10** | Credential revocation vs. one shared, never-rotated attribute key | One key per (name, value), shared by every holder and never rotated. Revoking a credential stops nothing already obtained, and `/attribute-keys/author` skips the credential check entirely. | (a) Document as a limitation (ADR-0026 trade). (b) Epoch-versioned attribute keys plus re-authoring affected records. | **(a)** for this project; (b) is future work. |
 | **D11** | PRE claims (unidirectional, "without decryption") | Docstrings and ADR-0012 claim unidirectional re-encryption without decryption. In the code, `rk` can be inverted (bidirectional), the facility unwraps the DEK in plaintext and delivers it by KEM, and `reencrypt` is never called. | (a) Correct the docstrings and paper: it's a KEM-style delivery to the clinician, the scheme is bidirectional, and the gate decrypts. (b) Implement a unidirectional scheme. | **(a)**. A real unidirectional PRE needs pairings, which are out of scope (PROJECT §6). Don't change the construction. |
+
+---
+
+## Status at `4ddc201` (second review)
+
+| ID | Status | Evidence | What remains |
+|---|---|---|---|
+| F1, F2, F3, F4, F6, F7, F8, F10, F11 | **OPEN** | Only 3 lines of `hospital.py` changed; C3, C6, C7 are strict xfails | Everything in its section below |
+| F5 | **DIVERGED (not sound)** | `deploy/asgi/facility.py:61` gives the timer `state_writer=repo.upsert_lifecycle_state`. The ADR-0044 reset is still at `hospital.py:199-227`. | The proposal asked for writes through the CAS ending at `prior_state`, plus a sessions table and restart reconciliation. The actual write is unconditional and always ends at GRANTED. See N1, N2. |
+| F9 | **OPEN** | Strict xfail `test_c4_pre_expiry_shares_do_not_restore_search`; ADR-0047 defers it | Everything; blocked on D3. Note the C4 test itself is vacuous (N6). |
+| F12 | **PARTIAL (overclaimed by 638c2c6)** | `transition_lifecycle_state` at `storage/repositories.py:297` and `api/repository.py:383`; lock on `ConsumedEventIds`; unit tests | **No production caller.** `hospital.py:221,831,1006,1220` and the new state mirror all still upsert unconditionally. See N1. |
+| F13 | **PARTIAL** | Postgres `store_consent_grant` is now an upsert by `grant_id` (persisted across processes) | The facility still never reads stored grants and still takes the patient key from the caller (`hospital.py:519`). |
+| F14, F15, F17 | **OPEN** | — | Everything |
+| F16 | **FIXED** | `entrypoint.py` defaults to `127.0.0.1`; Compose ports bound to `127.0.0.1:`; `tests/deploy/test_bind_address.py` | The Dockerfile's `ENV HOST=0.0.0.0` overrides the default for a plain `docker run` (N14) |
+| F18 | **PARTIAL** | Canary matching in raw, hex and base64; key denylist (`wire/checks.py:48`); claim 2 checked through the Postgres COMMIT frame; non-zero exit; synthetic-fixture tests | System fix blocked on D6. Never run on real captures (exit-plan E4). Revocation not covered (N4). Stale-capture and empty-TLS false passes (N5). Gap handling fails open (N8). |
+| F19, F20, F21 | **OPEN** | No `else` at `hospital.py:179-196`; `consumed_store=None` still defaults | Everything. F20 is now easier to trigger (N2). |
+| F22 | **FIXED (facility only)** | Migration `0002_consumed_ids.sql`, `consume_id`, a Postgres backend for `replay.py`, wired in `facility.py`; C8 system test | The C8 test uses the in-memory repo; a Postgres variant is missing (N13). The audit and authority consumers wait on F2 and F15. |
+| F23–F27, F29–F36 | **OPEN** | Sources untouched | Everything |
+| F37 | **PARTIAL** | URL scheme follows `TLS_ENABLED` (`deploy/config.py`); the custodian is seeded on Compose | Chain verification still runs after the services start (`run_local` [7/7], `compose_bootstrap.py:129`); no tampered-genesis test |
+| F38, F40, F41, F44 | **OPEN** | — | Everything |
+| F39 | **FIXED** | `capture.is_allowed_interface` refuses before `dumpcap` runs; two tests | `br-*` also matches non-Docker bridges such as `br-lan` (N15) |
+| F42 | **PARTIAL** | CI fails instead of skipping (`skip_or_fail_without_postgres`) | The other seven rows of the F42 table. Some tests still use a plain `pytest.skip` (N3). |
+| F43 | **FIXED (diverged, sound)** | Versioned JSONB with a strict codec (`storage/policy_codec.py`), encrypted leaves only; `test_policy_and_consent_survive_a_new_process`, `test_stored_policy_still_requires_attribute_keys` | An HTTP-level `test_read_succeeds_after_facility_restart` |
+
+**Totals:** 4 fixed, 7 partial or diverged, 33 open. No decisions made.
 
 ---
 
@@ -111,6 +144,8 @@ rule 9 (HARD).
 **Test.** `test_ingest_with_existing_record_id_leaves_shares_intact`: break-glass on the original still works afterwards.
 
 ### F5 — ADR-0044 state reconciliation · HIGH · Avaneeth (api) + Powel (lifecycle) + Avaneeth (storage) · ⚑ needs D7 · ADR (supersede part of 0044) · M
+**Status at `4ddc201`:** **DIVERGED (not sound).** The timer got `state_writer=repo.upsert_lifecycle_state` (`deploy/asgi/facility.py:61`): unconditional, always ends at GRANTED. The ADR-0044 reset is still at `hospital.py:199-227`. No sessions table or restart reconciliation. See N1, N2.
+
 **Problem.** `_effective_lifecycle_state` ([hospital.py:199-227](../../src/api/hospital.py)) writes
 `granted` (unsigned, `last_event_id=None`) whenever *this* process holds no session. Three consequences:
 - It races with another facility's live session.
@@ -169,6 +204,8 @@ rule 9 (HARD).
 ## 2. Revocation, expiry, lifecycle
 
 ### F9 — Expiry "forced rotation" is computed and thrown away · HIGH · Powel (lifecycle) + Avaneeth (api, storage) + Nandini (search re-key) + Ojas (custodian/audit share replace) · ⚑ needs D3 · ADR · L
+**Status at `4ddc201`:** **OPEN.** Strict xfail `test_c4_pre_expiry_shares_do_not_restore_search`; ADR-0047 defers it. That test is itself vacuous (N6).
+
 **Problem.**
 - `ExpiryResult.rotated_record` / `rotated_wrapping` (`expiry.py:396-443`) are never persisted.
 - The custodian sends a random `baseline_wrapping_key` (`custodian_service.py:946`), so even the computed rotation is useless.
@@ -226,6 +263,8 @@ rule 9 (HARD).
 **Tests.** `test_transition_event_with_invalid_signature_rejected` (exit criterion, at the HTTP level), `test_illegal_transition_rejected` (EMERGENCY_OPEN→REVOKED), `test_replayed_transition_event_rejected`.
 
 ### F12 — No compare-and-set on lifecycle state; `ConsumedEventIds` unlocked · MED · Avaneeth (storage) + Powel (lifecycle) · S
+**Status at `4ddc201`:** **PARTIAL (overclaimed by 638c2c6).** `transition_lifecycle_state` and the `ConsumedEventIds` lock exist with unit tests, but **nothing in production calls the CAS**. See N1.
+
 **Problem.** `upsert_lifecycle_state` ([repositories.py:270](../../src/storage/repositories.py)) overwrites unconditionally, so two concurrent transitions can both succeed. `ConsumedEventIds` (`state_machine.py:232`) has no lock, unlike `breakglass/replay.py`.
 
 **Fix.**
@@ -236,6 +275,8 @@ rule 9 (HARD).
 **Test.** `test_concurrent_transitions_from_same_state_exactly_one_succeeds` (Postgres).
 
 ### F13 — Consent revocation is enforced only by the portal · HIGH (HARD: CLAUDE.md / ADR-0014) · Avaneeth (api) + Powel (consent) + Ojas (portal text) · ⚑ needs D4 · M
+**Status at `4ddc201`:** **PARTIAL.** Postgres `store_consent_grant` is now an upsert by `grant_id`. The facility still never reads stored grants and still takes the patient key from the caller.
+
 **Problem.**
 - The facility checks only the grant the caller presents ([hospital.py:517-543](../../src/api/hospital.py)).
 - It verifies that grant with a **caller-supplied** patient public key.
@@ -284,6 +325,8 @@ The authority verifies the envelope against the subject's cert (clinician: exist
 **Test.** `test_copied_credential_without_subject_signature_gets_no_key`, `test_replayed_release_envelope_rejected`.
 
 ### F16 — Services listen on all interfaces; Compose publishes every port · HIGH · Ojas (deploy) · S
+**Status at `4ddc201`:** **FIXED.** `entrypoint.py` defaults to `127.0.0.1`; Compose ports bound to `127.0.0.1:`; `tests/deploy/test_bind_address.py`. The Dockerfile's `ENV HOST=0.0.0.0` still overrides it for a plain `docker run` (N14).
+
 **Problem.** `deploy/entrypoint.py:44` defaults `HOST` to `0.0.0.0`; `run_local.py` never sets it; `docker-compose.yml` publishes 8010, 8011, 8020, 8001, 8002 and 8030 on every interface. §8 drops authentication *because* there is "no public exposure".
 
 **Fix.**
@@ -307,6 +350,8 @@ The authority verifies the envelope against the subject's cert (clinician: exist
 ## 4. Required course module (Traffic Analysis, PROJECT §4A)
 
 ### F18 — Analyser asserts none of the four properties, and property 1 is currently false · HIGH (HARD: PROJECT §4A) · Ojas (wire, per WORKFLOW; `analyze_traffic.py` was authored by Nandini) + everyone (D6) · ⚑ needs D6 · ADR · L
+**Status at `4ddc201`:** **PARTIAL.** Analyser asserts all four properties (canaries in raw, hex and base64, key denylist, claim 2 through the Postgres COMMIT frame, non-zero exit). The system fix is blocked on D6, and it has never been run on real captures. See N4, N5, N8, N9.
+
 **Problem.** `wire/analyze_traffic.py` counts packets and URIs, uses bare `assert` (stripped by `-O`), and prints "PASSED". On the plain profile the following do cross the wire in the clear:
 - `plaintext_b64` (read and ingest);
 - `emergency_key_b64` (ingest);
@@ -327,6 +372,8 @@ The authority verifies the envelope against the subject's cert (clinician: exist
 **Fix — system:** D6-a (client-side crypto, shares delivered wrapped to the recipient), or D6-b with the narrowed claim written into PROJECT §4A and the paper. F11 (no signing key on the wire) and F13 (no patient private key on the wire) remove the private keys under either option.
 
 ### F39 — Capture accepts any interface · LOW (CLAUDE.md capture rule) · Ojas · S
+**Status at `4ddc201`:** **FIXED.** `capture.is_allowed_interface` refuses before `dumpcap` runs; two tests. `br-*` also matches non-Docker bridges (N15).
+
 **Fix.** `wire/capture.py --interface` accepts only a loopback adapter (`lo`, `\Device\NPF_Loopback`, "Adapter for loopback traffic capture") or a Docker bridge (`docker0`, `br-*`). Anything else exits 2 with the rule quoted. Test the allowlist function.
 
 ### F40 — Capture path / `bench/` · LOW · Ojas · S
@@ -362,6 +409,8 @@ The authority verifies the envelope against the subject's cert (clinician: exist
 **Test.** A signature test (`inspect.signature`) asserting there is no default.
 
 ### F22 — Replay stores are in memory only · MED · Powel (breakglass) + Avaneeth (storage migration) · M
+**Status at `4ddc201`:** **FIXED (facility only).** Migration `0002_consumed_ids.sql` + Postgres backend wired in `facility.py`; C8 system test. The Postgres variant of the test is missing (N13); the audit and authority consumers wait on F2 and F15.
+
 **Problem.** `ConsumedAssertionIds()` lives in the process (`hospital.py:425`). A restart reopens replay for any unexpired assertion.
 
 **Fix.** New table `consumed_ids(kind text, id uuid, consumed_at timestamptz, PRIMARY KEY (kind, id))`. Add a `PostgresConsumedIds(kind)` with the same `consume()` interface: `INSERT … ON CONFLICT DO NOTHING`, and rowcount 0 → `ReplayedAssertionError`. The facility, the audit service (F2) and the authority (F15) all use it.
@@ -466,6 +515,8 @@ The authority verifies the envelope against the subject's cert (clinician: exist
 **Test.** `test_portal_default_connection_cannot_write_store_tables`.
 
 ### F43 — Compiled policies live only in a class-level dict · MED · Avaneeth (api, storage) · M
+**Status at `4ddc201`:** **FIXED (diverged, sound).** Versioned JSONB with a strict codec (`storage/policy_codec.py`), encrypted leaves only; cross-process tests. An HTTP-level restart test is still missing.
+
 **Problem.** `api/repository.py:276`: `_shared_*` dicts are shared by every facility in one process and lost on restart, after which reads return 500 (`hospital.py:509`).
 
 **Fix.** New store table `compiled_policies(policy_id PK, compiled bytea)`. Encrypted leaf shares only, which is safe for an honest-but-curious store. The repo reads and writes it; per-instance caches only.
@@ -477,6 +528,8 @@ The authority verifies the envelope against the subject's cert (clinician: exist
 ## 8. Deployment and portal
 
 ### F37 — Bootstrap order and Path B · MED · Ojas (deploy) · M
+**Status at `4ddc201`:** **PARTIAL.** URL scheme follows `TLS_ENABLED`; the custodian is seeded on Compose. Chain verification still runs after the services start; no tampered-genesis test.
+
 **Problem.**
 - Compose `bootstrap` defaults to `https://` while the services default to TLS off, so Path B `up` fails.
 - The chain is verified after the services start, against §7 step 7 ("If chain verification fails at boot, nothing else starts").
@@ -502,6 +555,8 @@ The authority verifies the envelope against the subject's cert (clinician: exist
 **Test.** `test_breakglass_without_lookup_refused`.
 
 ### F42 — Portal and test hygiene · LOW · Mixed · S each
+**Status at `4ddc201`:** **PARTIAL.** CI now fails instead of skipping (`skip_or_fail_without_postgres`). The other seven rows remain; some tests still use a plain `pytest.skip` (N3).
+
 | Issue | Fix | Owner |
 |---|---|---|
 | `settings.py:21` DEBUG defaults on with `ALLOWED_HOSTS=["*"]` | Default `"0"`; `run_portal_demo` sets `DJANGO_DEBUG=1` explicitly | Avaneeth (PS-6) / Nandini |
@@ -518,81 +573,232 @@ The authority verifies the envelope against the subject's cert (clinician: exist
 
 ---
 
+## 9. New findings from the second review (N1–N16)
+
+Found in code merged between `3c42094` and `4ddc201`.
+
+### N1 — Compare-and-set is never used, and the new state mirror overwrites any state · HIGH · Avaneeth (api, storage, deploy) · M
+**Problem.**
+- `transition_lifecycle_state` has no production caller. Every write still goes through the unconditional `upsert_lifecycle_state`: `hospital.py:221` (ADR-0044 reset), `:831` (revoke), `:1006` (break-glass), `:1220` (ingest), plus the new timer mirror (`facility.py:61` → `audit_client.py:142-145`).
+- **Concurrent break-glass:** two requests both read GRANTED and both write EMERGENCY_OPEN; neither gets a conflict.
+- **Cross-facility:** A opens record X. B's ADR-0044 reset sees no local session, writes GRANTED, and B opens too. A's timer then mirrors EXPIRED → GRANTED while B's session is still live.
+- **Revocation:** once F10 makes revoke work on Postgres, any expiry overwrites REVOKED with GRANTED (the D7 hole, now persistent).
+- The in-memory CAS also drops `last_event_id` (`api/repository.py:234-246`), unlike the Postgres version.
+
+**Fix.**
+1. Break-glass (`:1006`) and revoke (`:831`): `repo.transition_lifecycle_state(record_id, expected=source_state, new=…, last_event_id=…)`. Map `StateConflictError` to **409**, with no further side effects (do it before `insert_transition_event`).
+2. Timer mirror: pass a writer that uses the CAS with `expected = LifecycleState(entry["from_state"])`. On conflict, log at ERROR with the record_id and don't overwrite.
+3. Delete the write in `_effective_lifecycle_state` (`:221`); its reconciliation is F5's job. Until F5 lands, a stale `emergency_open` with no session gets **409 with a clear reason** instead of a silent reset.
+4. Keep `upsert` only for ingest. Make it insert-only (`ON CONFLICT DO NOTHING`, raise if a row exists).
+5. In-memory CAS: store `last_event_id` too.
+
+**Tests (Postgres).**
+- `test_concurrent_breakglass_one_wins`: two threads, one 200 and one 409.
+- `test_timer_mirror_does_not_overwrite_a_changed_state`: set REVOKED mid-session, expire, assert still REVOKED.
+- `test_stale_emergency_open_returns_409_not_silent_reset`.
+
+### N2 — A partly failed expiry leaves the record stuck in EXPIRED; a DB error kills the monitor · MED · Powel (lifecycle) + Avaneeth (audit_client) · M
+**Problem.** `audit_client._log` mirrors after each append separately.
+- If the EXPIRED append and its mirror succeed but the GRANTED append fails, the store holds `expired`. `_effective_lifecycle_state` only reconciles EMERGENCY_OPEN, EXPIRED → EMERGENCY_OPEN is illegal, and the session was already deleted (`expiry.py:375`). Every later break-glass on that record gets 403, with no retry.
+- Any exception from `state_writer` now also ends the monitor thread (`expiry.py:491-494`), a new way to hit F20.
+- `test_deployment_expiry_state` only checks ordering on mocks.
+
+**Fix.** This is F20 plus one rule:
+- Claim the session as `expiring` instead of deleting it, and retry on any failure (F20).
+- On retry, the manager resumes from the stored state: if the store already says EXPIRED, only the second transition is replayed.
+- `state_writer` errors are caught inside that retry, never in the loop thread.
+
+**Test.** `test_expiry_retries_after_second_append_fails`: a fake audit that fails once on the GRANTED append; assert the record ends GRANTED (or `prior_state`), not EXPIRED, and the monitor is still alive.
+
+### N3 — Claim registry says "holds" without running the tests · HIGH · Powel (tests/security) · M
+**Problem.** ADR-0046 §2: a claim holds "only if every one of its system tests runs without `xfail`".
+- `claim_status` (`tests/security/claims.py:140-147`) decides from **collection only**: no xfail marker = "holds". A skipped or erroring test still "holds".
+- C2's only system test (`tests/api/test_audit_service.py:24-31`) uses a plain `pytest.skip`, so the F42 CI guard never applies. With no Postgres, C2 and C5 print "holds", and `docs/review/p5-1-evidence.md` repeats that.
+- `claims.collect()` ignores pytest's exit code, so a module that fails to import silently drops its tests. If one of them was a claim's only xfail, the claim flips to "holds".
+
+**Fix.**
+1. Compute status from a **run**, not a collection. Have the existing `_claim_collector` plugin also record each test's outcome (`pytest_runtest_logreport`).
+   - "holds" requires every system test to have **passed**.
+   - skipped → `UNVERIFIED (skipped)`.
+   - xfailed → "fails today: …".
+   - any other result → `BROKEN`.
+2. Treat a non-zero collection exit code as an error, not a smaller set.
+3. Change `test_audit_service.py` (and any other DB test using a plain `pytest.skip`) to `skip_or_fail_without_postgres`.
+4. Re-run and correct `p5-1-evidence.md` for C2 and C5.
+
+**Test.** `test_skipped_system_test_is_not_reported_as_holding` (feed the status function a skipped outcome), `test_collection_error_is_an_error`.
+
+### N4 — Property 1 never covers revocation · HIGH · Powel (wire) + Avaneeth (`run_scenario.py`) · S
+**Problem.** PROJECT §4A(1) requires no secrets in the clear "during normal read, revocation, or break-glass". `deploy/run_scenario.py` never calls revoke, and `wire/analyze_traffic.py:42-51` doesn't expect `/revoke`. The revoke API takes `old_dek_b64` (`hospital.py:792`) and is never captured.
+
+**Fix.**
+- Add a revoke step to the scenario on a separate seeded record, so it doesn't disturb the break-glass record.
+- Add `/records/{id}/revoke` to `EXPECTED_HTTP_ENDPOINTS` and `old_dek_b64` to the key denylist (if not already there).
+- Expect claim 1 to **fail** on the plain capture until D6 and F10 land. That is the honest result.
+
+**Test.** A synthetic-fixture test in `tests/wire/test_checks.py`: a revoke exchange carrying `old_dek_b64` fails claim 1.
+
+### N5 — Stale or empty captures pass claims 1 and 4 · HIGH · Powel (wire) · M
+**Problem.**
+- `wire/capture.py:141-168` never deletes an old pcap and ignores dumpcap's exit status, while the canary manifest is rewritten every run (`run_scenario.py:516`). A failed TLS capture leaves the old `tls.pcap` alongside new canaries: zero hits, so claim 1 (`--claim1-scope tls`) and claim 4 pass.
+- The TLS precondition (`analyze_traffic.py:85-91`) only needs **one** TLS record on any service port.
+- `identify_breakglass(tls)` (`checks.py:507-515`) returns the largest client → facility-b burst without validating it, so a TLS run that aborted before unlock still "passes" claim 4.
+
+**Fix.**
+1. `capture.py`: delete the target pcap before starting, and fail if dumpcap exits non-zero or the file is empty.
+2. Tie pcap to manifest: the scenario writes a `run_id` and `started_at` into the manifest. The analyser refuses when the pcap's first frame is earlier than `started_at`.
+3. TLS preconditions: require TLS flows to **every** service port that the plain capture shows, and a client → facility-b TLS burst at least as large as the plain unlock request. Otherwise claim 4 fails as "TLS run incomplete".
+
+**Tests.**
+- `test_stale_pcap_older_than_manifest_rejected`.
+- `test_tls_capture_with_single_handshake_fails_preconditions`.
+- `test_tls_breakglass_without_unlock_burst_fails_claim4`.
+
+### N6 — C4's strict-xfail test can pass without checking anything · MED · Powel (tests/security) · S
+**Problem.** `test_p51_system_claims.py:333` asserts only inside `if reopened.status_code == 200`. Any refusal, a 500 included, passes. Once F9 lands, strict mode turns it red, the marker is removed, and C4 reads "holds" without proving search is dead.
+
+**Fix.**
+```python
+assert reopened.status_code in (200, 403), reopened.text
+if reopened.status_code == 200:
+    result = _search(client)
+    assert result.status_code != 200 or RECORD not in result.json()["record_ids"]
+```
+
+**Test.** It is the test. Also scan the other claim tests for `if … status_code` guards.
+
+### N7 — Mutation runner counts a crash as "caught" · MED · Powel (tests/security) · S
+**Problem.** `tests/security/mutations.py:274-276`: any non-zero exit counts as red (caught). That includes:
+- an `AttributeError` in `apply()` after a rename;
+- a collection error;
+- a usage error.
+
+A test that is already red at baseline is never flagged (`:294`). (Skip detection is fine: `-ra` prints `SKIPPED [n]`.)
+
+**Fix.**
+- Run the baseline first and abort if it isn't green.
+- Count a mutation as caught only when pytest exits **1** (tests failed). Exit 2–5 (interrupted / internal / usage / no tests) is `ERROR`.
+- `apply()` errors are reported as `ERROR (mutation did not apply)`.
+
+**Test.** `test_mutation_that_fails_to_apply_is_error_not_caught`.
+
+### N8 — TCP reassembly bridges gaps silently · MED · Powel (wire) · S
+**Problem.** `wire/streams.py:86-97, 187-221` joins the bytes on either side of a missing segment.
+- The docstring says this "can only hide a match". For claim 1, a hidden match is a false pass.
+- Joining can also create a match that never existed.
+- A flow's `start_timestamp` comes from its lowest sequence number, not its earliest frame.
+
+**Fix.**
+- Record a `gaps` count per flow. Any service-port flow with gaps makes claim 1 **inconclusive (fail)**, with the flow named.
+- Don't join across a gap: split it into separate chunks.
+- Take `start_timestamp` from the minimum frame time.
+
+**Test.** `test_flow_with_missing_segment_makes_claim1_inconclusive`.
+
+### N9 — Short canaries are silently dropped · MED · Powel (wire) · S
+**Problem.** `wire/canaries.py:31,101` drops patterns shorter than 16 chars. A canary left with no patterns is never searched and never reported.
+
+**Fix.** The scenario controls canary generation, so generate them at ≥ 16 chars. At manifest load, **fail** if any canary has zero patterns. (JSON `\u` escaping only affects non-ASCII and the canaries are ASCII, so skip that.)
+
+**Test.** `test_manifest_with_unsearchable_canary_is_rejected`.
+
+### N10 — Committed benchmark results are stale · MED · Nandini (bench) · S
+**Problem.**
+- `bench/results/p53_search_leakage.json` still shows the response double-counting fixed in 390651a (4 requests, empty-method rows).
+- `benchmark_summary.csv` has no p95 and no warm-up.
+- `environment.json`, which `bench/README.md` says is committed, is missing.
+
+All of these files predate the fixes, so the paper's evidence doesn't match the code (benchmark-methodology skill).
+
+**Fix.** Re-run `bench/run_benchmarks.py` and the leakage analysis on the current code. Commit the results together with `environment.json`, or delete the stale files until exit-plan E2 is re-run.
+
+### N11 — `run_local` drops the schema of any database · MED · Avaneeth (deploy) · S
+**Problem.** `deploy/run_local.py:159` calls `run_migrations(reset=True)`, which runs `DROP SCHEMA public CASCADE` (`migrate.py:58-67`) on whatever `DATABASE_URL` names, with no guard. ADR-0047 doesn't cover it.
+
+**Fix.** Refuse to reset unless the database name is in `{"ehr_test", "ehr"}` **or** `--reset` is passed. One `if` before `run_migrations`. Add a line to ADR-0047.
+
+**Test.** `test_run_local_refuses_to_reset_unknown_database`.
+
+### N12 — Postgres is published to the host with `trust` auth · MED · Avaneeth (deploy) · S
+**Problem.** `docker-compose.yml:22,29` publishes `127.0.0.1:55433` with `POSTGRES_HOST_AUTH_METHOD: trust`. It was not published before this branch. Any local process gets superuser without a password, and could:
+- run `DELETE FROM consumed_ids`, which reopens replay and undoes F22;
+- rewrite `lifecycle_state` or `audit_log`.
+
+**Fix.**
+- Bootstrap generates `POSTGRES_PASSWORD` into the gitignored `.env`, and Compose uses `scram-sha-256`. Services and the `portal-compose` launch entry read it from `.env`.
+- Keep the loopback publish only for the host-side `seed_portal`. If that can run inside Compose, drop the publish entirely.
+
+**Test.** Extend `tests/deploy/test_transport.py`: the Compose file has no `trust` auth method.
+
+### N13 — The C8 restart test never touches Postgres · LOW · Powel + Avaneeth (storage) · S
+**Problem.** `test_p51_system_claims.py:430-440` uses `InMemoryStorageRepository`, so the "restart" shares one Python object, and the durable `consume_id` path has only unit coverage (`phase5-exit-plan.md:111`).
+
+**Fix.** Add a Postgres-backed variant: two app instances on the same DSN, replay across them → 409/400.
+
+### N14 — Container and TLS hardening · LOW · Avaneeth (deploy) · S
+| Issue | Fix |
+|---|---|
+| `deploy/Dockerfile` has no `USER`; services run as root | `RUN useradd -r app` + `USER app` |
+| Dockerfile `ENV HOST=0.0.0.0` overrides the F16 loopback default | Remove it; Compose already sets `HOST` per service |
+| `TLS_VERIFY=false` is still wired through `bootstrap._http_verify`, despite the commit saying "no verify=false" | Delete the path; with the generated CA bundle it isn't needed |
+| Every service cert lists `localhost`/`127.0.0.1` as a SAN, so any service key can impersonate any other service on the host | Give each service cert only its own Compose hostname; host access goes through a single host-facing cert (portal) |
+| Four copies of env-flag parsing (`bootstrap`, `seed_enabled`, `config.tls_enabled`, `entrypoint`) | One `env_flag(name)` in `deploy/config.py` |
+
+### N15 — Small correctness fixes · LOW · as listed · S each
+| Location | Problem | Fix | Owner |
+|---|---|---|---|
+| `wire/http_messages.py:252` | `int(start_line[1])` raises on a malformed status line | Catch `ValueError` and stop walking that flow (as the docstring promises) | Powel |
+| `wire/capture.py:85` | `br-` prefix also admits `br-lan`, `br-ex` | Match `^br-[0-9a-f]{12}$` (the Docker bridge name format) | Powel |
+| `wire/checks.py` `--db-port` | Defaults to 5432; this project's Postgres runs on 55432/55433, so claim 2 fails by default | Default from `DATABASE_URL`'s port | Powel |
+| `tests/security/test_claim_registry.py:269` | Substring match: "F2" matches "F22", "D1" matches "D10" | Word-boundary regex `\bF2\b` | Powel |
+| `storage/policy_codec.py` | `authority_id` not type-checked; `version: true` equals 1; no negative tests for the coordinate and nonce-length guards | `type(x) is int` / `isinstance(x, str)` checks + negative tests | Avaneeth |
+| Search-leakage CSV | Unsalted SHA-256 of dictionary words ("cardiac") is reversible | Replace the hash with a per-run sequence id (`q1`, `q2`, …): same leakage analysis, nothing to reverse | Nandini |
+| `tests/wire/test_live_capture.py:40` | Defaults to `tls` scope while D6 is open | Default to `plain`, which is what the paper must defend until D6 says otherwise | Powel |
+| `docs/plans/phase5-exit-plan.md` step A2 | Still says `TLS_VERIFY=false`, contradicting ADR-0047 | Remove the step | Powel |
+
+### N16 — Process · Powel, Avaneeth · S
+- **CONVENTIONS §3 (one owner):** 638c2c6 (Powel) edits `src/api` and `src/storage`; 9721387 (Avaneeth) edits `src/lifecycle`, `wire` and `tests/security`. The owners of those parts should review each and say so in the PR or the ADR tracker.
+- **ADR-0047:** the decider is "Tejas request", who is not on the team. Name the deciding member and keep it **Proposed** until the team ratifies it. Commit 9721387's message says "ADR-0045" but adds 0047.
+- **PROJECT.md:** the new expiry paragraph sits between §4B and §5A with no heading. Give it one.
+
+---
+
 ## Suggested order
 
-1. **Quick, no decisions needed:** F16, F19, F24, F25, F26, F27, F6, F8, F12, F4, F14 (interim), F42.
-2. **Make the decisions:** D1, D4, D5, D6, D7, D8. One team sync, with ADRs written in the same PR as the code.
-3. **Break-glass core:** F1 → F2 → F11 → F7 → F5. After this the novelty claim holds.
-4. **Lifecycle:** F22 → F10 → F9 (shared `provision_emergency_path`) → F20.
-5. **Course module:** F18 (the analyser first, so it fails, then the system fixes under D6) → F39 → F40.
-6. **Remainder:** F13, F15, F17, F23, F29, F33, F34, F36, F37, F38, F41, F43, F31, F32, F44, F3/D2.
+1. **Stop false evidence first:** N3, N6, N5, N8, N9, N10. Until these are fixed, the claim table and the analyser can say "holds" or "pass" for something that wasn't shown.
+2. **Stop the state from being overwritten:** N1, then N2 (with F20).
+3. **Quick hardening:** N11, N12, N14, N15, N7.
+4. **Close coverage gaps:** N4, N13.
+5. **Quick first-review fixes that need no decisions:** F19, F24, F25, F26, F27, F6, F8, F4, F14 (interim), F42 (remaining rows).
+6. **Make the decisions:** D7 first (now urgent), then D1, D4, D5, D6, D8. One team sync, with ADRs written in the same PR as the code.
+7. **Break-glass core:** F1 → F2 → F11 → F7 → F5. After this the novelty claim holds.
+8. **Lifecycle:** F10 → F9 (shared `provision_emergency_path`) → F20.
+9. **Course module:** finish F18 under D6 → F40.
+10. **Remainder:** F13, F15, F17, F23, F29, F33, F34, F36, F37, F38, F41, F31, F32, F44, F3/D2.
+
+---
 
 ## Per-person breakdown
 
-Owners are taken from `WORKFLOW.md` and `git log`. If something is listed
-under the wrong person, say so and it moves. "Lead" means that person drives
-the fix and coordinates the others on it.
-
 ### Everyone
-- Answer **D1, D4, D5, D6, D7, D8** at the next sync. They block the
-  break-glass core. D2, D3, D9, D10 and D11 can follow.
-- **D6** changes the wire design across the custodian, the facility and the
-  analyser, so it needs all four of you.
-- **F44 / D10** is a team call on what the paper says about credential
-  revocation.
+- No decision from §0 has been made since the first review. **D7 is now urgent**: the state mirror makes the un-revoke persistent.
+- Review the one-owner crossings in N16 for your own modules.
 
-### Powel: crypto core, break-glass, lifecycle, consent
-- **Lead:** F11 (gate takes a pre-signed event; `EXPIRED → REVOKED`), F20 (expiry monitor survives errors), F23 (canonical encoding), F25 (`secrets` nonces), F27 (Shamir index checks).
-- **Your part of shared fixes:**
-  - F1: clinician-cert revocation check in `assertion.py`.
-  - F5 / F9: expiry `state_writer` callback, `prior_state`, re-key on expiry.
-  - F6: assertion max TTL and future-dating check.
-  - F10: `validate_transition` in revocation (and `revocation.py` itself if it is yours; see F10).
-  - F12: lock on `ConsumedEventIds`.
-  - F13: `grant.patient_id` check in `authorize_read`.
-  - F21: required `consumed_store`.
-  - F22: Postgres consumed-id store.
-  - F24 / F26: `gate.py` and `expiry.py` type hints and `repr=False`.
-  - F30: consent TTL comment.
-  - F32: gate docstring.
-  - F35 / F42: `store_reader.py`, patient views, `portal_flows.py` (shared with Ojas).
+### Powel: wire analyser, claim registry, lifecycle
+- **Lead:** N3 (claim status from real runs), N5 (stale or empty captures), N6 (C4 vacuous assert), N7 (mutation runner), N8 (reassembly gaps), N9 (canary length), N13 (Postgres C8 variant).
+- **Shared:** N2 (retry in the expiry manager, with F20), N4 (analyser side), N15 rows for `wire/` and tests, N16 (638c2c6 review, plan step A2).
+- **Still open from the first review:** F11, F20, F23, F25, F27 (lead) and your parts of F1, F5, F6, F9, F10, F12, F13, F21, F22, F24, F26, F30, F32.
 
-### Nandini: search, accounts, clinician portal
-- **Lead:** F17 (registration can't claim an identity; access requires an ISSUED status), F41 (break-glass requires a lookup session).
-- **Your part of shared fixes:**
-  - F9: re-key the search index when the emergency path is re-keyed.
-  - F33: a repo-agnostic emergency-search helper in `search.service`, so `hospital.py` stops calling `derive_search_token`.
-  - F18: you authored `analyze_traffic.py`; please pair with Ojas on the four property checks.
-  - F42: DEBUG / `ALLOWED_HOSTS` default (shared with Avaneeth).
+### Nandini: benchmarks, search, accounts, clinician portal
+- **Lead:** N10 (re-run and commit the benchmark and leakage results).
+- **Shared:** N15 (leakage CSV hashing).
+- **Still open from the first review:** F17, F41 (lead); your parts of F9, F33, F42.
 
-### Ojas: audit, authority, PRE, deploy, wire, custodian, admin portal
-- **Lead:** F2 (audit service checks the assertion before releasing share 3), F3 (share 2 at the home authority, if D2-a), F4 (custodian ingest order), F14 (lock down `/author`), F15 (proof of possession for attribute keys), F16 (bind to loopback, stop publishing ports), F18 (the analyser and its four properties), F31 (chain edge cases), F37 (bootstrap order, Path B), F38 (portal demo in separate processes), F39 (capture interface allowlist), F40 (capture path).
-- **Your part of shared fixes:**
-  - F1: load root and facility CAs from bootstrap PKI in the deploy config.
-  - F6: bounds in `custodian_schemas.py`.
-  - F8: new event types in `audit.events`.
-  - F9: authenticated share replacement at audit and custodian.
-  - F13: correct the portal "facility now refuses" texts.
-  - F21: required `revocation_registry` (shared with Avaneeth, P2-6).
-  - F23: audit and authority payloads.
-  - F24: three `hazmat` imports in `audit/`.
-  - F32: PRE docstring.
-  - F33: move custodian crypto into `src/custodian/`.
-  - F35 / F42: `store_reader.py`, admin views, `audit_service.py` exception, CI skip→fail (some shared with Powel).
+### Ojas: audit, authority, PRE, custodian, admin portal
+- No new findings in your modules. This branch didn't touch audit, authority, PRE or custodian code.
+- **Still open from the first review:** F2, F3, F4, F14, F15, F31, F38, F40 (lead) and your parts of F1, F6, F8, F9, F13, F18, F21, F23, F24, F32, F33, F35, F42. F37 is partly done: the chain still isn't verified before the services start.
 
-### Avaneeth: facility API, storage, records, identity lifecycle, demo, portal DB roles
-- **Lead:** F1 (facility trust anchor), F5 (replace ADR-0044's reset), F7 (break-glass ordering and rollback), F8 (denial logging), F10 (revoke endpoint), F12 (compare-and-set on lifecycle state), F19 (no silent audit no-op), F29 (wrapping AAD), F34 (BOLA test), F36 (`portal_app` role), F43 (persist compiled policies).
-- **Your part of shared fixes:**
-  - F2: the `ReleaseShareRequest` schema.
-  - F4: 409 on duplicate ingest.
-  - F6: bounds in `schemas.py` and capping to the configured time-box.
-  - F9: `replace_wrapping` in storage.
-  - F11: the `_apply_and_persist` helper.
-  - F13: the facility reads stored grants.
-  - F21: required `revocation_registry` (P2-6).
-  - F22: the `consumed_ids` migration.
-  - F24 / F26: `revocation.py` and `ingest.py`.
-  - F33: the api-side cleanup.
-  - F38: the demo driver.
-  - F42: settings defaults.
-- **Confirm:** ownership of `records/revocation.py`. `git log` shows you as the author, while `WORKFLOW.md` lists P3-7 under Powel.
+### Avaneeth: facility API, storage, deploy
+- **Lead:** N1 (wire the CAS everywhere), N11 (reset guard), N12 (Postgres auth), N14 (container and TLS hardening).
+- **Shared:** N2 (`audit_client` mirror), N4 (revoke step in `run_scenario`), N13 (storage side), N15 (`policy_codec`), N16 (9721387 review, ADR-0047 decider).
+- **Still open from the first review:** F1, F5, F7, F8, F10, F19, F29, F34, F36 (lead) and your parts of F4, F6, F9, F11, F12, F13, F21, F22, F24, F26, F33, F38, F42.

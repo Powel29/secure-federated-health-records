@@ -9,6 +9,15 @@
         "DATABASE_URL": "postgresql://postgres@localhost:55432/ehr_test"
       },
       "port": 8000
+    },
+    {
+      "name": "portal-compose",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "deploy.seed_portal", "--port", "8000"],
+      "env": {
+        "DATABASE_URL": "postgresql://postgres@127.0.0.1:55433/ehr"
+      },
+      "port": 8000
     }
   ]
 }

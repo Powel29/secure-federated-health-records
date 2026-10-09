@@ -22,6 +22,8 @@ from contracts.lifecycle import TransitionEvent
 from contracts.records import DEKWrapping, Record
 from federation.discovery import find_record_ids_by_patient
 from policy.engine import CompiledPolicy
+from psycopg.types.json import Jsonb
+from storage.policy_codec import decode_policy, encode_policy
 from storage.repositories import (
     consume_id,
     find_records_by_search_term,
@@ -329,15 +331,8 @@ class InMemoryStorageRepository:
 class PostgresStorageRepository:
     """PostgreSQL storage repository backed by ``storage.repositories``."""
 
-    _shared_compiled_policies: dict[str, CompiledPolicy] = {}
-    _shared_consent_requests: dict[UUID, ConsentRequest] = {}
-    _shared_consent_grants: dict[UUID, ConsentGrant] = {}
-
     def __init__(self, conn: psycopg.Connection) -> None:
         self._conn = conn
-        self._compiled_policies = self._shared_compiled_policies
-        self._consent_requests = self._shared_consent_requests
-        self._consent_grants = self._shared_consent_grants
 
     def get_record(self, record_id: str) -> Record | None:
         return get_record(self._conn, record_id)
@@ -429,26 +424,48 @@ class PostgresStorageRepository:
     def store_compiled_policy(
         self, policy_id: str, compiled_policy: CompiledPolicy
     ) -> None:
-        self._compiled_policies[policy_id] = compiled_policy
+        self._conn.execute(
+            "INSERT INTO compiled_policies (policy_id, payload) VALUES (%s, %s) "
+            "ON CONFLICT (policy_id) DO UPDATE SET payload = EXCLUDED.payload",
+            (policy_id, Jsonb(encode_policy(compiled_policy))),
+        )
 
     def get_compiled_policy(self, policy_id: str) -> CompiledPolicy | None:
-        return self._compiled_policies.get(policy_id)
+        row = self._conn.execute(
+            "SELECT payload FROM compiled_policies WHERE policy_id = %s", (policy_id,)
+        ).fetchone()
+        return decode_policy(row[0]) if row else None
 
     def store_consent_request(self, request: ConsentRequest) -> None:
-        self._consent_requests[request.request_id] = request
+        self._conn.execute(
+            "INSERT INTO consent_requests (request_id, payload) VALUES (%s, %s) "
+            "ON CONFLICT (request_id) DO UPDATE SET payload = EXCLUDED.payload",
+            (request.request_id, Jsonb(request.model_dump(mode="json"))),
+        )
 
     def get_consent_request(self, request_id: UUID) -> ConsentRequest | None:
-        return self._consent_requests.get(request_id)
+        row = self._conn.execute(
+            "SELECT payload FROM consent_requests WHERE request_id = %s", (request_id,)
+        ).fetchone()
+        return ConsentRequest.model_validate(row[0]) if row else None
 
     def store_consent_grant(self, grant: ConsentGrant) -> None:
-        self._consent_grants[grant.grant_id] = grant
+        self._conn.execute(
+            "INSERT INTO consent_grants (grant_id, patient_id, payload) "
+            "VALUES (%s, %s, %s) ON CONFLICT (grant_id) "
+            "DO UPDATE SET patient_id = EXCLUDED.patient_id, "
+            "payload = EXCLUDED.payload",
+            (grant.grant_id, grant.patient_id, Jsonb(grant.model_dump(mode="json"))),
+        )
 
     def get_consent_grant(self, grant_id: UUID) -> ConsentGrant | None:
-        return self._consent_grants.get(grant_id)
+        row = self._conn.execute(
+            "SELECT payload FROM consent_grants WHERE grant_id = %s", (grant_id,)
+        ).fetchone()
+        return ConsentGrant.model_validate(row[0]) if row else None
 
     def list_consent_grants_by_patient(self, patient_id: str) -> list[ConsentGrant]:
-        return [
-            grant
-            for grant in self._consent_grants.values()
-            if grant.patient_id == patient_id
-        ]
+        rows = self._conn.execute(
+            "SELECT payload FROM consent_grants WHERE patient_id = %s", (patient_id,)
+        ).fetchall()
+        return [ConsentGrant.model_validate(row[0]) for row in rows]

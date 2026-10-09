@@ -284,6 +284,14 @@ than this is the fastest way to lose credibility in the viva.
 
 ---
 
+**Deployed expiry limitation (ADR-0043/0044/0047).** The timer invalidates
+emergency search and the deployment mirrors its audited state transitions into
+the store. Its rotated ciphertext and baseline wrapping are still not persisted:
+the custodian supplies a throwaway baseline key. Consequently the deployed demo
+must not claim persisted post-expiry DEK rotation or forward secrecy from that
+rotation. The unit-tested rotation primitive is distinct from this open storage
+integration gap.
+
 ## 5A. UI decision reversed (ADR-0014)
 
 The earlier decision to keep only a read-only terminal dashboard has been

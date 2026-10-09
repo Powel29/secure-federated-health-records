@@ -20,7 +20,13 @@ COPY src/ ./src/
 RUN pip install --no-cache-dir -e .
 
 COPY deploy/ ./deploy/
+# The synthetic dataset the bootstrap step seeds (P4-5).
+COPY demo/ ./demo/
+COPY portal/ ./portal/
+COPY wire/ ./wire/
 
 ENV PYTHONUNBUFFERED=1
+ENV HOST=0.0.0.0
+ENV TLS_CERT_DIR=/tls
 
 ENTRYPOINT ["python", "-m", "deploy.entrypoint"]

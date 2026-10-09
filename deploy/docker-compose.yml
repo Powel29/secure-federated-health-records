@@ -3,24 +3,34 @@
 # Plain HTTP is the default capture mode.
 # TLS is enabled with TLS_ENABLED=true for the P4-6 defense-in-depth mode.
 #
-# The `custodian` service (ADR-0043) is the portals' key agent; the Django
-# portals themselves run outside Compose (see portal/README.md) and are pointed
-# at the published ports 8001/8002/8010/8011/8020/8030, which are bound to
-# the host's loopback only (review F16): nothing listens on a LAN interface.
+# The portal starts after bootstrap succeeds and is served at localhost:8000.
+# Published database and service ports are restricted to loopback (review F16).
+# This is a disposable local demo, not an internet-facing deployment.
+# For verified federation TLS: python -m wire.tls, then TLS_ENABLED=true.
+# Recreate the entire stack after key-service restarts; keys are ephemeral.
+# The store requires POSTGRES_PASSWORD (deploy/.env, git-ignored). Each service
+# mounts only its own TLS key plus the shared trust bundle (ADR-0047).
+#
+# Every service keeps its keys in memory, so the federation is fresh whenever
+# the stack starts (ADR-0039): the store lives in tmpfs and is empty on each
+# start, and `bootstrap` seeds the synthetic dataset into it (SEED_DATA=false
+# skips that). Re-running `up` on a running stack leaves it alone.
 
 services:
   store:
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: ehr
-      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env, see deploy/README.md}"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d ehr"]
       interval: 2s
       timeout: 3s
       retries: 30
-    volumes:
-      - store-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:55433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
     networks: [federation]
 
   migrate:
@@ -32,6 +42,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://postgres@store:5432/ehr
+      PGPASSWORD: "${POSTGRES_PASSWORD}"
     entrypoint: ["python", "-m", "storage.migrate"]
     networks: [federation]
 
@@ -46,8 +57,6 @@ services:
       AUTHORITY_ID: authority-med
       OWNED_ATTRIBUTES: role
       TLS_ENABLED: "${TLS_ENABLED:-false}"
-      SSL_CERTFILE: /tls/authority-med.crt
-      SSL_KEYFILE: /tls/authority-med.key
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8010), 2).close()"]
       interval: 2s
@@ -57,7 +66,8 @@ services:
       - "127.0.0.1:8010:8010"
     networks: [federation]
     volumes:
-      - ../wire/certs:/tls:ro
+      - ../wire/certs/authority-med:/tls/authority-med:ro
+      - ../wire/certs/trust:/tls/trust:ro
 
   authority-net:
     build:
@@ -70,8 +80,6 @@ services:
       AUTHORITY_ID: authority-net
       OWNED_ATTRIBUTES: "specialty,facility,owner"
       TLS_ENABLED: "${TLS_ENABLED:-false}"
-      SSL_CERTFILE: /tls/authority-net.crt
-      SSL_KEYFILE: /tls/authority-net.key
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8011), 2).close()"]
       interval: 2s
@@ -81,7 +89,8 @@ services:
       - "127.0.0.1:8011:8011"
     networks: [federation]
     volumes:
-      - ../wire/certs:/tls:ro
+      - ../wire/certs/authority-net:/tls/authority-net:ro
+      - ../wire/certs/trust:/tls/trust:ro
 
   audit:
     build:
@@ -97,10 +106,9 @@ services:
       SERVICE_ROLE: audit
       PORT: "8020"
       DATABASE_URL: postgresql://postgres@store:5432/ehr
+      PGPASSWORD: "${POSTGRES_PASSWORD}"
       AUDIT_ACTOR_ID: audit-service
       TLS_ENABLED: "${TLS_ENABLED:-false}"
-      SSL_CERTFILE: /tls/audit.crt
-      SSL_KEYFILE: /tls/audit.key
       TLS_VERIFY: "${TLS_VERIFY:-true}"
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8020), 2).close()"]
@@ -111,7 +119,8 @@ services:
       - "127.0.0.1:8020:8020"
     networks: [federation]
     volumes:
-      - ../wire/certs:/tls:ro
+      - ../wire/certs/audit:/tls/audit:ro
+      - ../wire/certs/trust:/tls/trust:ro
 
   facility-a:
     build:
@@ -128,10 +137,9 @@ services:
       PORT: "8001"
       FACILITY_ID: facility-a
       DATABASE_URL: postgresql://postgres@store:5432/ehr
+      PGPASSWORD: "${POSTGRES_PASSWORD}"
       AUDIT_SERVICE_URL: "${AUDIT_SERVICE_URL:-http://audit:8020}"
       TLS_ENABLED: "${TLS_ENABLED:-false}"
-      SSL_CERTFILE: /tls/facility-a.crt
-      SSL_KEYFILE: /tls/facility-a.key
       TLS_VERIFY: "${TLS_VERIFY:-true}"
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8001), 2).close()"]
@@ -142,7 +150,8 @@ services:
       - "127.0.0.1:8001:8001"
     networks: [federation]
     volumes:
-      - ../wire/certs:/tls:ro
+      - ../wire/certs/facility-a:/tls/facility-a:ro
+      - ../wire/certs/trust:/tls/trust:ro
 
   facility-b:
     build:
@@ -159,10 +168,9 @@ services:
       PORT: "8002"
       FACILITY_ID: facility-b
       DATABASE_URL: postgresql://postgres@store:5432/ehr
+      PGPASSWORD: "${POSTGRES_PASSWORD}"
       AUDIT_SERVICE_URL: "${AUDIT_SERVICE_URL:-http://audit:8020}"
       TLS_ENABLED: "${TLS_ENABLED:-false}"
-      SSL_CERTFILE: /tls/facility-b.crt
-      SSL_KEYFILE: /tls/facility-b.key
       TLS_VERIFY: "${TLS_VERIFY:-true}"
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8002), 2).close()"]
@@ -173,7 +181,8 @@ services:
       - "127.0.0.1:8002:8002"
     networks: [federation]
     volumes:
-      - ../wire/certs:/tls:ro
+      - ../wire/certs/facility-b:/tls/facility-b:ro
+      - ../wire/certs/trust:/tls/trust:ro
 
   custodian:
     build:
@@ -191,12 +200,11 @@ services:
       SERVICE_ROLE: custodian
       PORT: "8030"
       DATABASE_URL: postgresql://postgres@store:5432/ehr
+      PGPASSWORD: "${POSTGRES_PASSWORD}"
       AUDIT_SERVICE_URL: "${AUDIT_SERVICE_URL:-http://audit:8020}"
       AUTHORITY_URLS: "${AUTHORITY_URLS:-authority-med=http://authority-med:8010,authority-net=http://authority-net:8011}"
       FACILITY_URLS: "${FACILITY_URLS:-facility-a=http://facility-a:8001,facility-b=http://facility-b:8002}"
       TLS_ENABLED: "${TLS_ENABLED:-false}"
-      SSL_CERTFILE: /tls/custodian.crt
-      SSL_KEYFILE: /tls/custodian.key
       TLS_VERIFY: "${TLS_VERIFY:-true}"
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8030), 2).close()"]
@@ -207,7 +215,8 @@ services:
       - "127.0.0.1:8030:8030"
     networks: [federation]
     volumes:
-      - ../wire/certs:/tls:ro
+      - ../wire/certs/custodian:/tls/custodian:ro
+      - ../wire/certs/trust:/tls/trust:ro
 
   bootstrap:
     build:
@@ -229,18 +238,50 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://postgres@store:5432/ehr
-      AUDIT_SERVICE_URL: "${AUDIT_SERVICE_URL:-https://audit:8020}"
-      AUTHORITY_MED_URL: "${AUTHORITY_MED_URL:-https://authority-med:8010}"
-      AUTHORITY_NET_URL: "${AUTHORITY_NET_URL:-https://authority-net:8011}"
-      FACILITY_A_URL: "${FACILITY_A_URL:-https://facility-a:8001}"
-      FACILITY_B_URL: "${FACILITY_B_URL:-https://facility-b:8002}"
+      PGPASSWORD: "${POSTGRES_PASSWORD}"
+      AUDIT_SERVICE_URL: "${AUDIT_SERVICE_URL:-http://audit:8020}"
+      AUTHORITY_MED_URL: "${AUTHORITY_MED_URL:-http://authority-med:8010}"
+      AUTHORITY_NET_URL: "${AUTHORITY_NET_URL:-http://authority-net:8011}"
+      FACILITY_A_URL: "${FACILITY_A_URL:-http://facility-a:8001}"
+      FACILITY_B_URL: "${FACILITY_B_URL:-http://facility-b:8002}"
+      CUSTODIAN_URL: "${CUSTODIAN_URL:-http://custodian:8030}"
+      TLS_ENABLED: "${TLS_ENABLED:-false}"
+      SEED_DATA: "${SEED_DATA:-true}"
       TLS_VERIFY: "${TLS_VERIFY:-true}"
     volumes:
       - ./pki:/pki
+      - ../wire/certs/trust:/tls/trust:ro
+    networks: [federation]
+
+  portal:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    entrypoint: ["python", "-m", "deploy.seed_portal", "--host", "0.0.0.0"]
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://postgres@store:5432/ehr
+      PGPASSWORD: "${POSTGRES_PASSWORD}"
+      CUSTODIAN_URL: http://custodian:8030
+      AUDIT_SERVICE_URL: http://audit:8020
+      AUTHORITY_URLS: authority-med=http://authority-med:8010,authority-net=http://authority-net:8011
+      FACILITY_URLS: facility-a=http://facility-a:8001,facility-b=http://facility-b:8002
+      TLS_ENABLED: "${TLS_ENABLED:-false}"
+      EMERGENCY_DURATION_SECONDS: "${EMERGENCY_DURATION_SECONDS:-120}"
+      DJANGO_DEBUG: "0"
+      DJANGO_ALLOWED_HOSTS: "127.0.0.1,localhost"
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/accounts/login/', timeout=3)"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - ../wire/certs/trust:/tls/trust:ro
     networks: [federation]
 
 networks:
   federation: {}
-
-volumes:
-  store-data: {}

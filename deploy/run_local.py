@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from deploy import bootstrap
+from deploy.config import configure_transport, tls_enabled
+from deploy.run_scenario import ScenarioEndpoints
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC_DIR = REPO_ROOT / "src"
@@ -121,7 +123,8 @@ def _spawn(spec: ServiceSpec) -> subprocess.Popen:
 
 
 def _base_url(port: int) -> str:
-    return f"http://127.0.0.1:{port}"
+    scheme = "https" if tls_enabled() else "http"
+    return f"{scheme}://127.0.0.1:{port}"
 
 
 def main() -> int:
@@ -135,6 +138,7 @@ def main() -> int:
         )
         return 2
 
+    configure_transport()
     audit_base_url = _base_url(_AUDIT_PORT)
     specs = _default_specs(database_url, audit_base_url)
     processes: dict[str, subprocess.Popen] = {}
@@ -152,7 +156,7 @@ def main() -> int:
 
     try:
         print("[1/7] applying database migrations...")
-        applied = bootstrap.run_migrations(database_url)
+        applied = bootstrap.run_migrations(database_url, reset=True)
         print(f"      applied: {applied or 'nothing to apply'}")
 
         print("[2/7] generating federation PKI (root anchor + facility CAs)...")
@@ -191,23 +195,41 @@ def main() -> int:
             if spec.role == "custodian":
                 processes[spec.name] = _spawn(spec)
         bootstrap.wait_for_health(_base_url(_CUSTODIAN_PORT))
-        print(
-            "      seeding synthetic data -- left to the demo driver (P4-5) or "
-            "`python -m deploy.run_portal_demo`; skipped here."
+
+        print("      registering federation members and seeding synthetic data...")
+        bootstrap.populate_registry(
+            database_url,
+            pki,
+            {aid: _base_url(port) for aid, port in _AUTHORITY_PORTS.items()},
+            {fid: _base_url(port) for fid, port in _FACILITY_PORTS.items()},
         )
-
-        print("[7/7] verifying the audit chain from genesis...")
-        head_seq = bootstrap.check_audit_chain(audit_base_url)
-        print(f"      chain verified, head seq={head_seq}")
-
-        bootstrap.write_federation_config(
+        config = bootstrap.write_federation_config(
             FEDERATION_CONFIG_PATH,
             pki,
             authority_certificates,
             {aid: _base_url(port) for aid, port in _AUTHORITY_PORTS.items()},
             audit_base_url,
         )
-        print(f"federation config written to {FEDERATION_CONFIG_PATH}")
+        print(f"      federation config written to {FEDERATION_CONFIG_PATH}")
+        if bootstrap.seed_enabled():
+            summary = bootstrap.seed_federation(
+                ScenarioEndpoints(
+                    authority_med=_base_url(8010),
+                    authority_net=_base_url(8011),
+                    audit=audit_base_url,
+                    facility_a=_base_url(8001),
+                    facility_b=_base_url(8002),
+                ),
+                config,
+                _base_url(_CUSTODIAN_PORT),
+            )
+            print(f"      {summary}")
+        else:
+            print("      SEED_DATA=false -- seeding skipped")
+
+        print("[7/7] verifying the audit chain from genesis...")
+        head_seq = bootstrap.check_audit_chain(audit_base_url)
+        print(f"      chain verified, head seq={head_seq}")
 
         print("\nfederation is up:")
         for spec in specs:
