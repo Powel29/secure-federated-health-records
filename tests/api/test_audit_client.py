@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from api import audit_client
 from api.audit_client import (
     AuditServiceError,
     _tls_verify,
@@ -130,7 +131,7 @@ def test_lifecycle_audit_logger_uses_entrys_own_actor_and_correlation(monkeypatc
 
     def fake_post(url, *, json, timeout, verify=True):
         captured.update(json)
-        return _FakeResponse(200, {"entry": {}})
+        return _FakeResponse(200, {"entry": {"seq": 1}})
 
     monkeypatch.setattr(httpx, "post", fake_post)
 
@@ -151,3 +152,26 @@ def test_lifecycle_audit_logger_uses_entrys_own_actor_and_correlation(monkeypatc
     assert captured["actor_id"] == "system:hsm-timer"
     assert captured["correlation_id"] == "corr-9"
     assert captured["event_data"]["record_id"] == "rec-1"
+
+
+
+@pytest.fixture(autouse=True)
+def _fresh_seq_memory(monkeypatch):
+    """Each test starts with no remembered chain position."""
+    monkeypatch.setattr(audit_client, "_last_seq", {})
+
+
+def test_append_refuses_a_chain_that_goes_backwards(monkeypatch):
+    """Review F31: a lower seq than one already returned means the chain was
+    truncated or replaced, so the caller is told the entry is not trustworthy."""
+    seqs = iter([5, 6, 3])
+
+    def fake_post(url, *, json, timeout, verify=True):
+        return _FakeResponse(200, {"entry": {"seq": next(seqs)}})
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    kwargs = dict(event_type="t", event_data={}, actor_id="a", correlation_id="c")
+    append_entry("http://audit:8020", **kwargs)
+    append_entry("http://audit:8020", **kwargs)
+    with pytest.raises(AuditServiceError, match="went backwards"):
+        append_entry("http://audit:8020", **kwargs)

@@ -77,7 +77,9 @@ class TestVerifyRequestEnvelope:
             signing_key=priv,
         )
         # Should not raise
-        verify_request_envelope(envelope, pub, "audit-service")
+        verify_request_envelope(
+            envelope, pub, "audit-service", consumed_store=ConsumedRequestIds()
+        )
 
     def test_wrong_recipient_rejected(self):
         priv, pub = generate_ec_keypair()
@@ -89,7 +91,9 @@ class TestVerifyRequestEnvelope:
             signing_key=priv,
         )
         with pytest.raises(EnvelopeRecipientMismatchError):
-            verify_request_envelope(envelope, pub, "wrong-service")
+            verify_request_envelope(
+                envelope, pub, "wrong-service", consumed_store=ConsumedRequestIds()
+            )
 
     def test_with_consumed_store(self):
         priv, pub = generate_ec_keypair()

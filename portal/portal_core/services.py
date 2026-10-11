@@ -243,13 +243,14 @@ def facility_discover(facility_id: str, patient_id: str) -> list[str]:
 
 
 def facility_emergency_search(
-    facility_id: str, record_id: str, search_term: str
+    facility_id: str, record_id: str, search_term: str, requester_id: str
 ) -> list[str]:
     data = _request(
         "facility",
         "POST",
         f"{_facility_url(facility_id)}/records/{record_id}/emergency-search",
-        json={"search_term": search_term},
+        # The facility audits every emergency search with its requester (F8).
+        json={"search_term": search_term, "requester_id": requester_id},
     )
     return list(data["record_ids"])
 

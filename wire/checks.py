@@ -29,7 +29,6 @@ claim fails.
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -147,9 +146,31 @@ def denylisted_fields(capture: Capture) -> dict[str, list[str]]:
 # ---------------------------------------------------------------------------
 
 
+def gapped_service_flows(capture: Capture) -> list[str]:
+    """Service-port flows with a lost segment, named for the report (N8)."""
+    return [
+        f"{capture.mode} stream {key.stream} {key.src_port}->{key.dst_port}"
+        for key, flow in capture.flows.items()
+        if flow.gaps and server_port(key, capture.service_ports) is not None
+    ]
+
+
 def check_no_plaintext(plain: Capture, tls: Capture, scope: str = "all") -> ClaimResult:
     if scope not in CLAIM1_SCOPES:
         raise ValueError(f"claim-1 scope must be one of {CLAIM1_SCOPES}")
+
+    # A lost segment could hide a secret, so "nothing found" is not evidence
+    # for a gapped flow: the claim is inconclusive, which fails (review N8).
+    gapped = gapped_service_flows(plain) + gapped_service_flows(tls)
+    if gapped:
+        return ClaimResult(
+            "1-no-plaintext",
+            False,
+            "strong",
+            f"inconclusive: {len(gapped)} service flow(s) lost segments, so a "
+            "secret could have been missed; recapture",
+            {"gapped_flows": gapped},
+        )
 
     plain_hits = [h for h in plain.hits if h.cls in SECRET_CLASSES]
     tls_hits = [h for h in tls.hits if h.cls in SECRET_CLASSES]
@@ -389,7 +410,13 @@ def _events_from_exchanges(exchanges: list[Exchange]) -> list[dict[str, Any]]:
 
 
 def search_leakage_rows(plain: Capture) -> list[dict[str, Any]]:
-    """One CSV row per search, with the query hashed, never stored."""
+    """One CSV row per search; each distinct query gets a per-run label.
+
+    The label (``q1``, ``q2``, ...) keeps the leakage analysis -- which
+    searches repeat -- without storing anything reversible. An unsalted hash
+    of a dictionary word such as "cardiac" can be reversed (review N15).
+    """
+    labels: dict[str, str] = {}
     rows = []
     for ex in plain.exchanges:
         if not ex.request.path.endswith(("/search", "/emergency-search")):
@@ -404,7 +431,7 @@ def search_leakage_rows(plain: Capture) -> list[dict[str, Any]]:
                 "frame": ex.request.frame,
                 "timestamp": ex.request.timestamp,
                 "path": ex.request.path,
-                "query_sha256": hashlib.sha256(query.encode("utf-8")).hexdigest(),
+                "query_id": labels.setdefault(query, f"q{len(labels) + 1}"),
                 "request_bytes": len(ex.request.body),
                 "response_status": ex.response.status if ex.response else "",
                 "response_bytes": len(ex.response.body) if ex.response else "",
@@ -421,10 +448,10 @@ def check_search_leakage(plain: Capture) -> ClaimResult:
     rows = search_leakage_rows(plain)
     query_counts: dict[str, int] = {}
     for row in rows:
-        query_counts[row["query_sha256"]] = query_counts.get(row["query_sha256"], 0) + 1
+        query_counts[row["query_id"]] = query_counts.get(row["query_id"], 0) + 1
     evidence = {
         "profile": {k: v for k, v in profile.items() if k != "queries"},
-        "repeated_query_hashes": {h: n for h, n in query_counts.items() if n > 1},
+        "repeated_queries": {q: n for q, n in query_counts.items() if n > 1},
         "rows": rows,
     }
     if not rows:
@@ -557,6 +584,21 @@ def check_breakglass_metadata_only(
             "metadata-only",
             "the size/port heuristic does not pick the unlock request in plain "
             "mode, so the TLS identification cannot be trusted",
+            evidence,
+        )
+    # TLS only adds bytes, so a real unlock under TLS is at least as large as
+    # the plain request. A smaller "largest burst" means the TLS run never
+    # reached the unlock (review N5).
+    plain_request_bytes = request.end - request.start
+    evidence["plain_unlock_request_bytes"] = plain_request_bytes
+    if tls_pick.size < plain_request_bytes:
+        return ClaimResult(
+            name,
+            False,
+            "metadata-only",
+            f"TLS run incomplete: the largest TLS burst to facility-b is "
+            f"{tls_pick.size} bytes, smaller than the {plain_request_bytes}-byte "
+            "plain unlock request",
             evidence,
         )
     if content_hits:

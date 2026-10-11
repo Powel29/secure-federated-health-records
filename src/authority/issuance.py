@@ -365,17 +365,17 @@ def verify_credential(
     credential: AttributeCredential,
     issuer_public_key: ECPublicKey,
     at: datetime.datetime | None = None,
-    revocation_registry: RevocationRegistry | None = None,
+    *,
+    revocation_registry: RevocationRegistry,
 ) -> None:
-    """Verify a credential's signature, status, and validity window.
-
-    Includes dynamic revocation checks when a revocation registry is provided.
+    """Verify a credential's signature, status, revocation and validity window.
 
     Args:
         credential: The credential to verify.
         issuer_public_key: The purported issuer's public key.
         at: The instant to check the validity window against; defaults to now.
-        revocation_registry: Optional registry to check for post-issuance revocation.
+        revocation_registry: Registry checked for post-issuance revocation.
+            Required, so the check can never be skipped by omission (F21).
 
     Raises:
         InvalidSignatureError: The signature does not verify against the
@@ -409,9 +409,7 @@ def verify_credential(
             f"{credential.status.value!r}, not active"
         )
 
-    if revocation_registry is not None and revocation_registry.is_revoked(
-        credential.serial
-    ):
+    if revocation_registry.is_revoked(credential.serial):
         raise CredentialRevokedError(
             f"credential {credential.serial!r} has been revoked by authority "
             f"{credential.issuer_id!r}"

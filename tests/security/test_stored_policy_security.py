@@ -56,3 +56,34 @@ def test_unknown_storage_version_is_rejected():
     payload["version"] = 2
     with pytest.raises(ValueError, match="unsupported compiled policy format"):
         decode_policy(payload)
+
+
+def _first_leaf(node):
+    return node if node["node_type"] == "leaf" else _first_leaf(node["children"][0])
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        # Review N15: True == 1 used to pass the version check.
+        (lambda p: p.__setitem__("version", True), "unsupported"),
+        (lambda p: _first_leaf(p["root"]).__setitem__("authority_id", 7), "authority"),
+        (lambda p: _first_leaf(p["root"]).__setitem__("authority_id", ""), "authority"),
+        (lambda p: _first_leaf(p["root"]).__setitem__("nonce", "00" * 11), "leaf"),
+        (
+            lambda p: _first_leaf(p["root"]).__setitem__("encrypted_share", "00" * 8),
+            "leaf",
+        ),
+        (lambda p: p["root"].__setitem__("child_x", [0, 2]), "coordinates"),
+        (lambda p: p["root"].__setitem__("child_x", [1]), "coordinates"),
+        (lambda p: p["root"].__setitem__("child_x", [True, 2]), "coordinates"),
+    ],
+)
+def test_malformed_stored_policy_is_rejected(mutate, message):
+    payload = encode_policy(
+        compile_policy(_clinical_policy(), generate_key(), _full_keyring())
+    )
+    decode_policy(json.loads(json.dumps(payload)))  # setup is valid
+    mutate(payload)
+    with pytest.raises(ValueError, match=message):
+        decode_policy(payload)

@@ -29,6 +29,19 @@ class AssertionExpiredError(BreakglassError):
     """
 
 
+class AssertionLifetimeError(BreakglassError):
+    """The assertion's lifetime is too long or it is dated in the future.
+
+    ``expires_at - issued_at`` must not exceed the configured maximum, and
+    ``issued_at`` must not be later than now plus the allowed clock skew (F6).
+    A long-lived assertion would be a standing permission, not an emergency.
+    """
+
+
+class CertificateRevokedError(BreakglassError):
+    """The presenting clinician's certificate serial is on the revoked list (F1)."""
+
+
 class ClinicianMismatchError(BreakglassError):
     """``assertion.clinician_id`` does not match the presenting certificate's CN.
 

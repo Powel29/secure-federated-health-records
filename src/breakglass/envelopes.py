@@ -127,7 +127,8 @@ def verify_request_envelope(
     envelope: RequestEnvelope,
     caller_public_key: ECPublicKey,
     expected_recipient_id: str,
-    consumed_store: ConsumedRequestIds | None = None,
+    *,
+    consumed_store: ConsumedRequestIds,
 ) -> None:
     """Verify the envelope's signature, recipient binding, and one-time id.
 
@@ -137,13 +138,14 @@ def verify_request_envelope(
        ``caller_public_key``.
     2. **Recipient binding** — ``envelope.recipient_id`` matches
        ``expected_recipient_id``.
-    3. **Replay** — ``envelope.request_id`` consumed (if store provided).
+    3. **Replay** — ``envelope.request_id`` consumed.
 
     Args:
         envelope: The request envelope to validate.
         caller_public_key: The calling service's public key.
         expected_recipient_id: The receiving service's identifier.
-        consumed_store: Optional anti-replay store.
+        consumed_store: Anti-replay store. Required, so the replay check can
+            never be skipped by omission (F21).
 
     Raises:
         InvalidSignatureError: Signature does not verify.
@@ -175,5 +177,4 @@ def verify_request_envelope(
         )
 
     # 3. Replay (last)
-    if consumed_store is not None:
-        consumed_store.consume(envelope.request_id)
+    consumed_store.consume(envelope.request_id)

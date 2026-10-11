@@ -32,11 +32,14 @@ import datetime
 import json
 import os
 import sys
+import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import httpx
+from api.audit_client import _tls_verify
 from breakglass import create_emergency_assertion
 from breakglass.emergency_key import generate_emergency_key, split_emergency_key
 from contracts.base import GCM_NONCE_BYTES
@@ -60,9 +63,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = REPO_ROOT / "deploy" / "pki" / "federation.json"
 
 
-def _tls_verify() -> bool:
-    """Allow the P4-6 local capture harness to use self-signed TLS."""
-    return os.environ.get("TLS_VERIFY", "true").lower() not in {"0", "false", "no"}
 
 
 def _unwrap_rewrapped_dek(rewrapped_dek: bytes, pre_priv: int, record_id: str) -> bytes:
@@ -139,6 +139,10 @@ def run_scenario(
                     print(f"    {line}")
 
     client = httpx.Client(timeout=10.0, verify=_tls_verify())
+    # Stamped into the canary manifest so the analyser can refuse a pcap that
+    # predates this run (review N5).
+    started_at = time.time()
+    run_id = uuid.uuid4().hex
 
     # -------------------------------------------------------------------------
     # Step 1: Health & Bootstrap Verification
@@ -165,7 +169,6 @@ def run_scenario(
 
     # Load or generate facility CA and root material
     if config and "root_certificate_pem" in config:
-        root_cert_pem = config["root_certificate_pem"]
         fa_ca_priv, fa_ca_cert = _parse_ca_credentials(
             config["facilities"]["facility-a"]
         )
@@ -176,7 +179,6 @@ def run_scenario(
         from deploy.bootstrap import generate_federation_pki
 
         root_anchor, fed_pki = generate_federation_pki(["facility-a", "facility-b"])
-        root_cert_pem = fed_pki.root_certificate_pem
         fa_ca_priv, fa_ca_cert = _parse_ca_credentials(fed_pki.facilities["facility-a"])
         fb_ca_priv, fb_ca_cert = _parse_ca_credentials(fed_pki.facilities["facility-b"])
 
@@ -450,8 +452,6 @@ def run_scenario(
         (rel_x, rel_share_hex),
     ]
 
-    fb_ca_cert_pem = certificate_to_pem(fb_ca_cert).decode("ascii")
-
     # Baseline wrapping key (the policy root secret) allows EmergencyExpiryManager
     # to register the active session and re-baseline at expiry.
     unlock_res = client.post(
@@ -459,8 +459,6 @@ def run_scenario(
         json={
             "assertion": assertion.model_dump(mode="json"),
             "clinician_certificate_pem": carol_cert_pem,
-            "facility_ca_certificate_pem": fb_ca_cert_pem,
-            "trusted_root_certificate_pem": root_cert_pem,
             "shares": shares_payload,
             "pre_rewrap_key": carol_pre_pub,
             "lifecycle_signing_key_pem": life_priv_pem,
@@ -489,7 +487,7 @@ def run_scenario(
     log("[8/9] Emergency search under active emergency session...")
     search_res = client.post(
         f"{endpoints.facility_b}/records/{record_id}/emergency-search",
-        json={"search_term": "cardiac"},
+        json={"search_term": "cardiac", "requester_id": "doc-301"},
     )
     if search_res.status_code == 200:
         matched = search_res.json()["record_ids"]
@@ -497,6 +495,26 @@ def run_scenario(
         log(f"  * Emergency search for 'cardiac' matched: {matched}")
     else:
         log(f"  * Emergency search returned status {search_res.status_code}")
+
+    # Revocation crosses the wire too (PROJECT §4A(1): "normal read,
+    # revocation, or break-glass"; review N4). The request carries the old DEK
+    # in the clear on the plain profile, which claim 1 must catch. The
+    # facility refuses it while the record is emergency-open (409) or cannot
+    # persist it on Postgres yet (501, F10); either way the bytes were sent.
+    patient_priv, _patient_pub = generate_ec_keypair()
+    revoke_res = client.post(
+        f"{endpoints.facility_a}/records/{record_id}/revoke",
+        json={
+            "actor_id": "pat-101",
+            "actor_signing_key_pem": private_key_to_pem(patient_priv).decode("ascii"),
+            "old_dek_b64": base64.b64encode(recovered_dek).decode("ascii"),
+            "new_clinical_policy": clinical_policy.model_dump(mode="json"),
+            "owner_authority_id": "authority-net",
+            "attribute_keyring": authoring_keyring_b64,
+            "correlation_id": f"{corr_id}-revoke",
+        },
+    )
+    log(f"  * Revocation request sent; facility answered {revoke_res.status_code}")
 
     # -------------------------------------------------------------------------
     # Step 9: Time-Box Expiry & Full Audit Chain Verification
@@ -517,6 +535,8 @@ def run_scenario(
         _write_canaries(
             canaries_out,
             record_id=record_id,
+            run_id=run_id,
+            started_at=started_at,
             secrets={
                 "record_plaintext": ("phi", plaintext),
                 "dek": ("dek", recovered_dek),
@@ -555,13 +575,20 @@ def run_scenario(
 
 
 def _write_canaries(
-    path: Path, *, record_id: str, secrets: dict[str, tuple[str, bytes]]
+    path: Path,
+    *,
+    record_id: str,
+    run_id: str,
+    started_at: float,
+    secrets: dict[str, tuple[str, bytes]],
 ) -> None:
     """Write the run's secrets for the P5-5 canary search (ADR-0045)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     manifest = {
         "warning": "synthetic capture canaries -- never commit this file",
         "record_id": record_id,
+        "run_id": run_id,
+        "started_at": started_at,
         "canaries": {
             name: {"class": cls, "hex": value.hex()}
             for name, (cls, value) in secrets.items()

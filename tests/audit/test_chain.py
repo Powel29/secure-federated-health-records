@@ -85,3 +85,21 @@ def test_verify_full_chain_returns_head(conn, audit_keypair):
 
     head = verify_full_chain(conn, pub)
     assert head == e1
+
+
+def test_float_event_data_rejected_at_append():
+    """Review F31: a float would come back from jsonb in another form and make
+    an untouched entry look tampered, so it is refused before signing."""
+    import pytest
+    from audit.chain import build_entry, create_genesis_entry
+    from crypto_core import generate_ec_keypair
+
+    key, _ = generate_ec_keypair()
+    genesis = create_genesis_entry(signing_key=key)
+    common = dict(head=genesis, actor_id="a", correlation_id="c", signing_key=key)
+
+    # Setup is valid: integers and strings are fine.
+    build_entry(event_type="t", event_data={"n": 10**20, "s": "x"}, **common)
+    for bad in ({"n": 1e20}, {"nested": {"v": 0.5}}, {"items": [1, 2.0]}):
+        with pytest.raises(ValueError, match="float"):
+            build_entry(event_type="t", event_data=bad, **common)

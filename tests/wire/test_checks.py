@@ -139,7 +139,7 @@ class TestClaim3SearchLeakage:
         rows = result.evidence["rows"]
         assert len(rows) == 3
         assert all("cardiac" not in str(row) for row in rows)
-        assert list(result.evidence["repeated_query_hashes"].values()) == [3]
+        assert list(result.evidence["repeated_queries"].values()) == [3]
 
     def test_no_searches_fails(self, canaries):
         result = check_search_leakage(plain_scenario(canaries, searches=0))

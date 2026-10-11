@@ -9,6 +9,7 @@
 | 1st, 2026-10-07 | whole repo at `3c42094` | Rule violations and bugs → decisions **D1–D11**, fixes **F1–F44** |
 | 2nd, 2026-10-09 | `3c42094...4ddc201` (branch `full-deploy`, 106 files) | Status of every D/F item, plus new findings **N1–N16** from the Phase 5 and full-deploy code |
 | Update, 2026-10-11 | `4ddc201...a40a5a7` (one code commit) | Status of the items that commit touched (N2, N11, N12, N14, N16, F20, F42), plus the list of fixes that need no decision |
+| Fix batch, 2026-10-11 | working tree on `full-deploy` after `a40a5a7` | Every fix in "Fixes that need no decisions" implemented (ADR-0048 to ADR-0054); status below |
 
 Both reviews were four- or three-way parallel reviews (standards × spec),
 and the main findings were re-checked by hand. Smells are left out; this
@@ -92,6 +93,54 @@ Only `a40a5a7` ("Harden Compose deploy per review") changed code since `4ddc201`
 | N16 | **PARTIAL** | ADR-0047 decider is now "Avaneeth (proposal); Ojas to review `deploy/` and `wire/`", still **Proposed**; tracker row updated | Owner reviews of 638c2c6 and 9721387; the `PROJECT.md` expiry paragraph (line 287) still has no heading |
 
 ---
+
+## Status after the no-decision fix batch (2026-10-11)
+
+All of "Fixes that need no decisions" below was implemented in one batch on
+`full-deploy` (ADR-0051: across module owners, each owner reviews their
+directories before merge). Full suite: 754 passed, 4 strict xfails (C3, C4,
+C7, C9, all decision-blocked), 1 failure: the live-capture test, which now
+correctly refuses the committed captures because they predate the run stamp
+(N5) and must be re-recorded (exit-plan E2). Portal suite: 50 passed.
+
+| ID | Status | What was done | What remains |
+|---|---|---|---|
+| F1 | **FIXED** (ADR-0048) | Root, facility CAs and revoked serials from facility config; issuer matched to a configured CA; chain/expiry/revocation errors are 403 + denial; trust fields in the request are 422; Compose `pki` job generates the PKI before facilities; facilities refuse to start without anchors | Static serial list, no CRL/OCSP |
+| F4 | **FIXED** | Custodian ingests before depositing shares; facility returns 409 on a duplicate id; audit registry and custodian vault never overwrite a share (409); share deposit failure after ingest is 503 `breakglass_provisioned=false` | — |
+| F6 | **FIXED** (ADR-0049) | Assertion lifetime ≤ 3 days, `issued_at` ≤ now + 30 s; requested window ≤ 3 days and capped at the configured duration; response returns the real `expires_at` | — |
+| F7 | **FIXED** | Parse and validate first; compare-and-set claim; gate; log-before-release; session; event; every failure after the claim undoes it; break-glass needs an expiry manager and a baseline key | — |
+| F8 | **FIXED** | Every break-glass refusal (chain, assertion, gate, transition, record not found, patient binding), read-path unwrap failures and emergency search (granted and denied, with `requester_id`) are audited | — |
+| F12 | **FIXED** (via N1) | The compare-and-set is now used everywhere | — |
+| F14 (interim) | **FIXED** (ADR-0052) | Address allowlist on `/attribute-keys/author`; C10 now holds for any caller outside it | D5-a; Compose host-run scenarios need the bridge gateway in `AUTHORING_CALLERS` |
+| F17 | **FIXED** (ADR-0053) | Sign-up records a request only (no profile, no directory row); unissued logins reach no portal; existing subject ids refused | Issuance is still the P2-2 stub |
+| F19 | **FIXED** | No audit destination → 503; `AUDIT_SERVICE_URL` required by the facility; tests pass an explicit sink | — |
+| F20 | **FIXED** (with N2) | Session claimed as `expiring`, retried with backoff, resumes without re-signing; monitor survives every failure | — |
+| F21 | **FIXED** | `consumed_store`, `revoked_serials`, `revocation_registry` are required keyword arguments | — |
+| F22 (rest) | **FIXED** (via N13) | Postgres replay test across two facility processes | — |
+| F24 / F25 / F26 / F27 | **FIXED** | `crypto_core.types` hints; invariant scans all of `src/`; `secrets` nonces + test; `repr=False` key fields + test; Shamir `x`/`y` range checks in `combine_shares` and the gate | — |
+| F30 | **FIXED** | Comment now matches the values (requests 7 days, grants 30) | — |
+| F31 | **FIXED** | Floats refused at append (422); custodian verifies each release entry's signature, flow and seq; facility clients refuse a backwards seq | The facility's high-water mark is in memory, not persisted |
+| F33 | **FIXED** (listed calls) | Search token via `search.emergency_search_token`; patient hash via `audit.events.patient_id_hash`; read path via `policy.decrypt_record_via_policy`; custodian crypto in new `src/custodian/`; invariant forbids all of them in `api/` | Emergency provisioning is in `custodian`, not `breakglass.provision_emergency_path` (that is F9, D3) |
+| F35 / F36 | **FIXED** | `psycopg.sql` composition; `portal_app` role owns the portal schema with no store privileges | — |
+| F37 | **FIXED** | Audit verifies the chain at startup (already), writers depend on it, tampered-genesis test | — |
+| F38 | **FIXED** | Portal demo runs Path A's processes on fixed ports by default (`run_local.start_federation`); `--in-process` kept for tests | Not run live here: the running Compose stack holds the ports |
+| F39 (rest) / F40 | **FIXED** | Docker bridge names matched exactly; §7 now names `wire/captures/` | — |
+| F41 | **FIXED** (ADR-0053) | Break-glass acts only on the session's logged-lookup patient; raw `patient_id` is 400 | — |
+| F42 | **FIXED** (all rows) | DEBUG off by default; safe `next`; uploads download with `nosniff`; bad id 400; three-state link check; chain-verify DB errors 503; e2e PASS/FAIL/SKIP and 403-only denials | — |
+| F43 (rest) | **FIXED** | HTTP-level read after a facility restart on Postgres | — |
+| N1 | **FIXED** (ADR-0050) | Compare-and-set for break-glass, revoke, the timer mirror; insert-only ingest; ADR-0044 reset removed (stale `emergency_open` is 409); in-memory CAS keeps `last_event_id`; Postgres concurrency tests | Restart reconciliation is F5 (D7) |
+| N2 | **FIXED** | See F20; stuck-in-EXPIRED case retried to GRANTED | Final state still GRANTED (D7) |
+| N3 | **FIXED** (ADR-0054) | Status from a run; collection errors void the table; CI-aware skip everywhere; evidence doc regenerated | — |
+| N4 | **FIXED** | Scenario sends a revoke; analyser expects `/records/rec-001/revoke`; test with `old_dek_b64` failing claim 1 | Claim 1 fails on plain until D6/F10, as expected |
+| N5 | **FIXED** | Old pcap deleted, dumpcap early exit / empty file fails; run stamp; TLS on every port; TLS unlock burst ≥ plain request | Re-record the captures (E2) |
+| N6 / N7 / N8 / N9 | **FIXED** | C4 asserts unconditionally; mutation exit codes and green baseline; gap tracking; unsearchable canaries rejected | — |
+| N10 | **PARTIAL** | Benchmarks re-run on current code (Python 3.11 image) with `environment.json`; stale `p53_search_leakage.json` removed | Re-run the leakage analysis on a fresh capture (E2) |
+| N11 | **FIXED** (`a40a5a7`) | — | — |
+| N12 | **FIXED** | No-`trust` test; host-side portal reads the store password from `deploy/.env` | Password generation stays a documented manual step |
+| N13 | **FIXED** | See F22 | — |
+| N14 | **PARTIAL** | `USER app`; no `ENV HOST`; lone `TLS_VERIFY=false` path removed (only ADR-0042's double gate remains); one `env_flag` | Per-service SANs not changed: host-run TLS scenarios and captures reach services as `localhost`, so dropping that SAN breaks them; needs a decision |
+| N15 | **FIXED** (all rows) | Malformed status line; exact bridge names; `--db-port` from `DATABASE_URL`; word-boundary finding match; `policy_codec` type checks + tests; query labels; live test scope `all`; exit-plan TLS row | — |
+| N16 | **PARTIAL** | PROJECT.md expiry paragraph is now §5 caveat 6 | Owner reviews of 638c2c6, 9721387 and this batch (ADR-0051) |
 
 ## Fixes that need no decisions (at `a40a5a7`)
 
@@ -844,6 +893,8 @@ All of these files predate the fixes, so the paper's evidence doesn't match the 
 ---
 
 ## Suggested order
+
+*Steps 1-5 and the no-decision parts of 7-10 are done in the 2026-10-11 batch (status table above). What is left is step 6 (the decisions) and the decision-blocked fixes.*
 
 1. **Stop false evidence first:** N3, N6, N5, N8, N9, N10. Until these are fixed, the claim table and the analyser can say "holds" or "pass" for something that wasn't shown.
 2. **Stop the state from being overwritten:** N1, then N2 (with F20).

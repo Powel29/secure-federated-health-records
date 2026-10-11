@@ -32,25 +32,41 @@ Audit chain wiring (P3-3/P3-4) is a Phase 4 seam. End-to-end wiring to
 ``audit.chain.append_entry`` happens at Phase 4 API integration (P4-2).
 Passing ``audit_logger=None`` here means expiry events do not enter the hash
 chain; a Phase 4 caller supplies the real callback.
+
+Failure handling (review F20, N2): a session is *claimed* (marked
+``expiring``) rather than deleted while it is being expired. If any step
+fails -- an audit outage, a store error -- the session is put back with a
+retry count and a backoff, and the next sweep resumes where the last attempt
+stopped: a transition that was already emitted is not emitted again under a
+new id. The monitor thread survives every failure. Access stays closed
+throughout, because ``get_active_emergency_key`` refuses any session past
+``expires_at`` or being expired.
+
+Store mirror (review N1): an optional ``state_writer`` persists each emitted
+transition into the facility's store *after* the audit append, as a
+compare-and-set from the event's ``from_state``. A conflict means someone else
+changed the record's state; the timer logs it and never overwrites it.
 """
 
 from __future__ import annotations
 
 import datetime
+import logging
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from contracts import TransitionEvent
 from contracts.enums import LifecycleState
 from contracts.records import DEKWrapping, Record
-from cryptography.hazmat.primitives.asymmetric import ec
+from crypto_core.types import ECPrivateKey
 from records.service import decrypt_record, encrypt_record, unwrap_dek, wrap_dek
 
 from lifecycle.exceptions import (
     EmergencySessionExpiredError,
     SessionNotExpiredError,
     SessionNotFoundError,
+    StateConflictError,
 )
 from lifecycle.state_machine import LifecycleStateMachine, create_transition_event
 
@@ -62,6 +78,16 @@ from lifecycle.state_machine import LifecycleStateMachine, create_transition_eve
 EMERGENCY_KEY_ZERO_BYTES = b"\x00" * 32
 
 _DEFAULT_DURATION_SECONDS = 60.0
+
+# Retry backoff after a failed expiry attempt: 1s, 2s, 4s ... capped at 60s.
+_RETRY_BASE_SECONDS = 1.0
+_RETRY_MAX_SECONDS = 60.0
+
+_logger = logging.getLogger(__name__)
+
+# ``state_writer(record_id, expected, new, last_event_id)`` -- the facility
+# repository's compare-and-set. Raises StateConflictError if the state moved.
+StateWriter = Callable[[str, LifecycleState, LifecycleState, str], None]
 
 
 def _utcnow() -> datetime.datetime:
@@ -87,11 +113,19 @@ class EmergencySession:
     expires_at: datetime.datetime
     actor_id: str
     correlation_id: str
-    emergency_key: bytes
-    baseline_wrapping_key: bytes
+    emergency_key: bytes = field(repr=False)
+    baseline_wrapping_key: bytes = field(repr=False)
     baseline_wrapping: DEKWrapping
     emergency_wrapping: DEKWrapping
     current_record: Record
+    # Expiry progress, so a failed attempt can be retried without repeating
+    # what already happened (review F20, N2).
+    expiring: bool = False
+    attempts: int = 0
+    retry_at: datetime.datetime | None = None
+    expired_event: TransitionEvent | None = None
+    expired_emitted: bool = False
+    rebaselined_event: TransitionEvent | None = None
 
     def is_expired(self, now: datetime.datetime) -> bool:
         """Whether ``now`` is at or past ``expires_at`` -- inclusive, fail closed."""
@@ -146,11 +180,12 @@ class EmergencyExpiryManager:
     def __init__(
         self,
         *,
-        signing_key: ec.EllipticCurvePrivateKey,
+        signing_key: ECPrivateKey,
         state_machine: LifecycleStateMachine | None = None,
         timer_actor_id: str = "system:hsm-timer",
         default_duration_seconds: float = _DEFAULT_DURATION_SECONDS,
         audit_logger: Callable[[dict[str, Any]], None] | None = None,
+        state_writer: StateWriter | None = None,
         clock: Callable[[], datetime.datetime] | None = None,
     ) -> None:
         """Configure the timer.
@@ -177,6 +212,9 @@ class EmergencyExpiryManager:
                 integration (P4-2). Passing ``None`` here means expiry
                 events do not enter the hash chain; a Phase 4 caller
                 supplies the real callback.
+            state_writer: Optional compare-and-set into the facility's store,
+                called after ``audit_logger`` for each transition (review N1).
+                ``create_hospital_app`` attaches its repository's writer.
             clock: Optional zero-arg callable returning the current UTC
                 time, for deterministic tests. Defaults to
                 ``datetime.datetime.now(timezone.utc)``.
@@ -189,6 +227,7 @@ class EmergencyExpiryManager:
         self._timer_actor_id = timer_actor_id
         self._default_duration_seconds = default_duration_seconds
         self._audit_logger = audit_logger
+        self._state_writer = state_writer
         self._clock = clock if clock is not None else _utcnow
 
         self._sessions: dict[str, EmergencySession] = {}
@@ -205,6 +244,28 @@ class EmergencyExpiryManager:
     def timer_actor_id(self) -> str:
         """The identity recorded as ``actor_id`` on every emitted event."""
         return self._timer_actor_id
+
+    @property
+    def default_duration_seconds(self) -> float:
+        """The configured time-box; a caller may only shorten it (review F6)."""
+        return self._default_duration_seconds
+
+    def attach_state_writer(self, state_writer: StateWriter) -> None:
+        """Persist every emitted transition into a facility store (review N1)."""
+        self._state_writer = state_writer
+
+    def unregister_session(self, record_id: str) -> None:
+        """Drop a session whose break-glass open failed after it was registered.
+
+        Used only to roll back a failed unlock (review F7). A session that is
+        already being expired is left to the timer.
+        """
+        with self._lock:
+            session = self._sessions.get(record_id)
+            if session is None or session.expiring:
+                return
+            del self._sessions[record_id]
+        session.emergency_key = EMERGENCY_KEY_ZERO_BYTES
 
     def register_session(
         self,
@@ -292,7 +353,8 @@ class EmergencyExpiryManager:
             EmergencySessionExpiredError: The session exists but
                 ``now >= expires_at`` -- fail closed rather than hand back a
                 key whose time-box has run out, even if
-                :meth:`expire_session` has not yet swept it.
+                :meth:`expire_session` has not yet swept it -- or the session
+                is being expired.
         """
         with self._lock:
             session = self._sessions.get(record_id)
@@ -301,7 +363,7 @@ class EmergencyExpiryManager:
                 f"no emergency session registered for record {record_id!r}"
             )
         now = self._clock()
-        if session.is_expired(now):
+        if session.expiring or session.is_expired(now):
             raise EmergencySessionExpiredError(
                 f"emergency session for record {record_id!r} expired at "
                 f"{session.expires_at.isoformat()}"
@@ -359,7 +421,7 @@ class EmergencyExpiryManager:
         """
         with self._lock:
             session = self._sessions.get(record_id)
-            if session is None:
+            if session is None or session.expiring:
                 raise SessionNotFoundError(
                     f"no emergency session registered for record {record_id!r}"
                 )
@@ -372,25 +434,52 @@ class EmergencyExpiryManager:
                 )
             # Claim the session before doing any work so a concurrent
             # expirer (background monitor vs. an explicit call) cannot also
-            # see it and double-rotate the same record.
-            del self._sessions[record_id]
+            # see it and double-rotate the same record. It stays registered
+            # until expiry completes, so a failure can be retried (F20).
+            session.expiring = True
 
-        audit_entries: list[dict[str, Any]] = []
+        try:
+            result = self._run_expiry(session, now)
+        except Exception:
+            with self._lock:
+                session.expiring = False
+                session.attempts += 1
+                delay = min(
+                    _RETRY_MAX_SECONDS,
+                    _RETRY_BASE_SECONDS * 2 ** (session.attempts - 1),
+                )
+                session.retry_at = self._clock() + datetime.timedelta(seconds=delay)
+            raise
 
-        # --- Step 4: EMERGENCY_OPEN -> EXPIRED --------------------------------
-        expired_event = create_transition_event(
-            record_id=record_id,
-            from_state=LifecycleState.EMERGENCY_OPEN,
-            to_state=LifecycleState.EXPIRED,
-            actor_id=self._timer_actor_id,
-            signing_key=self._signing_key,
-            issued_at=now,
-        )
-        self._state_machine.apply_transition(
-            LifecycleState.EMERGENCY_OPEN, expired_event, self._public_key
-        )
-        audit_entries.append(self._transition_metadata(expired_event, session))
-        self._emit_audit(audit_entries[-1])
+        # --- Step 8: best-effort zeroize, then drop -----------------------------
+        with self._lock:
+            self._sessions.pop(record_id, None)
+        session.emergency_key = EMERGENCY_KEY_ZERO_BYTES
+        return result
+
+    def _run_expiry(
+        self, session: EmergencySession, now: datetime.datetime
+    ) -> ExpiryResult:
+        """Steps 4-7 of :meth:`expire_session`, resumable after a failure."""
+        record_id = session.record_id
+
+        # --- Step 4: EMERGENCY_OPEN -> EXPIRED (signed once per session) ------
+        if session.expired_event is None:
+            expired_event = create_transition_event(
+                record_id=record_id,
+                from_state=LifecycleState.EMERGENCY_OPEN,
+                to_state=LifecycleState.EXPIRED,
+                actor_id=self._timer_actor_id,
+                signing_key=self._signing_key,
+                issued_at=now,
+            )
+            self._state_machine.apply_transition(
+                LifecycleState.EMERGENCY_OPEN, expired_event, self._public_key
+            )
+            session.expired_event = expired_event
+        if not session.expired_emitted:
+            self._emit(session.expired_event, session)
+            session.expired_emitted = True
 
         # --- Step 5: forced key rotation ---------------------------------------
         old_dek = unwrap_dek(session.emergency_wrapping, session.emergency_key)
@@ -414,32 +503,33 @@ class EmergencyExpiryManager:
             generation=session.baseline_wrapping.generation + 1,
         )
 
-        # --- Step 6: EXPIRED -> GRANTED ----------------------------------------
-        rebaselined_event = create_transition_event(
-            record_id=record_id,
-            from_state=LifecycleState.EXPIRED,
-            to_state=LifecycleState.GRANTED,
-            actor_id=self._timer_actor_id,
-            signing_key=self._signing_key,
-            issued_at=now,
-        )
-        self._state_machine.apply_transition(
-            LifecycleState.EXPIRED, rebaselined_event, self._public_key
-        )
-        audit_entries.append(self._transition_metadata(rebaselined_event, session))
-        self._emit_audit(audit_entries[-1])
-
-        # --- Step 8: best-effort zeroize, then drop -----------------------------
-        session.emergency_key = EMERGENCY_KEY_ZERO_BYTES
-        del session
+        # --- Step 6: EXPIRED -> GRANTED (signed once per session) -------------
+        if session.rebaselined_event is None:
+            rebaselined_event = create_transition_event(
+                record_id=record_id,
+                from_state=LifecycleState.EXPIRED,
+                to_state=LifecycleState.GRANTED,
+                actor_id=self._timer_actor_id,
+                signing_key=self._signing_key,
+                issued_at=now,
+            )
+            self._state_machine.apply_transition(
+                LifecycleState.EXPIRED, rebaselined_event, self._public_key
+            )
+            session.rebaselined_event = rebaselined_event
+        # --- Step 7: audit and store, for the second transition ---------------
+        self._emit(session.rebaselined_event, session)
 
         return ExpiryResult(
             record_id=record_id,
-            expired_event=expired_event,
-            rebaselined_event=rebaselined_event,
+            expired_event=session.expired_event,
+            rebaselined_event=session.rebaselined_event,
             rotated_record=rotated_record,
             rotated_wrapping=rotated_wrapping,
-            audit_entries=audit_entries,
+            audit_entries=[
+                self._transition_metadata(session.expired_event, session),
+                self._transition_metadata(session.rebaselined_event, session),
+            ],
         )
 
     def check_and_expire_due(
@@ -461,6 +551,8 @@ class EmergencyExpiryManager:
                 record_id
                 for record_id, session in self._sessions.items()
                 if session.is_expired(when)
+                and not session.expiring
+                and (session.retry_at is None or session.retry_at <= when)
             ]
         results: list[ExpiryResult] = []
         for record_id in due_ids:
@@ -470,6 +562,13 @@ class EmergencyExpiryManager:
                 # Already claimed and expired by a concurrent sweep/call
                 # between the snapshot above and this call -- not an error.
                 continue
+            except Exception:
+                # The session was put back with a backoff and is retried on a
+                # later sweep; access stays closed meanwhile (review F20).
+                # Log the record id only, never key material.
+                _logger.exception(
+                    "emergency expiry failed for record %s; will retry", record_id
+                )
         return results
 
     def start_monitor(self, poll_interval: float = 0.5) -> None:
@@ -490,7 +589,12 @@ class EmergencyExpiryManager:
 
         def _loop() -> None:
             while not self._monitor_stop.is_set():
-                self.check_and_expire_due()
+                try:
+                    self.check_and_expire_due()
+                except Exception:
+                    # Swallowing is correct here: the loop must survive, and
+                    # a failed session is retried on the next sweep (F20).
+                    _logger.exception("emergency expiry sweep failed")
                 self._monitor_stop.wait(poll_interval)
 
         self._monitor_thread = threading.Thread(
@@ -527,6 +631,26 @@ class EmergencyExpiryManager:
             "correlation_id": session.correlation_id,
         }
 
-    def _emit_audit(self, entry: dict[str, Any]) -> None:
+    def _emit(self, event: TransitionEvent, session: EmergencySession) -> None:
+        """Audit first, then mirror into the store as a compare-and-set (N1).
+
+        An audit or store failure raises, so the attempt is retried. A state
+        conflict means someone else changed the record's state; overwriting
+        it could undo a revocation, so it is logged and left alone.
+        """
         if self._audit_logger is not None:
-            self._audit_logger(entry)
+            self._audit_logger(self._transition_metadata(event, session))
+        if self._state_writer is None:
+            return
+        try:
+            self._state_writer(
+                event.record_id, event.from_state, event.to_state, str(event.event_id)
+            )
+        except StateConflictError:
+            _logger.error(
+                "expiry transition %s -> %s for record %s not stored: the state "
+                "changed underneath the timer; not overwriting it",
+                event.from_state.value,
+                event.to_state.value,
+                event.record_id,
+            )

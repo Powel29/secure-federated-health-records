@@ -50,6 +50,7 @@ from storage.migrate import apply_migrations
 
 from deploy import bootstrap
 from deploy.run_scenario import ScenarioEndpoints, _write_canaries, run_scenario
+from tests.security.conftest import skip_or_fail_without_postgres
 
 _DATABASE_URL = os.environ.get("DATABASE_URL")
 
@@ -81,12 +82,14 @@ class _LiveServer:
 def postgres_federation():
     """Spin up all five federation services over live sockets against real Postgres."""
     if not _DATABASE_URL:
-        pytest.skip("DATABASE_URL not set; postgres federation test skipped")
+        skip_or_fail_without_postgres(
+            "DATABASE_URL not set; postgres federation test skipped"
+        )
 
     try:
         conn = psycopg.connect(_DATABASE_URL)
     except psycopg.OperationalError as exc:
-        pytest.skip(f"cannot reach Postgres: {exc}")
+        skip_or_fail_without_postgres(f"cannot reach Postgres: {exc}")
 
     conn.autocommit = True
     with conn.cursor() as cur:
@@ -150,6 +153,10 @@ def postgres_federation():
     )
     exp_mgr_b.start_monitor()
 
+    # PKI first: the facilities are configured with its trust anchors (F1).
+    root_anchor, pki = bootstrap.generate_federation_pki(["facility-a", "facility-b"])
+    trust = bootstrap.facility_trust(pki)
+
     app_med = create_authority_app("authority-med", frozenset({"role"}))
     app_net = create_authority_app(
         "authority-net", frozenset({"specialty", "facility", "owner"})
@@ -159,12 +166,14 @@ def postgres_federation():
         repository=repo_fa,
         expiry_manager=exp_mgr_a,
         audit_service_url=audit_url,
+        trust=trust,
     )
     app_fb = create_hospital_app(
         facility_id="facility-b",
         repository=repo_fb,
         expiry_manager=exp_mgr_b,
         audit_service_url=audit_url,
+        trust=trust,
     )
 
     server_med = _LiveServer(app_med)
@@ -177,7 +186,6 @@ def postgres_federation():
     url_fa = server_fa.start()
     url_fb = server_fb.start()
 
-    root_anchor, pki = bootstrap.generate_federation_pki(["facility-a", "facility-b"])
     cert_med = bootstrap.register_authority(url_med, root_anchor, "authority-med")
     cert_net = bootstrap.register_authority(url_net, root_anchor, "authority-net")
 
@@ -233,10 +241,14 @@ def test_canary_manifest_round_trips(tmp_path):
     _write_canaries(
         out,
         record_id="rec-001",
+        run_id="run-1",
+        started_at=1234.5,
         secrets={"share1": ("share", b"\x01\x02"), "dek": ("dek", b"\xff" * 32)},
     )
     manifest = json.loads(out.read_text(encoding="utf-8"))
     assert manifest["record_id"] == "rec-001"
+    # Review N5: the run stamp ties the manifest to its pcap.
+    assert (manifest["run_id"], manifest["started_at"]) == ("run-1", 1234.5)
     assert manifest["canaries"]["share1"] == {"class": "share", "hex": "0102"}
     assert bytes.fromhex(manifest["canaries"]["dek"]["hex"]) == b"\xff" * 32
 
@@ -267,7 +279,7 @@ def test_full_scenario_with_postgres(postgres_federation, tmp_path):
     client = httpx.Client(timeout=5.0)
     res = client.post(
         f"{endpoints.facility_b}/records/rec-001/emergency-search",
-        json={"search_term": "cardiac"},
+        json={"search_term": "cardiac", "requester_id": "doc-201"},
     )
     assert res.status_code == 403
     assert "Emergency search unavailable" in res.json()["detail"]

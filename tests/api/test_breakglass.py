@@ -4,25 +4,43 @@ Verifies:
 - 2-of-3 threshold unlock produces re-wrapped DEK and sets EMERGENCY_OPEN.
 - Refusal when fewer than 2 shares presented (400).
 - Replay prevention: reusing an assertion_id is rejected (400).
-- Expired emergency assertion is rejected (400).
 - Facility mismatch is rejected (400).
+- Trust anchors come from facility configuration, never the request (F1).
+- The caller can only shorten the time-box (F6).
+- A failed unlock leaves no side effects; concurrent opens cannot both win
+  (F7, N1).
+- Every refusal is audited exactly once (F8).
 """
 
 from __future__ import annotations
 
 import base64
+import datetime
+import threading
 
 import pytest
+from api.audit_client import AuditServiceError
+from api.hospital import create_hospital_app
+from audit.events import EVENT_ACCESS_DENIED, EVENT_FEDERATION_REWRAP
 from breakglass import create_emergency_assertion
 from contracts.base import GCM_NONCE_BYTES
 from contracts.enums import LifecycleState, ReasonCode
 from crypto_core import (
     certificate_to_pem,
+    generate_ec_keypair,
     private_key_to_pem,
 )
 from crypto_core.symmetric import aes_gcm_decrypt
-from lifecycle.expiry import EmergencyExpiryManager
+from fastapi.testclient import TestClient
+from identity.certificates import (
+    issue_clinician_certificate,
+    issue_facility_ca_certificate,
+)
+from identity.root_anchor import generate_root_anchor
 from pre.elgamal import decapsulate_key
+from shamir.finite_field import PRIME_MODULUS
+
+from tests.api.conftest import RecordingAuditSink, make_trust
 
 
 def _unwrap_rewrapped_dek(rewrapped_dek: bytes, pre_priv: int, record_id: str) -> bytes:
@@ -42,6 +60,59 @@ def _unwrap_rewrapped_dek(rewrapped_dek: bytes, pre_priv: int, record_id: str) -
     )
 
 
+def _payload(
+    test_setup,
+    *,
+    patient_id: str = "patient-001",
+    facility_id: str = "facility-a",
+    signing_key=None,
+    certificate=None,
+    shares=None,
+    **extra,
+) -> dict:
+    """A well-formed unlock request; keyword overrides build the attacks."""
+    pki = test_setup["pki"]
+    em_shares = test_setup["em_shares"]
+    assertion = create_emergency_assertion(
+        patient_id=patient_id,
+        clinician_id="dr-alice",
+        facility_id=facility_id,
+        reason_code=ReasonCode.UNCONSCIOUS_PATIENT,
+        signing_key=signing_key or pki["alice_priv"],
+    )
+    body = {
+        "assertion": assertion.model_dump(mode="json"),
+        "clinician_certificate_pem": certificate_to_pem(
+            certificate or pki["alice_cert"]
+        ).decode("ascii"),
+        "shares": (
+            shares
+            if shares is not None
+            else [
+                (em_shares[0][0], em_shares[0][1].hex()),
+                (em_shares[1][0], em_shares[1][1].hex()),
+            ]
+        ),
+        "pre_rewrap_key": pki["alice_pre_pub"],
+        "lifecycle_signing_key_pem": private_key_to_pem(pki["life_priv"]).decode(
+            "ascii"
+        ),
+        "baseline_wrapping_key_b64": base64.b64encode(b"\x07" * 32).decode("ascii"),
+    }
+    body.update(extra)
+    return body
+
+
+def _assert_no_side_effects(test_setup, sink: RecordingAuditSink) -> None:
+    """The record is still GRANTED, no event, no session, nothing released."""
+    repo = test_setup["repo"]
+    assert repo.get_lifecycle_state("rec-001") == LifecycleState.GRANTED
+    assert repo.transition_events == {}
+    with pytest.raises(Exception):  # noqa: B017 -- SessionNotFound or Expired
+        test_setup["expiry_manager"].get_active_emergency_key("rec-001")
+    assert sink.of_type(EVENT_FEDERATION_REWRAP) == []
+
+
 class TestHospitalBreakglassEndpoint:
     """Test suite for POST /records/{record_id}/breakglass."""
 
@@ -49,43 +120,13 @@ class TestHospitalBreakglassEndpoint:
         """Presenting 2 shares with a valid EmergencyAssertion unlocks the record."""
         client = test_setup["client"]
         pki = test_setup["pki"]
-        em_shares = test_setup["em_shares"]
-
-        # Alice signs EmergencyAssertion for rec-001 at facility-a
-        assertion = create_emergency_assertion(
-            patient_id="patient-001",
-            clinician_id="dr-alice",
-            facility_id="facility-a",
-            reason_code=ReasonCode.UNCONSCIOUS_PATIENT,
-            signing_key=pki["alice_priv"],
-        )
-
-        cl_cert_pem = certificate_to_pem(pki["alice_cert"]).decode("ascii")
-        ca_cert_pem = certificate_to_pem(pki["fa_cert"]).decode("ascii")
-        root_cert_pem = certificate_to_pem(pki["root"].certificate).decode("ascii")
-        life_priv_pem = private_key_to_pem(pki["life_priv"]).decode("ascii")
-
-        # Format 2 shares as [(x, hex)]
-        shares_payload = [
-            (em_shares[0][0], em_shares[0][1].hex()),
-            (em_shares[1][0], em_shares[1][1].hex()),
-        ]
 
         response = client.post(
             "/records/rec-001/breakglass",
-            json={
-                "assertion": assertion.model_dump(mode="json"),
-                "clinician_certificate_pem": cl_cert_pem,
-                "facility_ca_certificate_pem": ca_cert_pem,
-                "trusted_root_certificate_pem": root_cert_pem,
-                "shares": shares_payload,
-                "pre_rewrap_key": pki["alice_pre_pub"],
-                "lifecycle_signing_key_pem": life_priv_pem,
-                "correlation_id": "corr-bg-001",
-            },
+            json=_payload(test_setup, correlation_id="corr-bg-001"),
         )
 
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
         data = response.json()
         assert data["record_id"] == "rec-001"
         assert (
@@ -99,129 +140,50 @@ class TestHospitalBreakglassEndpoint:
         )
         assert len(recovered_dek) == 32
 
-        # In-storage lifecycle state must be EMERGENCY_OPEN
-        state = test_setup["repo"].get_lifecycle_state("rec-001")
-        assert state == LifecycleState.EMERGENCY_OPEN
+        # The store records the state and the signed event against it.
+        repo = test_setup["repo"]
+        assert repo.get_lifecycle_state("rec-001") == LifecycleState.EMERGENCY_OPEN
+        event_id = data["transition_event"]["event_id"]
+        assert repo.lifecycle_last_event_ids["rec-001"] == event_id
+        assert event_id in repo.transition_events
 
     @pytest.mark.claim("C3", level="system")
     def test_breakglass_single_share_fails(self, test_setup):
-        """Presenting fewer than 2 shares fails with HTTP 400."""
-        client = test_setup["client"]
-        pki = test_setup["pki"]
+        """Presenting fewer than 2 shares fails with HTTP 400 and no side effect."""
         em_shares = test_setup["em_shares"]
-
-        assertion = create_emergency_assertion(
-            patient_id="patient-001",
-            clinician_id="dr-alice",
-            facility_id="facility-a",
-            reason_code=ReasonCode.UNCONSCIOUS_PATIENT,
-            signing_key=pki["alice_priv"],
-        )
-
-        cl_cert_pem = certificate_to_pem(pki["alice_cert"]).decode("ascii")
-        ca_cert_pem = certificate_to_pem(pki["fa_cert"]).decode("ascii")
-        root_cert_pem = certificate_to_pem(pki["root"].certificate).decode("ascii")
-        life_priv_pem = private_key_to_pem(pki["life_priv"]).decode("ascii")
-
-        # Only 1 share
-        shares_payload = [(em_shares[0][0], em_shares[0][1].hex())]
-
-        response = client.post(
+        response = test_setup["client"].post(
             "/records/rec-001/breakglass",
-            json={
-                "assertion": assertion.model_dump(mode="json"),
-                "clinician_certificate_pem": cl_cert_pem,
-                "facility_ca_certificate_pem": ca_cert_pem,
-                "trusted_root_certificate_pem": root_cert_pem,
-                "shares": shares_payload,
-                "pre_rewrap_key": pki["alice_pre_pub"],
-                "lifecycle_signing_key_pem": life_priv_pem,
-            },
+            json=_payload(
+                test_setup, shares=[(em_shares[0][0], em_shares[0][1].hex())]
+            ),
         )
 
         assert response.status_code == 400
-        assert "Insufficient threshold shares" in response.json()["detail"]
+        # The threshold itself refused -- not a later format check on a
+        # one-share "reconstruction" (the C3a mutation shows the difference).
+        assert "requires 2 unique shares" in response.json()["detail"]
+        _assert_no_side_effects(test_setup, test_setup["audit_sink"])
 
     @pytest.mark.claim("C8", level="system")
     def test_breakglass_replayed_assertion_fails(self, test_setup):
         """Replaying a previously used assertion is rejected (P3-11 -> 400)."""
         client = test_setup["client"]
-        pki = test_setup["pki"]
-        em_shares = test_setup["em_shares"]
+        payload = _payload(test_setup)
 
-        assertion = create_emergency_assertion(
-            patient_id="patient-001",
-            clinician_id="dr-alice",
-            facility_id="facility-a",
-            reason_code=ReasonCode.UNCONSCIOUS_PATIENT,
-            signing_key=pki["alice_priv"],
-        )
-
-        cl_cert_pem = certificate_to_pem(pki["alice_cert"]).decode("ascii")
-        ca_cert_pem = certificate_to_pem(pki["fa_cert"]).decode("ascii")
-        root_cert_pem = certificate_to_pem(pki["root"].certificate).decode("ascii")
-        life_priv_pem = private_key_to_pem(pki["life_priv"]).decode("ascii")
-
-        shares_payload = [
-            (em_shares[0][0], em_shares[0][1].hex()),
-            (em_shares[1][0], em_shares[1][1].hex()),
-        ]
-
-        payload = {
-            "assertion": assertion.model_dump(mode="json"),
-            "clinician_certificate_pem": cl_cert_pem,
-            "facility_ca_certificate_pem": ca_cert_pem,
-            "trusted_root_certificate_pem": root_cert_pem,
-            "shares": shares_payload,
-            "pre_rewrap_key": pki["alice_pre_pub"],
-            "lifecycle_signing_key_pem": life_priv_pem,
-        }
-
-        # First unlock succeeds
         res1 = client.post("/records/rec-001/breakglass", json=payload)
         assert res1.status_code == 200
+        # Let the first session end so only the replay check can refuse.
+        test_setup["expiry_manager"].expire_session("rec-001", force=True)
 
-        # Second unlock with same assertion fails due to replay
         res2 = client.post("/records/rec-001/breakglass", json=payload)
         assert res2.status_code == 400
         assert "Emergency assertion invalid" in res2.json()["detail"]
 
     def test_breakglass_facility_mismatch_fails(self, test_setup):
         """Assertion declared for facility-b is rejected at facility-a node (400)."""
-        client = test_setup["client"]
-        pki = test_setup["pki"]
-        em_shares = test_setup["em_shares"]
-
-        # Assertion declared for facility-b
-        assertion = create_emergency_assertion(
-            patient_id="patient-001",
-            clinician_id="dr-alice",
-            facility_id="facility-b",
-            reason_code=ReasonCode.UNCONSCIOUS_PATIENT,
-            signing_key=pki["alice_priv"],
-        )
-
-        cl_cert_pem = certificate_to_pem(pki["alice_cert"]).decode("ascii")
-        ca_cert_pem = certificate_to_pem(pki["fa_cert"]).decode("ascii")
-        root_cert_pem = certificate_to_pem(pki["root"].certificate).decode("ascii")
-        life_priv_pem = private_key_to_pem(pki["life_priv"]).decode("ascii")
-
-        shares_payload = [
-            (em_shares[0][0], em_shares[0][1].hex()),
-            (em_shares[1][0], em_shares[1][1].hex()),
-        ]
-
-        response = client.post(
+        response = test_setup["client"].post(
             "/records/rec-001/breakglass",
-            json={
-                "assertion": assertion.model_dump(mode="json"),
-                "clinician_certificate_pem": cl_cert_pem,
-                "facility_ca_certificate_pem": ca_cert_pem,
-                "trusted_root_certificate_pem": root_cert_pem,
-                "shares": shares_payload,
-                "pre_rewrap_key": pki["alice_pre_pub"],
-                "lifecycle_signing_key_pem": life_priv_pem,
-            },
+            json=_payload(test_setup, facility_id="facility-b"),
         )
 
         assert response.status_code == 400
@@ -234,107 +196,316 @@ class TestHospitalBreakglassEndpoint:
         record stays GRANTED and a correct assertion still opens it afterwards.
         """
         client = test_setup["client"]
-        pki = test_setup["pki"]
-        em_shares = test_setup["em_shares"]
-        repo = test_setup["repo"]
-
-        def _post(patient_id: str):
-            assertion = create_emergency_assertion(
-                patient_id=patient_id,
-                clinician_id="dr-alice",
-                facility_id="facility-a",
-                reason_code=ReasonCode.UNCONSCIOUS_PATIENT,
-                signing_key=pki["alice_priv"],
-            )
-            return client.post(
-                "/records/rec-001/breakglass",
-                json={
-                    "assertion": assertion.model_dump(mode="json"),
-                    "clinician_certificate_pem": certificate_to_pem(
-                        pki["alice_cert"]
-                    ).decode("ascii"),
-                    "facility_ca_certificate_pem": certificate_to_pem(
-                        pki["fa_cert"]
-                    ).decode("ascii"),
-                    "trusted_root_certificate_pem": certificate_to_pem(
-                        pki["root"].certificate
-                    ).decode("ascii"),
-                    "shares": [
-                        (em_shares[0][0], em_shares[0][1].hex()),
-                        (em_shares[1][0], em_shares[1][1].hex()),
-                    ],
-                    "pre_rewrap_key": pki["alice_pre_pub"],
-                    "lifecycle_signing_key_pem": private_key_to_pem(
-                        pki["life_priv"]
-                    ).decode("ascii"),
-                },
-            )
-
-        wrong = _post("patient-999")
+        wrong = client.post(
+            "/records/rec-001/breakglass",
+            json=_payload(test_setup, patient_id="patient-999"),
+        )
         assert wrong.status_code == 403
         assert "not valid for this record" in wrong.json()["detail"]
         assert "rewrapped_dek_b64" not in wrong.text
-        assert repo.get_lifecycle_state("rec-001") == LifecycleState.GRANTED
+        _assert_no_side_effects(test_setup, test_setup["audit_sink"])
 
-        right = _post("patient-001")
+        right = client.post("/records/rec-001/breakglass", json=_payload(test_setup))
         assert right.status_code == 200
 
     def test_breakglass_reopens_after_the_timebox_expired(self, test_setup):
-        """After expiry the store must not stay EMERGENCY_OPEN and block re-entry."""
+        """Expiry returns the stored state to GRANTED, so break-glass works again.
+
+        The expiry timer mirrors its transitions into the store (review N1),
+        replacing the old reset that guessed from a missing session.
+        """
         client = test_setup["client"]
-        pki = test_setup["pki"]
-        em_shares = test_setup["em_shares"]
         repo = test_setup["repo"]
-        app = test_setup["app"]
 
-        def _open():
-            assertion = create_emergency_assertion(
-                patient_id="patient-001",
-                clinician_id="dr-alice",
-                facility_id="facility-a",
-                reason_code=ReasonCode.UNCONSCIOUS_PATIENT,
-                signing_key=pki["alice_priv"],
-            )
-            return client.post(
-                "/records/rec-001/breakglass",
-                json={
-                    "assertion": assertion.model_dump(mode="json"),
-                    "clinician_certificate_pem": certificate_to_pem(
-                        pki["alice_cert"]
-                    ).decode("ascii"),
-                    "facility_ca_certificate_pem": certificate_to_pem(
-                        pki["fa_cert"]
-                    ).decode("ascii"),
-                    "trusted_root_certificate_pem": certificate_to_pem(
-                        pki["root"].certificate
-                    ).decode("ascii"),
-                    "shares": [
-                        (em_shares[0][0], em_shares[0][1].hex()),
-                        (em_shares[1][0], em_shares[1][1].hex()),
-                    ],
-                    "pre_rewrap_key": pki["alice_pre_pub"],
-                    "lifecycle_signing_key_pem": private_key_to_pem(
-                        pki["life_priv"]
-                    ).decode("ascii"),
-                    "baseline_wrapping_key_b64": base64.b64encode(b"" * 32).decode(
-                        "ascii"
-                    ),
-                    "emergency_duration_seconds": 60,
-                },
-            )
-
-        first = _open()
-        assert first.status_code == 200
+        assert client.post(
+            "/records/rec-001/breakglass", json=_payload(test_setup)
+        ).status_code == (200)
         assert repo.get_lifecycle_state("rec-001") == LifecycleState.EMERGENCY_OPEN
 
-        # While the session is live a second unlock must still be refused.
-        assert _open().status_code == 403
-
-        # The timer has finished with the session (expiry, or a facility restart):
-        # it holds none for the record, but the store still says EMERGENCY_OPEN.
-        app.state.expiry_manager = EmergencyExpiryManager(
-            signing_key=pki["life_priv"], default_duration_seconds=60.0
+        # While the session is live a second unlock is refused as a conflict.
+        assert (
+            client.post(
+                "/records/rec-001/breakglass", json=_payload(test_setup)
+            ).status_code
+            == 409
         )
-        second = _open()
+
+        test_setup["expiry_manager"].expire_session("rec-001", force=True)
+        assert repo.get_lifecycle_state("rec-001") == LifecycleState.GRANTED
+
+        second = client.post("/records/rec-001/breakglass", json=_payload(test_setup))
         assert second.status_code == 200, second.text
+
+    def test_stale_emergency_open_returns_409_not_silent_reset(self, test_setup):
+        """A stored EMERGENCY_OPEN with no session here is not silently reset (N1).
+
+        The old ADR-0044 reset wrote GRANTED whenever this process held no
+        session -- which raced another facility's live session.
+        """
+        repo = test_setup["repo"]
+        repo.upsert_lifecycle_state("rec-001", LifecycleState.EMERGENCY_OPEN)
+
+        response = test_setup["client"].post(
+            "/records/rec-001/breakglass", json=_payload(test_setup)
+        )
+        assert response.status_code == 409
+        assert "already emergency_open" in response.json()["detail"]
         assert repo.get_lifecycle_state("rec-001") == LifecycleState.EMERGENCY_OPEN
+
+
+class TestConfiguredTrust:
+    """Review F1: the facility, not the caller, decides which root it trusts."""
+
+    def test_breakglass_rejects_assertion_chained_to_attacker_root(self, test_setup):
+        """A forged root + 'facility-a' CA + 'dr-alice' leaf opens nothing (403).
+
+        Paper claim: break-glass needs a clinician certificate from the
+        federation's PKI; minting your own PKI does not help.
+        """
+        evil_root = generate_root_anchor()
+        evil_ca_priv, evil_ca_pub = generate_ec_keypair()
+        evil_ca = issue_facility_ca_certificate(evil_root, "facility-a", evil_ca_pub)
+        evil_priv, evil_pub = generate_ec_keypair()
+        evil_leaf = issue_clinician_certificate(
+            evil_ca_priv, evil_ca, "dr-alice", evil_pub
+        )
+        sink = test_setup["audit_sink"]
+
+        response = test_setup["client"].post(
+            "/records/rec-001/breakglass",
+            json=_payload(test_setup, signing_key=evil_priv, certificate=evil_leaf),
+        )
+
+        assert response.status_code == 403, response.text
+        assert "rewrapped_dek_b64" not in response.text
+        denials = sink.of_type(EVENT_ACCESS_DENIED)
+        assert [d["event_data"]["denied_by"] for d in denials] == ["breakglass_chain"]
+        _assert_no_side_effects(test_setup, sink)
+
+    def test_breakglass_rejects_certificate_from_unconfigured_ca(self, test_setup):
+        """A CA name the facility was never configured with is refused (403)."""
+        evil_root = generate_root_anchor()
+        evil_ca_priv, evil_ca_pub = generate_ec_keypair()
+        evil_ca = issue_facility_ca_certificate(evil_root, "facility-z", evil_ca_pub)
+        evil_priv, evil_pub = generate_ec_keypair()
+        evil_leaf = issue_clinician_certificate(
+            evil_ca_priv, evil_ca, "dr-alice", evil_pub
+        )
+
+        response = test_setup["client"].post(
+            "/records/rec-001/breakglass",
+            json=_payload(test_setup, signing_key=evil_priv, certificate=evil_leaf),
+        )
+        assert response.status_code == 403
+        assert "configured facility CA" in response.json()["detail"]
+        _assert_no_side_effects(test_setup, test_setup["audit_sink"])
+
+    def test_breakglass_request_with_trust_fields_is_rejected(self, test_setup):
+        """A caller still sending its own root or CA gets 422, not silent ignore."""
+        pki = test_setup["pki"]
+        payload = _payload(
+            test_setup,
+            trusted_root_certificate_pem=certificate_to_pem(
+                pki["root"].certificate
+            ).decode("ascii"),
+        )
+        response = test_setup["client"].post(
+            "/records/rec-001/breakglass", json=payload
+        )
+        assert response.status_code == 422
+        _assert_no_side_effects(test_setup, test_setup["audit_sink"])
+
+    def test_breakglass_rejects_revoked_clinician_cert(self, test_setup):
+        """A revoked clinician certificate cannot break the glass (403)."""
+        pki = test_setup["pki"]
+        sink = RecordingAuditSink()
+        app = create_hospital_app(
+            facility_id="facility-a",
+            repository=test_setup["repo"],
+            expiry_manager=test_setup["expiry_manager"],
+            trust=make_trust(pki, {pki["alice_cert"].serial_number}),
+            audit_sink=sink,
+        )
+        response = TestClient(app).post(
+            "/records/rec-001/breakglass", json=_payload(test_setup)
+        )
+        assert response.status_code == 403
+        assert "CertificateRevokedError" in response.json()["detail"]
+        _assert_no_side_effects(test_setup, sink)
+
+    def test_breakglass_rejects_expired_clinician_cert_with_403_and_denial(
+        self, test_setup
+    ):
+        """An expired clinician certificate is a 403 with a denial, not a 500."""
+        pki = test_setup["pki"]
+        expired = issue_clinician_certificate(
+            pki["fa_priv"], pki["fa_cert"], "dr-alice", pki["alice_pub"], valid_days=0
+        )
+        sink = test_setup["audit_sink"]
+        response = test_setup["client"].post(
+            "/records/rec-001/breakglass",
+            json=_payload(test_setup, certificate=expired),
+        )
+        assert response.status_code == 403, response.text
+        assert len(sink.of_type(EVENT_ACCESS_DENIED)) == 1
+        _assert_no_side_effects(test_setup, sink)
+
+    def test_breakglass_without_trust_or_expiry_manager_refused(self, test_setup):
+        """No configured trust or no timer: 503, never an unbounded unlock (F1/F7)."""
+        pki = test_setup["pki"]
+        for kwargs in (
+            {"expiry_manager": test_setup["expiry_manager"]},
+            {"trust": make_trust(pki)},
+        ):
+            app = create_hospital_app(
+                facility_id="facility-a",
+                repository=test_setup["repo"],
+                audit_sink=RecordingAuditSink(),
+                **kwargs,
+            )
+            response = TestClient(app).post(
+                "/records/rec-001/breakglass", json=_payload(test_setup)
+            )
+            assert response.status_code == 503
+        _assert_no_side_effects(test_setup, test_setup["audit_sink"])
+
+
+class TestTimeBox:
+    """Review F6: the configured duration is a ceiling the caller cannot raise."""
+
+    def test_breakglass_duration_cannot_exceed_configured(self, test_setup):
+        """Asking for 3 days at a facility configured for 60s gets 60s."""
+        response = test_setup["client"].post(
+            "/records/rec-001/breakglass",
+            json=_payload(test_setup, emergency_duration_seconds=3 * 24 * 3600),
+        )
+        assert response.status_code == 200, response.text
+        expires_at = datetime.datetime.fromisoformat(response.json()["expires_at"])
+        remaining = expires_at - datetime.datetime.now(datetime.timezone.utc)
+        assert remaining <= datetime.timedelta(seconds=60)
+
+    def test_breakglass_duration_above_three_days_rejected(self, test_setup):
+        """A window longer than the 3-day maximum is a 422 before anything runs."""
+        response = test_setup["client"].post(
+            "/records/rec-001/breakglass",
+            json=_payload(test_setup, emergency_duration_seconds=3 * 24 * 3600 + 1),
+        )
+        assert response.status_code == 422
+        _assert_no_side_effects(test_setup, test_setup["audit_sink"])
+
+    def test_breakglass_without_baseline_key_rejected(self, test_setup):
+        """The time-box can no longer be skipped by omitting the baseline key (F7)."""
+        payload = _payload(test_setup)
+        del payload["baseline_wrapping_key_b64"]
+        response = test_setup["client"].post(
+            "/records/rec-001/breakglass", json=payload
+        )
+        assert response.status_code == 422
+        _assert_no_side_effects(test_setup, test_setup["audit_sink"])
+
+
+class TestFailureLeavesNoTrace:
+    """Review F7 / N1: a failed or losing unlock changes nothing."""
+
+    def test_audit_outage_during_breakglass_leaves_state_unchanged(self, test_setup):
+        """If the re-wrap cannot be logged: 503, still GRANTED, no session."""
+
+        def failing_sink(event_type, event_data, actor_id, correlation_id):
+            if event_type == EVENT_FEDERATION_REWRAP:
+                raise AuditServiceError("audit down")
+
+        app = create_hospital_app(
+            facility_id="facility-a",
+            repository=test_setup["repo"],
+            expiry_manager=test_setup["expiry_manager"],
+            trust=make_trust(test_setup["pki"]),
+            audit_sink=failing_sink,
+        )
+        response = TestClient(app).post(
+            "/records/rec-001/breakglass", json=_payload(test_setup)
+        )
+        assert response.status_code == 503
+        assert "rewrapped_dek_b64" not in response.text
+        _assert_no_side_effects(test_setup, test_setup["audit_sink"])
+
+        # Setup was valid: with the audit back, the same record opens.
+        ok = test_setup["client"].post(
+            "/records/rec-001/breakglass", json=_payload(test_setup)
+        )
+        assert ok.status_code == 200
+
+    def test_concurrent_breakglass_one_wins(self, test_setup):
+        """Two simultaneous opens of one record: exactly one 200, one 409."""
+        client = test_setup["client"]
+        payloads = [_payload(test_setup), _payload(test_setup)]
+        results: list[int] = []
+        barrier = threading.Barrier(2)
+
+        def open_record(payload):
+            barrier.wait()
+            results.append(
+                client.post("/records/rec-001/breakglass", json=payload).status_code
+            )
+
+        threads = [threading.Thread(target=open_record, args=(p,)) for p in payloads]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert sorted(results) == [200, 409]
+
+
+class TestEveryRefusalIsAudited:
+    """Review F8: each refusal appends exactly one denial with its own reason."""
+
+    @pytest.mark.parametrize(
+        ("case", "denied_by"),
+        [
+            ("single_share", "breakglass_gate"),
+            ("aliased_share", "breakglass_gate"),
+            ("wrong_shares", "breakglass_gate"),
+            ("unknown_record", "record_not_found"),
+            ("other_patient", "breakglass_patient_binding"),
+            ("wrong_facility", "breakglass_assertion"),
+        ],
+    )
+    def test_every_breakglass_refusal_appends_one_denial(
+        self, test_setup, case, denied_by
+    ):
+        em_shares = test_setup["em_shares"]
+        path = "/records/rec-001/breakglass"
+        if case == "single_share":
+            payload = _payload(
+                test_setup, shares=[(em_shares[0][0], em_shares[0][1].hex())]
+            )
+        elif case == "aliased_share":
+            x, share = em_shares[0]
+            payload = _payload(
+                test_setup,
+                shares=[(x, share.hex()), (x + PRIME_MODULUS, share.hex())],
+            )
+        elif case == "wrong_shares":
+            # Two genuine-looking shares of some other key: unwrap fails.
+            from breakglass.emergency_key import (
+                generate_emergency_key,
+                split_emergency_key,
+            )
+
+            other = split_emergency_key(generate_emergency_key())
+            payload = _payload(test_setup, shares=[(x, s.hex()) for x, s in other[:2]])
+        elif case == "unknown_record":
+            path = "/records/rec-nope/breakglass"
+            payload = _payload(test_setup)
+        elif case == "other_patient":
+            payload = _payload(test_setup, patient_id="patient-999")
+        else:
+            payload = _payload(test_setup, facility_id="facility-b")
+
+        sink = test_setup["audit_sink"]
+        response = test_setup["client"].post(path, json=payload)
+
+        assert response.status_code in (400, 403, 404), response.text
+        denials = sink.of_type(EVENT_ACCESS_DENIED)
+        assert [d["event_data"]["denied_by"] for d in denials] == [denied_by]
+        _assert_no_side_effects(test_setup, sink)

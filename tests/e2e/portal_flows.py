@@ -44,17 +44,19 @@ UUID_RE = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 
 @dataclass
 class Results:
-    rows: list[tuple[str, str, bool, str]] = field(default_factory=list)
+    # (section, name, "PASS" | "FAIL" | "SKIP", detail). A skip is reported
+    # on its own, never counted as a pass (review F42).
+    rows: list[tuple[str, str, str, str]] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def check(self, section: str, name: str, ok: bool, detail: str = "") -> bool:
         with self.lock:
-            self.rows.append((section, name, bool(ok), detail))
+            self.rows.append((section, name, "PASS" if ok else "FAIL", detail))
         return bool(ok)
 
     def skip(self, section: str, name: str, why: str) -> None:
         with self.lock:
-            self.rows.append((section, name, True, f"SKIPPED: {why}"))
+            self.rows.append((section, name, "SKIP", why))
 
 
 R = Results()
@@ -158,10 +160,10 @@ def is_plaintext(resp: httpx.Response) -> bool:
 
 
 def is_refused(resp: httpx.Response) -> bool:
+    # A denial is a 403. A 503 is an outage, not evidence the control
+    # refused (review F42).
     return (
-        resp.status_code in (403, 503)
-        and not is_plaintext(resp)
-        and "Refused" in resp.text
+        resp.status_code == 403 and not is_plaintext(resp) and "Refused" in resp.text
     )
 
 
@@ -268,7 +270,7 @@ def section_d(s: dict[str, Portal]) -> None:
         R.check(
             "D",
             "grant for rec-002 cannot read rec-001",
-            not is_plaintext(r) and r.status_code in (403, 404, 503),
+            not is_plaintext(r) and r.status_code in (403, 404),
             f"HTTP {r.status_code}",
         )
         # another clinician cannot use cameron's grant
@@ -832,10 +834,9 @@ def main() -> int:
     )
 
     print()
-    failed = 0
-    for section, name, ok, detail in R.rows:
-        mark = "PASS" if ok else "FAIL"
-        failed += 0 if ok else 1
+    counts: Counter[str] = Counter()
+    for section, name, mark, detail in R.rows:
+        counts[mark] += 1
         print(f"[{mark}] {section:>4}  {name}" + (f"   ({detail})" if detail else ""))
     if LATENCY:
         q = (
@@ -849,8 +850,11 @@ def main() -> int:
             f"p95={q[18] * 1000:.0f}ms  max={max(LATENCY) * 1000:.0f}ms  "
             f"statuses={dict(STATUS)}"
         )
-    print(f"{len(R.rows) - failed}/{len(R.rows)} checks passed")
-    return 1 if failed else 0
+    print(
+        f"{counts['PASS']} passed, {counts['FAIL']} failed, "
+        f"{counts['SKIP']} skipped (of {len(R.rows)} checks)"
+    )
+    return 1 if counts["FAIL"] else 0
 
 
 if __name__ == "__main__":

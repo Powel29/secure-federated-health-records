@@ -13,7 +13,11 @@ from contracts.enums import LifecycleState, ReasonCode
 from contracts.lifecycle import TransitionEvent
 from contracts.messaging import EmergencyAssertion
 from contracts.policy import PolicyTree
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+
+# Longest break-glass window a caller may request (F6). The facility still
+# caps it at its configured duration; this bound only rejects absurd values.
+MAX_EMERGENCY_DURATION_SECONDS = 3 * 24 * 60 * 60
 
 
 class HealthResponse(BaseModel):
@@ -155,7 +159,14 @@ class RevokeRecordResponse(BaseModel):
 
 
 class BreakglassUnlockRequest(BaseModel):
-    """Request payload for 2-of-3 threshold break-glass emergency unlock."""
+    """Request payload for 2-of-3 threshold break-glass emergency unlock.
+
+    Trust anchors are facility configuration, never request data (F1). Extra
+    fields are forbidden so a caller still sending its own root or CA gets a
+    422 instead of having the field silently ignored.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     assertion: EmergencyAssertion = Field(
         ...,
@@ -177,24 +188,22 @@ class BreakglassUnlockRequest(BaseModel):
         ...,
         description="PEM-encoded ECDSA private key for signing TransitionEvent",
     )
-    facility_ca_certificate_pem: str | None = Field(
-        default=None,
-        description="Facility CA certificate for chain validation",
-    )
-    trusted_root_certificate_pem: str | None = Field(
-        default=None,
-        description="Root anchor certificate for chain validation",
-    )
     correlation_id: str | None = None
-    baseline_wrapping_key_b64: str | None = Field(
-        default=None,
+    baseline_wrapping_key_b64: str = Field(
+        ...,
         description=(
-            "Base64-encoded baseline wrapping key " "(starts expiry session if present)"
+            "Base64-encoded baseline wrapping key; required so every unlock "
+            "registers an expiry session (F7)"
         ),
     )
     emergency_duration_seconds: float | None = Field(
         default=None,
-        description="Optional session duration override in seconds",
+        gt=0,
+        le=MAX_EMERGENCY_DURATION_SECONDS,
+        description=(
+            "Optional shorter session in seconds; never longer than the "
+            "facility's configured duration (F6)"
+        ),
     )
 
 
@@ -208,6 +217,10 @@ class BreakglassUnlockResponse(BaseModel):
     )
     transition_event: TransitionEvent
     correlation_id: str | None = None
+    expires_at: AwareDatetime = Field(
+        ...,
+        description="When the session ends; the facility may shorten the request (F6)",
+    )
     message: str = "Emergency access granted and DEK re-wrapped"
 
 
@@ -245,6 +258,11 @@ class EmergencySearchRequest(BaseModel):
         ...,
         description="Plaintext term to search in active emergency session",
     )
+    requester_id: str = Field(
+        ...,
+        description="Clinician performing the search; recorded in the audit log (F8)",
+    )
+    correlation_id: str | None = None
 
 
 # --- Record Ingest / Upload Endpoint (P3-14) ----------------------------------

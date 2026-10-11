@@ -30,8 +30,9 @@ from api.custodian_service import (
     CustodianEndpoints,
     create_custodian_app,
 )
-from api.hospital import create_hospital_app
+from api.hospital import FacilityTrust, create_hospital_app
 from api.repository import InMemoryStorageRepository
+from audit.chain import build_entry, create_genesis_entry
 from breakglass.emergency_key import generate_emergency_key, split_emergency_key
 from contracts.enums import LifecycleState, PolicyNodeType
 from contracts.policy import Attribute, PolicyTree
@@ -39,6 +40,7 @@ from crypto_core import (
     certificate_to_pem,
     generate_ec_keypair,
     private_key_to_pem,
+    public_key_to_pem,
 )
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
@@ -50,6 +52,8 @@ from identity.root_anchor import generate_root_anchor
 from lifecycle.expiry import EmergencyExpiryManager
 from pre.elgamal import generate_keypair as generate_pre_keypair
 from records.ingest import ingest_record
+
+from tests.api.conftest import FromHost, RecordingAuditSink
 
 AUTH_MED = "http://authority-med"
 AUTH_NET = "http://authority-net"
@@ -73,14 +77,29 @@ def _audit_stub(
     only when the commit succeeded (``commit_ok``), otherwise 503 and nothing.
     """
     app = FastAPI()
-    state: dict[str, Any] = {"seq": 0, "entries": []}
+    signing_key, public_key = generate_ec_keypair()
+    head = create_genesis_entry(signing_key=signing_key)
+    state: dict[str, Any] = {"seq": 0, "entries": [], "head": head}
+
+    def _signed(payload: dict[str, Any]) -> dict[str, Any]:
+        # Entries are signed like the real service's, so the custodian's
+        # release check (review F31) has something genuine to verify.
+        entry = build_entry(
+            head=state["head"],
+            event_type=payload.get("event_type", "breakglass_share_release"),
+            event_data=payload.get("event_data", {}),
+            actor_id=payload["actor_id"],
+            correlation_id=payload["correlation_id"],
+            signing_key=signing_key,
+        )
+        state["head"] = entry
+        state["seq"] = entry.seq
+        state["entries"].append({**payload, "seq": entry.seq})
+        return entry.model_dump(mode="json")
 
     @app.post("/entries")
     def entries(payload: dict[str, Any]) -> dict[str, Any]:
-        state["seq"] += 1
-        entry = {"seq": state["seq"], **payload}
-        state["entries"].append(entry)
-        return {"entry": entry}
+        return {"entry": _signed(payload)}
 
     @app.post("/breakglass/shares")
     def deposit(payload: dict[str, Any]) -> dict[str, Any]:
@@ -98,19 +117,19 @@ def _audit_stub(
             raise HTTPException(
                 status_code=503, detail="log commit failed; share was not released"
             )
-        state["seq"] += 1
-        entry = {"seq": state["seq"], **payload}
-        state["entries"].append(entry)
+        entry = _signed(payload)
         x, share = shares[payload["share_key"]]
         return {"x": x, "share_hex": share.hex(), "entry": entry}
 
     app.state.log = state
+    app.state.public_key_pem = public_key_to_pem(public_key).decode("ascii")
     return app
 
 
 def _router(apps: dict[str, FastAPI]) -> httpx.Client:
     """An httpx client whose transport dispatches by hostname to in-process apps."""
-    clients = {host: TestClient(app) for host, app in apps.items()}
+    # Each in-process service sees the custodian as an allowlisted caller.
+    clients = {host: TestClient(FromHost(app)) for host, app in apps.items()}
 
     def handler(request: httpx.Request) -> httpx.Response:
         host = urlparse(str(request.url)).hostname or ""
@@ -135,12 +154,19 @@ def federation():
     fb_priv, fb_pub = generate_ec_keypair()
     fb_cert = issue_facility_ca_certificate(root, "facility-b", fb_pub)
 
-    app_med = create_authority_app("authority-med", frozenset({"role"}))
-    app_net = create_authority_app(
-        "authority-net", frozenset({"specialty", "facility", "owner"})
+    # The custodian reaches the authorities through a test client, which is
+    # the allowlisted authoring caller here (F14 interim).
+    authoring = frozenset({"testclient"})
+    app_med = create_authority_app(
+        "authority-med", frozenset({"role"}), authoring_callers=authoring
     )
-    med = TestClient(app_med)
-    net = TestClient(app_net)
+    app_net = create_authority_app(
+        "authority-net",
+        frozenset({"specialty", "facility", "owner"}),
+        authoring_callers=authoring,
+    )
+    med = TestClient(FromHost(app_med))
+    net = TestClient(FromHost(app_net))
 
     def issue(client: TestClient, subject: str, name: str, value: str, **kw: Any):
         r = client.post(
@@ -214,8 +240,21 @@ def federation():
 
     life_priv, _ = generate_ec_keypair()
     expiry = EmergencyExpiryManager(signing_key=life_priv, default_duration_seconds=60)
-    app_fa = create_hospital_app("facility-a", repository=repo)
-    app_fb = create_hospital_app("facility-b", repository=repo, expiry_manager=expiry)
+    trust = FacilityTrust(
+        root=root.certificate,
+        facility_cas={"facility-a": fa_cert, "facility-b": fb_cert},
+    )
+    audit_sink = RecordingAuditSink()
+    app_fa = create_hospital_app(
+        "facility-a", repository=repo, trust=trust, audit_sink=audit_sink
+    )
+    app_fb = create_hospital_app(
+        "facility-b",
+        repository=repo,
+        expiry_manager=expiry,
+        trust=trust,
+        audit_sink=audit_sink,
+    )
 
     # Clinician identities: certs from their facility CA, PRE keypairs.
     cardio_priv, cardio_pub = generate_ec_keypair()
@@ -281,6 +320,7 @@ def _custodian(
         http_client=http,
         record_loader=federation["repo"].get_record,
         root_certificate_pem=federation["root_pem"],
+        audit_public_key_pem=audit.state.public_key_pem,
         facility_ca_certificate_pems={
             "facility-a": federation["fa_pem"],
             "facility-b": federation["fb_pem"],
@@ -391,6 +431,7 @@ def test_authority_outage_is_distinct_from_a_policy_denial(federation):
         http_client=http,
         record_loader=federation["repo"].get_record,
         root_certificate_pem=federation["root_pem"],
+        audit_public_key_pem=audit.state.public_key_pem,
     )
     client = TestClient(app)
     _deposit_all(client, federation)
@@ -575,7 +616,8 @@ def test_breakglass_never_puts_the_clinician_key_on_the_wire(federation):
     captured: list[bytes] = []
     audit = _audit_stub({RECORD: federation["shares"]["share3"]})
     apps = {**federation["apps"], "audit": audit}
-    clients = {host: TestClient(app) for host, app in apps.items()}
+    # Each in-process service sees the custodian as an allowlisted caller.
+    clients = {host: TestClient(FromHost(app)) for host, app in apps.items()}
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured.append(request.content)
@@ -598,6 +640,7 @@ def test_breakglass_never_puts_the_clinician_key_on_the_wire(federation):
         http_client=http,
         record_loader=federation["repo"].get_record,
         root_certificate_pem=federation["root_pem"],
+        audit_public_key_pem=audit.state.public_key_pem,
         facility_ca_certificate_pems={
             "facility-a": federation["fa_pem"],
             "facility-b": federation["fb_pem"],
@@ -707,6 +750,40 @@ def test_uploaded_record_can_be_opened_by_break_glass(federation):
     assert federation["repo"].get_lifecycle_state(rid) is LifecycleState.EMERGENCY_OPEN
 
 
+def test_ingest_with_existing_record_id_leaves_shares_intact(federation):
+    """Review F4: re-using a record_id is refused and the original still opens.
+
+    Before the fix the custodian deposited new shares before the facility
+    refused the duplicate, replacing the original record's shares for good.
+    """
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    first = _upload(client, b"Original report", record_id="rec-dup-001")
+    assert first.status_code == 201, first.text
+
+    again = _upload(client, b"Overwrite attempt", record_id="rec-dup-001")
+    assert again.status_code == 409, again.text
+
+    r = client.post(
+        f"/subjects/{DOC_ER}/breakglass",
+        json={
+            "patient_id": PATIENT,
+            "record_id": "rec-dup-001",
+            "reason_code": "stroke",
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert base64.b64decode(r.json()["plaintext_b64"]) == b"Original report"
+
+
+def test_share_deposit_never_overwrites(federation):
+    """Review F4: a second share for the same record is refused (409)."""
+    client = _custodian(federation)
+    body = {"x": 1, "share_hex": "00" * 33}
+    assert client.post("/records/rec-x/shares", json=body).status_code == 201
+    assert client.post("/records/rec-x/shares", json=body).status_code == 409
+
+
 def test_upload_refused_without_owner_credential(federation):
     """Fail closed: never seal a record its owner could not open (ADR-0016)."""
     client = _custodian(federation)
@@ -744,3 +821,41 @@ def test_empty_or_malformed_upload_is_rejected_before_any_service_call(federatio
         },
     )
     assert r.status_code == 400
+
+
+def test_breakglass_refuses_a_release_entry_the_audit_service_did_not_sign(
+    federation,
+):
+    """Review F31: a share whose release entry is not the audit service's
+    signature over this flow is not presented to the facility."""
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    # Swap the key the custodian trusts: the stub's real signatures no longer
+    # verify, exactly as if an impostor answered for the audit service.
+    impostor_pub = generate_ec_keypair()[1]
+    client.app.state.vault.audit_public_key_pem = public_key_to_pem(
+        impostor_pub
+    ).decode("ascii")
+
+    r = client.post(
+        f"/subjects/{DOC_ER}/breakglass",
+        json={"patient_id": PATIENT, "record_id": RECORD, "reason_code": "stroke"},
+    )
+    assert r.status_code == 502
+    assert "did not verify" in r.json()["detail"]
+    assert "plaintext_b64" not in r.text
+    assert federation["repo"].get_lifecycle_state(RECORD) is LifecycleState.GRANTED
+
+
+def test_breakglass_refuses_an_audit_seq_that_goes_backwards(federation):
+    """Review F31: a lower seq than one already seen means a truncated chain."""
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    client.app.state.vault.last_audit_seq = 10_000
+
+    r = client.post(
+        f"/subjects/{DOC_ER}/breakglass",
+        json={"patient_id": PATIENT, "record_id": RECORD, "reason_code": "stroke"},
+    )
+    assert r.status_code == 502
+    assert "truncated or replayed" in r.json()["detail"]

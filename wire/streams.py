@@ -50,6 +50,10 @@ class Flow:
     offsets: list[int] = field(default_factory=list)
     frames: list[int] = field(default_factory=list)
     timestamps: list[float] = field(default_factory=list)
+    # Offsets in ``data`` where a lost segment's bytes are missing. A match
+    # may not span one (review N8): joining the bytes either side could both
+    # hide a real secret and invent one that never crossed the wire.
+    gaps: list[int] = field(default_factory=list)
 
     def locate(self, offset: int) -> tuple[int, float]:
         """Frame number and timestamp of the segment holding byte ``offset``."""
@@ -60,7 +64,12 @@ class Flow:
 
     @property
     def start_timestamp(self) -> float:
-        return self.timestamps[0]
+        """The earliest frame time, not the lowest sequence number's (N8)."""
+        return min(self.timestamps)
+
+    def spans_gap(self, start: int, end: int) -> bool:
+        """Whether ``data[start:end]`` straddles a missing segment."""
+        return any(start < gap < end for gap in self.gaps)
 
 
 def reassemble(segments: list[Segment]) -> dict[FlowKey, Flow]:
@@ -68,8 +77,8 @@ def reassemble(segments: list[Segment]) -> dict[FlowKey, Flow]:
 
     Retransmitted or overlapping segments contribute only bytes not already
     covered, so a retransmission never duplicates data. A gap (lost segment)
-    is left as a gap: bytes are appended in order and the hole is simply
-    absent, which can only hide a match, never invent one.
+    is recorded in :attr:`Flow.gaps`; searches refuse matches that span it
+    and claim 1 treats any gapped service flow as inconclusive (review N8).
     """
     grouped: dict[FlowKey, list[Segment]] = defaultdict(list)
     for seg in segments:
@@ -87,6 +96,8 @@ def reassemble(segments: list[Segment]) -> dict[FlowKey, Flow]:
             start, end = seg.seq, seg.seq + len(seg.payload)
             if covered_to is not None and end <= covered_to:
                 continue  # pure retransmission
+            if covered_to is not None and start > covered_to:
+                flow.gaps.append(length)  # bytes covered_to..start never seen
             skip = 0 if covered_to is None else max(0, covered_to - start)
             piece = seg.payload[skip:]
             flow.offsets.append(length)

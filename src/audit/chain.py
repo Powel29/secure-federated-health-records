@@ -28,7 +28,7 @@ import psycopg
 from contracts import AuditEntry
 from contracts.base import SHA256_DIGEST_BYTES
 from crypto_core import sha256_digest, sign, verify
-from cryptography.hazmat.primitives.asymmetric import ec
+from crypto_core.types import ECPrivateKey, ECPublicKey
 from storage import repositories as repo
 
 from audit.exceptions import ChainBreakError, EmptyChainError, TamperedEntryError
@@ -135,7 +135,7 @@ def _sign_entry_fields(
     actor_id: str,
     correlation_id: str,
     timestamp: datetime.datetime,
-    signing_key: ec.EllipticCurvePrivateKey,
+    signing_key: ECPrivateKey,
 ) -> bytes:
     payload = _entry_signing_payload(
         seq=seq,
@@ -157,7 +157,7 @@ def _sign_entry_fields(
 
 def create_genesis_entry(
     *,
-    signing_key: ec.EllipticCurvePrivateKey,
+    signing_key: ECPrivateKey,
     actor_id: str = "audit-service",
     timestamp: datetime.datetime | None = None,
 ) -> AuditEntry:
@@ -215,7 +215,7 @@ def append_entry(
     event_data: dict[str, Any],
     actor_id: str,
     correlation_id: str,
-    signing_key: ec.EllipticCurvePrivateKey,
+    signing_key: ECPrivateKey,
     timestamp: datetime.datetime | None = None,
 ) -> AuditEntry:
     """Append one new entry onto the chain's current head.
@@ -250,7 +250,53 @@ def append_entry(
             "cannot append: no genesis entry exists; call create_genesis_entry "
             "and persist it first"
         )
+    entry = build_entry(
+        head=head,
+        event_type=event_type,
+        event_data=event_data,
+        actor_id=actor_id,
+        correlation_id=correlation_id,
+        signing_key=signing_key,
+        timestamp=timestamp,
+    )
+    repo.insert_audit_entry(conn, entry)
+    return entry
 
+
+def _reject_floats(value: object, path: str = "event_data") -> None:
+    """Refuse floats anywhere in ``event_data`` (review F31).
+
+    A float does not survive the jsonb round trip byte for byte (``1e20``
+    comes back as ``100000000000000000000``), so the recomputed hash would
+    not match and verification would report tampering that never happened.
+    Identifiers, counts and timestamps (as strings) are all this log needs.
+    """
+    if isinstance(value, float):
+        raise ValueError(f"{path} holds a float; log integers or strings instead")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _reject_floats(item, f"{path}.{key}")
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            _reject_floats(item, f"{path}[{index}]")
+
+
+def build_entry(
+    *,
+    head: AuditEntry,
+    event_type: str,
+    event_data: dict[str, Any],
+    actor_id: str,
+    correlation_id: str,
+    signing_key: ECPrivateKey,
+    timestamp: datetime.datetime | None = None,
+) -> AuditEntry:
+    """Build and sign the entry that extends ``head`` (no persistence).
+
+    Raises:
+        ValueError: ``event_data`` holds a float (review F31).
+    """
+    _reject_floats(event_data)
     when = timestamp or datetime.datetime.now(datetime.timezone.utc)
     seq = head.seq + 1
     prev_hash = head.entry_hash
@@ -274,7 +320,7 @@ def append_entry(
         signing_key=signing_key,
     )
 
-    entry = AuditEntry(
+    return AuditEntry(
         seq=seq,
         prev_hash=prev_hash,
         entry_hash=entry_hash,
@@ -285,8 +331,6 @@ def append_entry(
         timestamp=when,
         signature=signature,
     )
-    repo.insert_audit_entry(conn, entry)
-    return entry
 
 
 # ---------------------------------------------------------------------------
@@ -294,9 +338,45 @@ def append_entry(
 # ---------------------------------------------------------------------------
 
 
+def verify_entry_signature(entry: AuditEntry, public_key: ECPublicKey) -> None:
+    """Verify one entry's signature and its own hash, without the chain.
+
+    For a client handed a single entry back by the audit service (the
+    custodian after a share release, review F31): it proves the audit
+    service signed exactly this entry.
+
+    Raises:
+        InvalidSignatureError: The signature does not verify.
+        TamperedEntryError: The entry's hash does not match its fields.
+    """
+    verify(
+        public_key,
+        _entry_signing_payload(
+            seq=entry.seq,
+            prev_hash=entry.prev_hash,
+            entry_hash=entry.entry_hash,
+            event_type=entry.event_type,
+            event_data=entry.event_data,
+            actor_id=entry.actor_id,
+            correlation_id=entry.correlation_id,
+            timestamp=entry.timestamp,
+        ),
+        entry.signature,
+    )
+    recomputed = compute_entry_hash(
+        prev_hash=entry.prev_hash,
+        event_type=entry.event_type,
+        event_data=entry.event_data,
+        timestamp=entry.timestamp,
+        actor_id=entry.actor_id,
+    )
+    if recomputed != entry.entry_hash:
+        raise TamperedEntryError(f"entry seq={entry.seq} hash does not match")
+
+
 def verify_chain(
     entries: Sequence[AuditEntry],
-    public_key: ec.EllipticCurvePublicKey,
+    public_key: ECPublicKey,
 ) -> None:
     """Verify a full chain of entries, genesis through head.
 
@@ -371,7 +451,7 @@ def verify_chain(
 
 def verify_full_chain(
     conn: psycopg.Connection,
-    public_key: ec.EllipticCurvePublicKey,
+    public_key: ECPublicKey,
 ) -> AuditEntry:
     """Fetch and verify the entire persisted chain; return its head.
 

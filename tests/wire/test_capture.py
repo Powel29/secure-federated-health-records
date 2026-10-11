@@ -52,7 +52,7 @@ def test_capture_scenario_needs_dumpcap():
     assert ran == []  # scenario never started because capture could not begin
 
 
-@pytest.mark.parametrize("iface", ["lo", "lo0", "docker0", "br-3f2a9c1d"])
+@pytest.mark.parametrize("iface", ["lo", "lo0", "docker0", "br-3f2a9c1d0e4b"])
 def test_loopback_and_bridge_interfaces_are_allowed(iface):
     assert is_allowed_interface(iface)
 
@@ -63,7 +63,9 @@ def test_every_platform_default_is_allowed():
     assert all(is_allowed_interface(name) for name in _DEFAULT_LOOPBACK.values())
 
 
-@pytest.mark.parametrize("iface", ["eth0", "Wi-Fi", "en0", "wlan0", "br-", "any"])
+@pytest.mark.parametrize(
+    "iface", ["eth0", "Wi-Fi", "en0", "wlan0", "br-", "any", "br-lan", "br-ex"]
+)
 def test_shared_network_interfaces_are_refused(iface):
     """F39 / CLAUDE.md: never capture a shared or third-party network."""
     assert not is_allowed_interface(iface)

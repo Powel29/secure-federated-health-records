@@ -173,6 +173,8 @@ class TestValidateEmergencyAssertion:
             facility_ca_certificate=federation["fa_cert"],
             trusted_root=federation["root"].certificate,
             expected_facility_id="facility-a",
+            consumed_store=ConsumedAssertionIds(),
+            revoked_serials=frozenset(),
         )
 
     def test_valid_assertion_at_out_of_network_facility(self, federation):
@@ -190,6 +192,8 @@ class TestValidateEmergencyAssertion:
             facility_ca_certificate=federation["fb_cert"],
             trusted_root=federation["root"].certificate,
             expected_facility_id="facility-b",
+            consumed_store=ConsumedAssertionIds(),
+            revoked_serials=frozenset(),
         )
 
     def test_with_consumed_store(self, federation):
@@ -209,5 +213,6 @@ class TestValidateEmergencyAssertion:
             trusted_root=federation["root"].certificate,
             expected_facility_id="facility-a",
             consumed_store=store,
+            revoked_serials=frozenset(),
         )
         assert store.has_seen(assertion.assertion_id)

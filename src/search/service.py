@@ -82,6 +82,17 @@ def search_records_with_emergency(
     search_term: str,
 ) -> list[str]:
     """Search using the currently active emergency session."""
-    emergency_key = expiry_manager.get_active_emergency_key(record_id)
-    coded_term = derive_search_token(emergency_key, search_term)
+    coded_term = emergency_search_token(expiry_manager, record_id, search_term)
     return find_records_by_search_term(conn, coded_term)
+
+
+def emergency_search_token(
+    expiry_manager: EmergencyExpiryManager, record_id: str, search_term: str
+) -> bytes:
+    """The coded token for ``search_term`` under the record's live emergency key.
+
+    Repository-agnostic, so the facility API never derives tokens itself
+    (review F33). Raises if no session is live, exactly as the key lookup does.
+    """
+    emergency_key = expiry_manager.get_active_emergency_key(record_id)
+    return derive_search_token(emergency_key, search_term)

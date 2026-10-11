@@ -13,6 +13,15 @@ class IllegalTransitionError(LifecycleError):
     """The ``(from_state, to_state)`` pair is not in the legal transition set."""
 
 
+class StateConflictError(LifecycleError):
+    """A compare-and-set lost: the record's stored state was not what was expected.
+
+    Two concurrent transitions from the same state must not both succeed, and
+    the expiry timer must not overwrite a state someone else changed (review
+    F12, N1). Callers map this to HTTP 409 and never treat it as success.
+    """
+
+
 class StateMismatchError(LifecycleError):
     """The event's ``from_state`` does not match the record's actual current state.
 

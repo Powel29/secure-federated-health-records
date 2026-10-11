@@ -25,6 +25,7 @@ from authority import (
     verify_credential,
 )
 from authority.issuance import _signing_payload
+from authority.revocation import RevocationRegistry
 from contracts import Attribute, AttributeCredential
 from contracts.enums import CredentialStatus, PolicyNodeType
 from contracts.policy import PolicyTree
@@ -94,12 +95,19 @@ def test_sec_expired_credential_fails_validation_and_key_release() -> None:
     # verifies and releases a key, so the refusal below is the expiry check
     # and not a broken fixture.
     inside_window = valid_from + datetime.timedelta(days=1)
-    verify_credential(cred, authority.public_key, at=inside_window)
+    verify_credential(
+        cred,
+        authority.public_key,
+        at=inside_window,
+        revocation_registry=RevocationRegistry(),
+    )
     assert len(authority.get_attribute_key(cred, at=inside_window)) == 32
 
     # Negative: verify_credential raises CredentialExpiredError at check time
     with pytest.raises(CredentialExpiredError):
-        verify_credential(cred, authority.public_key, at=now)
+        verify_credential(
+            cred, authority.public_key, at=now, revocation_registry=RevocationRegistry()
+        )
 
     # Negative: get_attribute_key raises CredentialExpiredError
     with pytest.raises(CredentialExpiredError):
@@ -145,7 +153,11 @@ def test_sec_tampered_revoked_status_fails_signature() -> None:
 
     # Signature fails against the original signature over REVOKED
     with pytest.raises(InvalidSignatureError):
-        verify_credential(tampered_active, authority.public_key)
+        verify_credential(
+            tampered_active,
+            authority.public_key,
+            revocation_registry=RevocationRegistry(),
+        )
 
 
 def test_sec_revoked_attribute_credential_denies_policy_decryption() -> None:

@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import base64
 import datetime
+import ipaddress
+import socket
 from typing import Annotated
 
 from authority.exceptions import (
@@ -82,10 +84,34 @@ _CREDENTIAL_ERRORS = (
 )
 
 
+# Who may call /attribute-keys/author until service authentication exists
+# (review F14 interim; D5-a replaces this with signed request envelopes).
+DEFAULT_AUTHORING_CALLERS = frozenset({"127.0.0.1", "::1"})
+
+
+def _resolve_callers(callers: frozenset[str]) -> set[str]:
+    """IP addresses for each allowlist entry; hostnames resolve at call time."""
+    addresses: set[str] = set()
+    for entry in callers:
+        try:
+            addresses.add(str(ipaddress.ip_address(entry)))
+            continue
+        except ValueError:
+            pass
+        try:
+            infos = socket.getaddrinfo(entry, None)
+        except socket.gaierror:
+            continue  # an unresolvable name allows nobody
+        addresses.update(str(info[4][0]) for info in infos)
+    return addresses
+
+
 def create_authority_app(
     authority_id: str,
     owned_attribute_names: frozenset[str],
     authority: AttributeAuthority | None = None,
+    *,
+    authoring_callers: frozenset[str] = DEFAULT_AUTHORING_CALLERS,
 ) -> FastAPI:
     """Create and configure the standalone Attribute Authority Service application.
 
@@ -97,6 +123,9 @@ def create_authority_app(
             supply a fixed one). Defaults to a freshly generated one --
             ARCHITECTURE.md §7 step 3: "each generates attribute key
             material."
+        authoring_callers: Addresses or hostnames allowed to fetch authoring
+            keys from ``/attribute-keys/author`` (review F14 interim).
+            Defaults to loopback only.
 
     Returns:
         A configured FastAPI application.
@@ -246,9 +275,26 @@ def create_authority_app(
 
     @app.post("/attribute-keys/author", response_model=AttributeKeyResponse)
     def author_attribute_key(
-        payload: AuthorAttributeKeyRequest, authority: AuthorityDep
+        payload: AuthorAttributeKeyRequest, authority: AuthorityDep, request: Request
     ) -> AttributeKeyResponse:
-        """Mint (or fetch) the authoring-side key for an owned attribute leaf."""
+        """Mint (or fetch) the authoring-side key for an owned attribute leaf.
+
+        The authoring key is the same key ``/attribute-keys/release`` gates
+        behind a credential (ADR-0026), so only allowlisted authoring services
+        may call this (review F14 interim). Those callers are trusted parties
+        by construction; signed service requests (D5-a) replace the address
+        check.
+        """
+        caller = request.client.host if request.client else None
+        allowed = caller is not None and (
+            caller in authoring_callers  # literal match: no DNS lookup
+            or caller in _resolve_callers(authoring_callers)
+        )
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="caller is not an allowlisted authoring service",
+            )
         try:
             key = authority.attribute_key(payload.name, payload.value)
         except UnauthorizedAttributeError as exc:

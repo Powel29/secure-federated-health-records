@@ -21,6 +21,7 @@ from django.contrib import messages
 from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone as dj_tz
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 from portal_core import notify, policies, services, store_reader
 from portal_core.access import role_required
@@ -36,6 +37,11 @@ from ledger.models import (
 )
 
 GRANT_TTL_DAYS = 5
+
+# Uploaded content types a browser may render inline (review F42).
+_INLINE_CONTENT_TYPES = frozenset(
+    {"application/pdf", "image/png", "image/jpeg", "text/plain"}
+)
 
 
 def _store(fn: Any, *args: Any, default: Any = None) -> tuple[Any, str | None]:
@@ -127,7 +133,13 @@ def mark_read(request: Any, pk: int) -> HttpResponse:
     if note.read_at is None:
         note.read_at = dj_tz.now()
         note.save(update_fields=["read_at"])
-    return redirect(request.POST.get("next") or "patient:home")
+    # Only same-host relative targets; anything else goes home (review F42).
+    target = request.POST.get("next")
+    if target and url_has_allowed_host_and_scheme(
+        target, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        return redirect(target)
+    return redirect("patient:home")
 
 
 # --- Page 2: access control & consent ------------------------------------------------
@@ -366,8 +378,15 @@ def record_view(request: Any, record_id: str) -> HttpResponse:
     plaintext = base64.b64decode(result["plaintext_b64"])
     content_type = result.get("content_type") or meta["content_type"]
     if request.POST.get("mode") == "raw" or not _renderable(content_type):
+        # The content type is the uploader's claim. Only a short list of
+        # passive types is shown inline; anything else (HTML, SVG, scripts)
+        # downloads, and the browser may not sniff a different type (F42).
+        disposition = (
+            "inline" if content_type in _INLINE_CONTENT_TYPES else "attachment"
+        )
         response = HttpResponse(plaintext, content_type=content_type)
-        response["Content-Disposition"] = f'inline; filename="{record_id}"'
+        response["Content-Disposition"] = f'{disposition}; filename="{record_id}"'
+        response["X-Content-Type-Options"] = "nosniff"
         response["Cache-Control"] = "no-store"
         return response
     ctx.update(

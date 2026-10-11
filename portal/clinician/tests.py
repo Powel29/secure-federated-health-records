@@ -140,6 +140,28 @@ class BreakglassTests(TestCase):
             self.client.post("/clinician/identify/", {"family_name": "Vance", "date_of_birth": "1982-04-15", "given_name": "Alice"})
             self.client.post("/clinician/identify/select/", {"patient_id": "pat-101"})
 
+    def test_breakglass_without_lookup_refused(self) -> None:
+        """Review F41: a raw patient_id cannot skip the logged lookup."""
+        with patched(custodian_breakglass=mock.Mock(), custodian_subject=mock.Mock(return_value=SUBJECT_CLINICIAN)) as m:
+            resp = self.client.post(
+                "/clinician/breakglass/",
+                {"action": "declare", "patient_id": "pat-101", "record_id": "rec-001", "reason_code": "stroke"},
+            )
+        self.assertEqual(resp.status_code, 400)
+        self.assertContains(resp, "logged directory lookup", status_code=400)
+        m["custodian_breakglass"].assert_not_called()
+
+    def test_breakglass_for_a_different_patient_than_selected_refused(self) -> None:
+        audit = AuditLog()
+        self._identify(audit)  # selects pat-101
+        with patched(custodian_breakglass=mock.Mock(), custodian_subject=mock.Mock(return_value=SUBJECT_CLINICIAN)) as m:
+            resp = self.client.post(
+                "/clinician/breakglass/",
+                {"action": "declare", "patient_id": "pat-202", "record_id": "rec-009", "reason_code": "stroke"},
+            )
+        self.assertEqual(resp.status_code, 400)
+        m["custodian_breakglass"].assert_not_called()
+
     def test_declaration_without_identification_is_refused(self) -> None:
         with patched(custodian_breakglass=mock.Mock(), custodian_subject=mock.Mock(return_value=SUBJECT_CLINICIAN)) as m:
             resp = self.client.post("/clinician/breakglass/", {"action": "declare", "reason_code": "stroke"})

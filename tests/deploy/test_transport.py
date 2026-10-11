@@ -13,9 +13,11 @@ def test_tls_upgrades_all_endpoint_maps_and_uses_bundle(monkeypatch, tmp_path):
     bundle.write_text("test trust bundle")
     monkeypatch.setenv("TLS_ENABLED", "true")
     monkeypatch.setenv("TLS_CERT_DIR", str(tmp_path))
-    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
-    monkeypatch.delenv("SSL_CERTFILE", raising=False)
-    monkeypatch.delenv("SSL_KEYFILE", raising=False)
+    # setenv first so monkeypatch restores (deletes) what configure_transport
+    # writes into os.environ; a bare delenv of an absent name is not undone.
+    for name in ("SSL_CERT_FILE", "SSL_CERTFILE", "SSL_KEYFILE"):
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name)
     monkeypatch.setenv("AUDIT_SERVICE_URL", "http://audit:8020")
     monkeypatch.setenv("AUTHORITY_URLS", "med=http://med:8010,net=http://net:8011")
     configure_transport("audit")
@@ -30,6 +32,7 @@ def test_tls_upgrades_all_endpoint_maps_and_uses_bundle(monkeypatch, tmp_path):
 def test_tls_missing_trust_bundle_fails_before_starting(monkeypatch, tmp_path):
     monkeypatch.setenv("TLS_ENABLED", "true")
     monkeypatch.setenv("TLS_CERT_DIR", str(tmp_path))
-    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.setenv("SSL_CERT_FILE", "")
+    monkeypatch.delenv("SSL_CERT_FILE")
     with pytest.raises(RuntimeError, match="TLS trust bundle missing"):
         configure_transport("audit")

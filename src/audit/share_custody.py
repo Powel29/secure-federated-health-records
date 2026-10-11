@@ -24,7 +24,7 @@ from typing import Any
 
 import psycopg
 from contracts import AuditEntry
-from cryptography.hazmat.primitives.asymmetric import ec
+from crypto_core.types import ECPrivateKey
 
 from audit.chain import append_entry
 from audit.exceptions import AuditCommitFailedError
@@ -43,7 +43,7 @@ def release_share_after_commit(
     event_data: dict[str, Any],
     actor_id: str,
     correlation_id: str,
-    signing_key: ec.EllipticCurvePrivateKey,
+    signing_key: ECPrivateKey,
     timestamp: datetime.datetime | None = None,
 ) -> tuple[Share, AuditEntry]:
     """Commit a log entry, then release the held share -- never the reverse.

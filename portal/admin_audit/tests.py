@@ -130,3 +130,28 @@ class CaseReviewTests(TestCase):
             resp = self.client.get("/oversight/cases/")
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, "failed closed")
+
+
+class HygieneTests(TestCase):
+    """Review F42: bad input is a 400, and an unverifiable chain says so."""
+
+    def setUp(self) -> None:
+        admin()
+        self.client.login(username="auditor", password="pw12345")
+
+    def test_non_numeric_approve_is_400_not_500(self) -> None:
+        resp = self.client.post("/oversight/registrations/", {"approve": "abc"})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_links_intact_is_three_state(self) -> None:
+        from admin_audit.views import _links_intact
+
+        a = {"seq": 1, "entry_hash_hex": "aa", "prev_hash_hex": "00"}
+        b = {"seq": 2, "entry_hash_hex": "bb", "prev_hash_hex": "aa"}
+        gap = {"seq": 5, "entry_hash_hex": "ee", "prev_hash_hex": "dd"}
+        broken = {"seq": 2, "entry_hash_hex": "bb", "prev_hash_hex": "zz"}
+        self.assertIs(_links_intact([a, b]), True)
+        self.assertIs(_links_intact([a, broken]), False)
+        # No consecutive pair: nothing was checked, so it is not "intact".
+        self.assertIsNone(_links_intact([a, gap]))
+        self.assertIsNone(_links_intact([a]))

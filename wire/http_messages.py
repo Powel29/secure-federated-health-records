@@ -78,6 +78,12 @@ def parse_flow(flow: Flow) -> list[HttpMessage]:
             headers[name.strip().lower()] = value.strip()
 
         is_request = not start_line[0].startswith("HTTP/")
+        status: int | None = None
+        if not is_request:
+            try:
+                status = int(start_line[1])
+            except ValueError:
+                break  # malformed status line: stop walking this flow (N15)
         body_start = head_end + 4
         if headers.get("transfer-encoding", "").lower() == "chunked":
             parsed = _dechunk(data, body_start)
@@ -103,7 +109,7 @@ def parse_flow(flow: Flow) -> list[HttpMessage]:
                 is_request=is_request,
                 method=start_line[0] if is_request else "",
                 path=start_line[1] if is_request else "",
-                status=None if is_request else int(start_line[1]),
+                status=status,
                 headers=headers,
                 body=body,
                 frame=frame,

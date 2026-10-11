@@ -14,17 +14,19 @@ import pytest
 from crypto_core import generate_ec_keypair
 from storage.migrate import apply_migrations
 
+from tests.security.conftest import skip_or_fail_without_postgres
+
 _URL = os.environ.get("DATABASE_URL")
 
 
 @pytest.fixture(scope="session")
 def _base_conn():
     if not _URL:
-        pytest.skip("DATABASE_URL not set; audit tests need Postgres")
+        skip_or_fail_without_postgres("DATABASE_URL not set; audit tests need Postgres")
     try:
         conn = psycopg.connect(_URL)
     except psycopg.OperationalError as exc:
-        pytest.skip(f"cannot reach Postgres: {exc}")
+        skip_or_fail_without_postgres(f"cannot reach Postgres: {exc}")
     conn.autocommit = True
     with conn.cursor() as cur:
         cur.execute("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;")

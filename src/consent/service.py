@@ -35,8 +35,10 @@ from consent.exceptions import (
 _FIELD_SEPARATOR = b"\x1f"
 _NONCE_BYTES = 16  # matches contracts.base.MIN_ANTIREPLAY_NONCE_BYTES
 
-# One year -- ARCHITECTURE §8 "nothing issues forever." The caller normally
-# supplies a shorter duration matched to the clinical episode.
+# Requests live seven days and grants thirty -- ARCHITECTURE §8 "nothing
+# issues forever." The caller normally supplies a duration matched to the
+# clinical episode. (The old comment said one year; the values were always
+# these, review F30.)
 DEFAULT_REQUEST_TTL = datetime.timedelta(days=7)
 DEFAULT_GRANT_TTL = datetime.timedelta(days=30)
 

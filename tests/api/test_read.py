@@ -294,6 +294,37 @@ class TestHospitalReadEndpoint:
         assert response.status_code == 503
         assert "audit service unavailable" in response.json()["detail"]
 
+    def test_read_without_audit_sink_returns_503_not_plaintext(self, test_setup):
+        """Review F19: a facility with no audit destination releases nothing.
+
+        Before the fix, ``_log_event`` silently did nothing when neither an
+        audit URL nor an in-process logger was configured, so the read below
+        returned plaintext with no log entry.
+        """
+        attrs = test_setup["attrs"]
+        owner_keyring = {
+            "authority-net:owner:patient-001": attrs["b64_keyring"][
+                "authority-net:owner:patient-001"
+            ]
+        }
+        body = {"requester_id": "patient-001", "holder_keyring": owner_keyring}
+
+        # Setup is valid: with the fixture's audit sink the same read succeeds.
+        assert (
+            test_setup["client"].post("/records/rec-001/read", json=body).status_code
+            == 200
+        )
+
+        app = create_hospital_app(
+            facility_id="facility-a",
+            repository=test_setup["repo"],
+            expiry_manager=test_setup["expiry_manager"],
+        )
+        response = TestClient(app).post("/records/rec-001/read", json=body)
+
+        assert response.status_code == 503
+        assert "plaintext_b64" not in response.text
+
     def test_read_nonexistent_record_returns_404(self, test_setup):
         """Request for unknown record returns 404."""
         client = test_setup["client"]

@@ -29,6 +29,7 @@ from deploy.config import configure_transport
 from deploy.run_scenario import ScenarioEndpoints
 
 FEDERATION_CONFIG_PATH = Path("/pki/federation.json")
+FEDERATION_PKI_PATH = Path("/pki/federation-pki.json")
 
 
 def main() -> int:
@@ -81,8 +82,10 @@ def main() -> int:
                 "docker compose down, then up --build"
             )
 
-        print("[2/7] generating federation PKI (root anchor + facility CAs)...")
-        root, pki = bootstrap.generate_federation_pki(list(facility_urls))
+        print("[2/7] loading the federation PKI the pki job generated...")
+        # Generated before the facilities started, which loaded its trust
+        # anchors at startup (review F1); see deploy/compose_pki.py.
+        root, pki = bootstrap.load_federation_pki(FEDERATION_PKI_PATH)
 
         print("[3/7] waiting for authority services and registering them...")
         authority_certificates: dict[str, str] = {}

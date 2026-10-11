@@ -117,6 +117,7 @@ def test_sec_emergency_search_stops_after_expiry(monkeypatch) -> None:
         {
             "emergency_key": emergency_key,
             "expires_at": clock.now + timedelta(seconds=5),
+            "expiring": False,
             "is_expired": lambda self, now: now >= self.expires_at,
         },
     )()

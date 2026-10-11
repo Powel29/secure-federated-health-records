@@ -103,9 +103,12 @@ def combine_shares(shares: list[tuple[int, bytes]], k: int | None = None) -> byt
             f"Expected at least {k} shares, received {len(shares)}"
         )
 
-    # Check for duplicate x coordinates
+    # Check x is a valid nonzero field element and not a duplicate. x = 0 is
+    # where the secret sits, and x and x + P alias the same point (F27).
     seen_x: set[int] = set()
     for x, _ in shares:
+        if not 1 <= x < PRIME_MODULUS:
+            raise InvalidShareError(f"Share index x={x} outside 1..P-1")
         if x in seen_x:
             raise DuplicateShareError(f"Duplicate share with x={x} detected")
         seen_x.add(x)
@@ -136,6 +139,8 @@ def combine_shares(shares: list[tuple[int, bytes]], k: int | None = None) -> byt
         for x, s_bytes in eval_shares:
             chunk = s_bytes[b * SHARE_BYTES_PER_BLOCK : (b + 1) * SHARE_BYTES_PER_BLOCK]
             y = int.from_bytes(chunk, byteorder="big")
+            if y >= PRIME_MODULUS:
+                raise InvalidShareError(f"Share value for x={x} is not a field element")
             points.append((x, y))
 
         secret_int = lagrange_interpolate_zero(points)

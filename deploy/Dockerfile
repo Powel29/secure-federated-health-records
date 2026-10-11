@@ -26,7 +26,13 @@ COPY portal/ ./portal/
 COPY wire/ ./wire/
 
 ENV PYTHONUNBUFFERED=1
-ENV HOST=0.0.0.0
 ENV TLS_CERT_DIR=/tls
+# No HOST default here: entrypoint.py binds loopback unless Compose sets HOST
+# for a service (review F16, N14).
+
+# Run as an unprivileged user (review N14). The one-shot jobs that write the
+# host bind mount ./pki override this in docker-compose.yml.
+RUN useradd --system --no-create-home app
+USER app
 
 ENTRYPOINT ["python", "-m", "deploy.entrypoint"]

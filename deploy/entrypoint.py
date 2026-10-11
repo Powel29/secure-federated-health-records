@@ -23,7 +23,7 @@ import sys
 
 import uvicorn
 
-from deploy.config import configure_transport
+from deploy.config import configure_transport, tls_enabled
 
 _FACTORIES = {
     "facility": "deploy.asgi.facility:app",
@@ -49,11 +49,11 @@ def main() -> int:
         os.environ.get("FACILITY_ID") or os.environ.get("AUTHORITY_ID") or role
     )
 
-    tls_enabled = os.environ.get("TLS_ENABLED", "").lower() in {"1", "true", "yes"}
+    tls = tls_enabled()
     ssl_certfile = os.environ.get("SSL_CERTFILE")
     ssl_keyfile = os.environ.get("SSL_KEYFILE")
 
-    if tls_enabled and not (ssl_certfile and ssl_keyfile):
+    if tls and not (ssl_certfile and ssl_keyfile):
         print(
             "TLS_ENABLED requires SSL_CERTFILE and SSL_KEYFILE",
             file=sys.stderr,
@@ -66,8 +66,8 @@ def main() -> int:
         port=port,
         factory=True,
         log_level="info",
-        ssl_certfile=ssl_certfile if tls_enabled else None,
-        ssl_keyfile=ssl_keyfile if tls_enabled else None,
+        ssl_certfile=ssl_certfile if tls else None,
+        ssl_keyfile=ssl_keyfile if tls else None,
     )
     return 0
 

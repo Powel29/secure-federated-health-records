@@ -17,9 +17,32 @@ _URL_VARIABLES = (
 )
 
 
+_TRUE = {"1", "true", "yes"}
+_FALSE = {"0", "false", "no"}
+
+
+def env_flag(name: str, default: bool = False) -> bool:
+    """Read a yes/no environment variable; one parser for every deploy flag.
+
+    Unset or empty gives ``default``; ``1/true/yes`` and ``0/false/no`` are
+    the only other accepted values (review N14).
+
+    Raises:
+        ValueError: The variable holds anything else.
+    """
+    value = os.environ.get(name, "").strip().lower()
+    if not value:
+        return default
+    if value in _TRUE:
+        return True
+    if value in _FALSE:
+        return False
+    raise ValueError(f"{name}={value!r} is not one of {sorted(_TRUE | _FALSE)}")
+
+
 def tls_enabled() -> bool:
     """Whether the local TLS profile is selected."""
-    return os.environ.get("TLS_ENABLED", "").lower() in {"1", "true", "yes"}
+    return env_flag("TLS_ENABLED")
 
 
 def configure_transport(service_name: str | None = None) -> None:

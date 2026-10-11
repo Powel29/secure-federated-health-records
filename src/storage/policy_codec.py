@@ -32,7 +32,15 @@ def _encode_node(node: CompiledNode) -> dict[str, Any]:
 
 def decode_policy(data: dict[str, Any]) -> CompiledPolicy:
     """Restore a compiled layout, rejecting unknown versions or malformed nodes."""
-    if set(data) != {"version", "root"} or data["version"] != 1:
+    # A bool is an int in Python: ``True == 1`` would otherwise pass (N15).
+    version = data.get("version")
+    if (
+        set(data) != {"version", "root"}
+        or isinstance(version, bool)
+        or not isinstance(version, int)
+    ):
+        raise ValueError("unsupported compiled policy format")
+    if data["version"] != 1:
         raise ValueError("unsupported compiled policy format")
     return CompiledPolicy(root=_decode_node(data["root"]))
 
@@ -48,9 +56,11 @@ def _decode_node(data: dict[str, Any]) -> CompiledNode:
             "nonce",
         }:
             raise ValueError("invalid compiled leaf fields")
+        if not isinstance(data["authority_id"], str) or not data["authority_id"]:
+            raise ValueError("invalid compiled leaf authority")
         nonce = bytes.fromhex(data["nonce"])
         share = bytes.fromhex(data["encrypted_share"])
-        if len(nonce) != 12 or len(share) < 16 or not data["authority_id"]:
+        if len(nonce) != 12 or len(share) < 16:
             raise ValueError("invalid compiled leaf")
         return CompiledLeaf(
             attribute=Attribute.model_validate(data["attribute"]),

@@ -30,10 +30,11 @@ from dataclasses import dataclass
 from contracts.base import Attribute
 from contracts.enums import PolicyNodeType
 from contracts.policy import PolicyTree
-from contracts.records import DEKWrapping
+from contracts.records import DEKWrapping, Record
 from crypto_core import aes_gcm_decrypt, aes_gcm_encrypt
 from crypto_core.exceptions import InvalidTagError
 from records import unwrap_dek
+from records.service import decrypt_record
 from shamir import combine_shares, split_secret
 
 from policy.exceptions import PolicyCompileError, PolicyDeniedError
@@ -346,4 +347,25 @@ def author_policy_with_owner(
     return PolicyTree(
         node_type=PolicyNodeType.OR,
         children=(clinical_policy, owner_leaf),
+    )
+
+
+def decrypt_record_via_policy(
+    compiled: CompiledPolicy,
+    holder_keyring: AttributeKeyring,
+    wrapping: DEKWrapping,
+    record: Record,
+) -> bytes:
+    """Unwrap the DEK under the policy and decrypt the record with it.
+
+    One call for the facility's read path, so ``api/`` never touches the DEK
+    or calls a cipher itself (review F33).
+
+    Raises:
+        PolicyDeniedError: The keyring does not satisfy the policy.
+        UnwrappingError: The reconstructed secret does not open the wrapping.
+        DecryptionError: The DEK does not open the record.
+    """
+    return decrypt_record(
+        record, unwrap_dek_via_policy(compiled, holder_keyring, wrapping)
     )

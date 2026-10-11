@@ -18,9 +18,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Dev-only fallback: a random key per start (never a committed secret). Set
 # DJANGO_SECRET_KEY in any real deployment.
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY") or secrets.token_urlsafe(32)
-DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
+# Off unless asked for (review F42): the local demo launcher sets
+# DJANGO_DEBUG=1 explicitly; anything else runs without debug pages.
+DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
 ALLOWED_HOSTS = (
-    ["*"] if DEBUG else os.environ.get("DJANGO_ALLOWED_HOSTS", "").split(",")
+    ["*"]
+    if DEBUG
+    else os.environ.get("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
 )
 
 INSTALLED_APPS = [

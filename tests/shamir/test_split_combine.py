@@ -10,6 +10,7 @@ from shamir.exceptions import (
     InsufficientSharesError,
     InvalidShareError,
 )
+from shamir.finite_field import PRIME_MODULUS, SHARE_BYTES_PER_BLOCK
 from shamir.split import combine_shares, split_secret
 
 
@@ -80,3 +81,31 @@ def test_shamir_invalid_threshold_parameters() -> None:
 
     with pytest.raises(ValueError):
         split_secret(secret, k=4, n=3)
+
+
+def test_share_index_aliasing_rejected():
+    """F27: x and x + P are the same field point and must not combine."""
+
+    secret = b"\x42" * 32
+    shares = split_secret(secret, k=2, n=3)
+    assert combine_shares(shares[:2], k=2) == secret  # setup is valid
+    x, share = shares[0]
+    with pytest.raises(InvalidShareError, match="outside"):
+        combine_shares([(x, share), (x + PRIME_MODULUS, share)], k=2)
+
+
+def test_share_at_x_zero_rejected():
+    """F27: x = 0 is where the secret sits; no share may claim it."""
+
+    shares = split_secret(b"\x42" * 32, k=2, n=3)
+    with pytest.raises(InvalidShareError, match="outside"):
+        combine_shares([(0, shares[0][1]), shares[1]], k=2)
+
+
+def test_share_value_outside_field_rejected():
+    """F27: a y-value >= P is not a field element and must be refused."""
+
+    shares = split_secret(b"\x42" * 32, k=2, n=3)
+    too_big = b"\xff" * SHARE_BYTES_PER_BLOCK + shares[0][1][SHARE_BYTES_PER_BLOCK:]
+    with pytest.raises(InvalidShareError, match="field element"):
+        combine_shares([(shares[0][0], too_big), shares[1]], k=2)

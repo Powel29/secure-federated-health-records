@@ -178,6 +178,16 @@ def _skip_transition_rules(mp: pytest.MonkeyPatch) -> None:
     mp.setattr(lifecycle.state_machine, "validate_transition", lambda *a, **k: None)
 
 
+def _state_writes_unchecked(mp: pytest.MonkeyPatch) -> None:
+    """The store's compare-and-set overwrites whatever state it finds (N1)."""
+    from api.repository import InMemoryStorageRepository
+
+    def overwrite(self, record_id, expected, new, last_event_id=None):
+        self.upsert_lifecycle_state(record_id, new, last_event_id)
+
+    mp.setattr(InMemoryStorageRepository, "transition_lifecycle_state", overwrite)
+
+
 def _skip_transition_signature(mp: pytest.MonkeyPatch) -> None:
     import lifecycle.state_machine
 
@@ -212,7 +222,14 @@ MUTATIONS: dict[str, list[Mutation]] = {
         Mutation("C5a", "entry signatures not checked", _skip_entry_signature),
         Mutation("C5b", "prev_hash/seq links not checked", _signatures_only),
     ],
-    "C6": [Mutation("C6a", "LEGAL_TRANSITIONS not enforced", _skip_transition_rules)],
+    "C6": [
+        Mutation("C6a", "LEGAL_TRANSITIONS not enforced", _skip_transition_rules),
+        Mutation(
+            "C6b",
+            "state compare-and-set overwrites any state",
+            _state_writes_unchecked,
+        ),
+    ],
     "C7": [
         Mutation("C7a", "transition signature not checked", _skip_transition_signature)
     ],
@@ -233,12 +250,21 @@ NOT_MUTATED = {
 # --- pytest plugin hooks ------------------------------------------------------
 
 
+# Printed when a mutation cannot be applied (e.g. its target was renamed),
+# so the runner reports an error instead of counting the crash as "caught".
+APPLY_FAILED = "P51_MUTATION_APPLY_FAILED"
+
+
 def pytest_configure(config: pytest.Config) -> None:
     global _monkeypatch
     mutation_id = os.environ.get("P51_MUTATION")
     if mutation_id:
         _monkeypatch = pytest.MonkeyPatch()
-        _BY_ID[mutation_id].apply(_monkeypatch)
+        try:
+            _BY_ID[mutation_id].apply(_monkeypatch)
+        except Exception as exc:
+            print(f"{APPLY_FAILED}: {mutation_id}: {exc!r}", file=sys.stderr)
+            raise pytest.UsageError(f"mutation {mutation_id} did not apply") from exc
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
@@ -271,9 +297,22 @@ def _run(nodeid: str, mutation_id: str | None) -> str:
         text=True,
         check=False,
     )
-    if "SKIPPED" in proc.stdout:
-        return "skipped"
-    return "green" if proc.returncode == 0 else "red"
+    return _classify(proc)
+
+
+def _classify(proc: subprocess.CompletedProcess) -> str:
+    """Only "tests failed" (exit 1) counts as caught (review N7).
+
+    Exit 2-5 is an interruption, internal error, usage error or no tests --
+    none of which shows the control mattered.
+    """
+    if APPLY_FAILED in proc.stdout + proc.stderr:
+        return "ERROR (mutation did not apply)"
+    if proc.returncode == 0:
+        return "skipped" if "SKIPPED" in proc.stdout else "green"
+    if proc.returncode == 1:
+        return "red"
+    return f"ERROR (pytest exit {proc.returncode})"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -282,28 +321,44 @@ def main(argv: list[str] | None = None) -> int:
     print("| Claim | Test | Baseline | Mutations (red = caught) |")
     print("|---|---|---|---|")
     decorative = []
+    errors = []
     for claim in wanted:
         if claim in NOT_MUTATED:
             print(f"| {claim} | n/a: {NOT_MUTATED[claim]} | | |")
             continue
         for test in (t for t in tests if t.claim == claim):
             base = _run(test.nodeid, None)
+            if base != "green":
+                # A test that is not green unmutated cannot show anything
+                # about a mutation (review N7).
+                print(f"| {claim} | `{test.nodeid}` | {base} | not run |")
+                if base != "skipped":
+                    errors.append(f"{test.nodeid}: baseline {base}")
+                continue
             results = {m.id: _run(test.nodeid, m.id) for m in MUTATIONS[claim]}
             cells = ", ".join(f"{mid}: {r}" for mid, r in results.items())
             print(f"| {claim} | `{test.nodeid}` | {base} | {cells} |")
-            if base == "green" and "red" not in results.values():
+            errors += [
+                f"{test.nodeid} under {mid}: {r}"
+                for mid, r in results.items()
+                if r.startswith("ERROR")
+            ]
+            if "red" not in results.values():
                 decorative.append(test.nodeid)
     for claim, group in MUTATIONS.items():
         if claim in wanted:
             for m in group:
                 print(f"\n{m.id}: {m.control}", end="")
     print()
+    if errors:
+        print("\nERRORS (not evidence either way):")
+        for line in errors:
+            print(f"  {line}")
     if decorative:
         print("\nDECORATIVE (green under every mutation of its claim):")
         for nodeid in decorative:
             print(f"  {nodeid}")
-        return 1
-    return 0
+    return 1 if decorative or errors else 0
 
 
 if __name__ == "__main__":

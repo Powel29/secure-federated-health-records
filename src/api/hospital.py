@@ -20,15 +20,25 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Annotated, Any, Callable
 from uuid import uuid4
 
 from audit.events import (
     ACCESS_VIA_CONSENT,
+    ACCESS_VIA_EMERGENCY_SEARCH,
     ACCESS_VIA_POLICY,
+    DENIED_BY_BREAKGLASS_ASSERTION,
+    DENIED_BY_BREAKGLASS_CHAIN,
+    DENIED_BY_BREAKGLASS_GATE,
+    DENIED_BY_BREAKGLASS_TRANSITION,
     DENIED_BY_CONSENT,
+    DENIED_BY_DEK_UNWRAP,
+    DENIED_BY_EMERGENCY_SEARCH,
     DENIED_BY_POLICY,
+    DENIED_BY_RECORD_NOT_FOUND,
     DENIED_BY_REVOCATION_AUTHZ,
     EVENT_ACCESS_DENIED,
     EVENT_ACCESS_GRANTED,
@@ -38,6 +48,7 @@ from audit.events import (
     log_access_granted,
     log_federation_discovery,
     log_federation_rewrap,
+    patient_id_hash,
 )
 from breakglass import (
     ConsumedAssertionIds,
@@ -46,6 +57,8 @@ from breakglass import (
 from breakglass.emergency_key import Share
 from breakglass.exceptions import (
     AssertionExpiredError,
+    AssertionLifetimeError,
+    CertificateRevokedError,
     ClinicianMismatchError,
     FacilityMismatchError,
     InsufficientSharesError,
@@ -70,19 +83,26 @@ from crypto_core import (
     certificate_from_pem,
     private_key_from_pem,
     public_key_from_pem,
-    sha256_digest,
 )
-from crypto_core.exceptions import InvalidSignatureError, KeyFormatError
+from crypto_core.exceptions import (
+    CertificateExpiredError,
+    InvalidSignatureError,
+    KeyFormatError,
+)
 from crypto_core.types import ECPrivateKey
+from cryptography.x509 import Certificate
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
+from identity.exceptions import ChainValidationError
 from lifecycle.exceptions import (
     EmergencySessionExpiredError,
     IllegalTransitionError,
+    MissingReasonCodeError,
     SessionNotFoundError,
+    StateConflictError,
 )
 from lifecycle.expiry import EmergencyExpiryManager
-from policy.engine import unwrap_dek_via_policy
+from policy.engine import decrypt_record_via_policy
 from policy.exceptions import PolicyCompileError, PolicyDeniedError
 from records.exceptions import (
     RecordError,
@@ -94,13 +114,14 @@ from records.revocation import (
     check_revocation_authorization,
     revoke_record_access,
 )
-from records.service import decrypt_record
-from search.service import search_records_with_emergency
+from search.service import emergency_search_token
+from shamir.exceptions import SecretSharingError
 
 from api.audit_client import AuditServiceError, append_entry
 from api.repository import (
     InMemoryStorageRepository,
     PostgresStorageRepository,
+    RecordExistsError,
     StorageRepository,
 )
 from api.schemas import (
@@ -154,6 +175,31 @@ def get_audit_service_url(request: Request) -> str | None:
 
 AuditUrlDep = Annotated[str | None, Depends(get_audit_service_url)]
 
+# ``sink(event_type, event_data, actor_id, correlation_id)``: an explicit
+# in-memory audit destination for tests and standalone demos (review F19).
+AuditSink = Callable[[str, dict[str, Any], str, str], None]
+
+
+@dataclass(frozen=True)
+class FacilityTrust:
+    """Trust anchors for break-glass chain validation, from facility config (F1).
+
+    The caller never chooses what the facility trusts: the federation root,
+    the cross-certified facility CAs and the revoked clinician serials are
+    loaded at startup (``deploy/asgi/facility.py``) or passed in by tests.
+    """
+
+    root: Certificate
+    facility_cas: Mapping[str, Certificate]
+    revoked_serials: frozenset[int] = field(default_factory=frozenset)
+
+    def issuing_ca(self, leaf: Certificate) -> Certificate | None:
+        """The configured facility CA whose subject issued ``leaf``, if any."""
+        for ca in self.facility_cas.values():
+            if ca.subject == leaf.issuer:
+                return ca
+        return None
+
 
 def _log_event(
     audit_url: str | None,
@@ -164,17 +210,18 @@ def _log_event(
     event_data: dict[str, Any],
     actor_id: str,
     correlation_id: str,
+    sink: AuditSink | None = None,
     in_process_logger: Callable[..., Any] | None = None,
     **in_process_kwargs: object,
 ) -> None:
-    """Log an event to the standalone Audit Service over HTTP or in-process fallback.
+    """Log an event to the Audit Service, the in-process chain, or a test sink.
 
     Fails closed: if the audit service is unreachable or returns non-2xx,
-    ``AuditServiceError`` propagates. Callers whose semantics require the log
-    entry (log-before-release for discovery / break-glass rewrap) must let
-    it bubble; a denial-path caller that only wants to record an already-
-    refused attempt may catch it explicitly. Swallowing silently would
-    contradict audit_client.py's own contract and defeat the audit chain.
+    ``AuditServiceError`` propagates, and so it does when no audit destination
+    is configured at all (review F19) -- a facility without an audit sink must
+    not release anything. Callers whose semantics require the log entry
+    (log-before-release) must let it bubble; a denial-path caller that only
+    wants to record an already-refused attempt may catch it explicitly.
     """
     if audit_url:
         append_entry(
@@ -194,37 +241,21 @@ def _log_event(
             signing_key=audit_key,
             **in_process_kwargs,
         )
+    elif sink is not None:
+        sink(event_type, event_data, actor_id, correlation_id)
+    else:
+        raise AuditServiceError("no audit sink configured")
 
 
-def _effective_lifecycle_state(
-    repo: StorageRepository,
-    exp_manager: EmergencyExpiryManager | None,
-    record_id: str,
-) -> LifecycleState:
-    """Current state, reconciling an expiry the store was never told about.
+def _current_lifecycle_state(repo: StorageRepository, record_id: str) -> LifecycleState:
+    """The record's stored state; a plain read with no side effects (review N1).
 
-    The expiry timer signs ``EMERGENCY_OPEN -> EXPIRED -> GRANTED`` into the
-    chain but does not write the store (ADR-0043, re-baseline persistence gap),
-    so ``lifecycle_state`` stays ``emergency_open`` after the time-box ends and
-    every later break-glass is refused as an illegal transition. If the store
-    says open but the timer holds no session for the record, the window has
-    ended (or the process restarted and lost it); record ``granted`` to match.
-    A session that is registered -- even one past its deadline but not yet
-    swept -- is left alone: the timer will expire it and this stays fail-closed.
+    The ADR-0044 reset that used to live here wrote ``granted`` whenever this
+    process held no session, which raced other facilities and undid
+    revocations. The expiry timer now mirrors its transitions into the store
+    itself, so the stored state is authoritative.
     """
-    state = repo.get_lifecycle_state(record_id) or LifecycleState.GRANTED
-    if state is not LifecycleState.EMERGENCY_OPEN or exp_manager is None:
-        return state
-    try:
-        exp_manager.get_active_emergency_key(record_id)
-    except SessionNotFoundError:
-        repo.upsert_lifecycle_state(
-            record_id=record_id, state=LifecycleState.GRANTED, last_event_id=None
-        )
-        return LifecycleState.GRANTED
-    except EmergencySessionExpiredError:
-        return state
-    return state
+    return repo.get_lifecycle_state(record_id) or LifecycleState.GRANTED
 
 
 def _log_denial(
@@ -232,6 +263,7 @@ def _log_denial(
     repo: StorageRepository,
     audit_key: ECPrivateKey | None,
     *,
+    sink: AuditSink | None = None,
     record_id: str,
     requester_id: str,
     denied_by: str,
@@ -253,6 +285,7 @@ def _log_denial(
             audit_url,
             repo,
             audit_key,
+            sink=sink,
             event_type=EVENT_ACCESS_DENIED,
             event_data={
                 "record_id": record_id,
@@ -284,6 +317,7 @@ def _log_granted(
     repo: StorageRepository,
     audit_key: ECPrivateKey | None,
     *,
+    sink: AuditSink | None = None,
     record_id: str,
     requester_id: str,
     access_via: str,
@@ -301,6 +335,7 @@ def _log_granted(
         audit_url,
         repo,
         audit_key,
+        sink=sink,
         event_type=EVENT_ACCESS_GRANTED,
         event_data={
             "record_id": record_id,
@@ -321,6 +356,7 @@ def _log_discovery(
     repo: StorageRepository,
     audit_key: ECPrivateKey | None,
     *,
+    sink: AuditSink | None = None,
     patient_id: str,
     requester_id: str,
     record_ids: list[str],
@@ -331,9 +367,10 @@ def _log_discovery(
         audit_url,
         repo,
         audit_key,
+        sink=sink,
         event_type=EVENT_FEDERATION_DISCOVERY,
         event_data={
-            "patient_id_hash": sha256_digest(patient_id.encode("utf-8")).hex(),
+            "patient_id_hash": patient_id_hash(patient_id),
             "requester_id": requester_id,
             "record_count": len(record_ids),
             "record_ids": list(record_ids),
@@ -352,6 +389,7 @@ def _log_rewrap(
     repo: StorageRepository,
     audit_key: ECPrivateKey | None,
     *,
+    sink: AuditSink | None = None,
     record_id: str,
     source_facility_id: str,
     target_actor_id: str,
@@ -362,6 +400,7 @@ def _log_rewrap(
         audit_url,
         repo,
         audit_key,
+        sink=sink,
         event_type=EVENT_FEDERATION_REWRAP,
         event_data={
             "record_id": record_id,
@@ -408,6 +447,9 @@ def create_hospital_app(
     expiry_manager: EmergencyExpiryManager | None = None,
     audit_signing_key_pem: str | None = None,
     audit_service_url: str | None = None,
+    *,
+    trust: FacilityTrust | None = None,
+    audit_sink: AuditSink | None = None,
 ) -> FastAPI:
     """Create and configure a FastAPI application for a hospital node.
 
@@ -415,13 +457,21 @@ def create_hospital_app(
         facility_id: Identifier of this hospital node (e.g. 'facility-a').
         repository: Storage repository implementation. Defaults to in-memory.
         expiry_manager: Emergency expiry manager for tracking emergency sessions.
+            Its timer transitions are mirrored into ``repository`` (review N1).
         audit_signing_key_pem: Optional ECDSA private key PEM for audit logging.
         audit_service_url: Optional base URL of standalone Audit Service over HTTP.
+        trust: Break-glass trust anchors from configuration (review F1).
+            Without them break-glass is refused with 503.
+        audit_sink: Explicit in-memory audit destination for tests and
+            standalone demos. With no audit destination at all, every
+            log-before-release path fails closed with 503 (review F19).
 
     Returns:
         Configured FastAPI application instance.
     """
     repo = repository or InMemoryStorageRepository()
+    if expiry_manager is not None:
+        expiry_manager.attach_state_writer(repo.transition_lifecycle_state)
     # Backed by the store so a facility restart does not re-open replay (F22).
     consumed_assertions = ConsumedAssertionIds(backend=repo)
     audit_key: ECPrivateKey | None = (
@@ -553,6 +603,7 @@ def create_hospital_app(
                     audit_url,
                     repo,
                     audit_key,
+                    sink=audit_sink,
                     record_id=record_id,
                     requester_id=payload.requester_id,
                     denied_by=DENIED_BY_CONSENT,
@@ -569,6 +620,7 @@ def create_hospital_app(
                     audit_url,
                     repo,
                     audit_key,
+                    sink=audit_sink,
                     record_id=record_id,
                     requester_id=payload.requester_id,
                     denied_by=DENIED_BY_POLICY,
@@ -581,6 +633,18 @@ def create_hospital_app(
                     detail=f"Policy denied: {exc}",
                 ) from exc
             except UnwrappingError as exc:
+                _log_denial(
+                    audit_url,
+                    repo,
+                    audit_key,
+                    sink=audit_sink,
+                    record_id=record_id,
+                    requester_id=payload.requester_id,
+                    denied_by=DENIED_BY_DEK_UNWRAP,
+                    reason=str(exc),
+                    actor_id=facility_id,
+                    correlation_id=payload.correlation_id or str(uuid4()),
+                )
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=f"DEK unwrapping failed: {exc}",
@@ -590,13 +654,15 @@ def create_hospital_app(
         else:
             access_via = ACCESS_VIA_POLICY
             try:
-                dek = unwrap_dek_via_policy(compiled_policy, keyring, wrapping)
-                plaintext_bytes = decrypt_record(record, dek)
+                plaintext_bytes = decrypt_record_via_policy(
+                    compiled_policy, keyring, wrapping, record
+                )
             except PolicyDeniedError as exc:
                 _log_denial(
                     audit_url,
                     repo,
                     audit_key,
+                    sink=audit_sink,
                     record_id=record_id,
                     requester_id=payload.requester_id,
                     denied_by=DENIED_BY_POLICY,
@@ -609,6 +675,18 @@ def create_hospital_app(
                     detail=f"Policy denied: {exc}",
                 ) from exc
             except UnwrappingError as exc:
+                _log_denial(
+                    audit_url,
+                    repo,
+                    audit_key,
+                    sink=audit_sink,
+                    record_id=record_id,
+                    requester_id=payload.requester_id,
+                    denied_by=DENIED_BY_DEK_UNWRAP,
+                    reason=str(exc),
+                    actor_id=facility_id,
+                    correlation_id=payload.correlation_id or str(uuid4()),
+                )
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=f"DEK unwrapping failed: {exc}",
@@ -621,6 +699,7 @@ def create_hospital_app(
             audit_url,
             repo,
             audit_key,
+            sink=audit_sink,
             record_id=record_id,
             requester_id=payload.requester_id,
             access_via=access_via,
@@ -766,6 +845,7 @@ def create_hospital_app(
                 audit_url,
                 repo,
                 audit_key,
+                sink=audit_sink,
                 record_id=record_id,
                 requester_id=payload.actor_id,
                 denied_by=DENIED_BY_REVOCATION_AUTHZ,
@@ -823,23 +903,62 @@ def create_hospital_app(
                 detail=f"Revocation failed: {exc}",
             ) from exc
 
-        repo.insert_record(rev_result.rotated_record)
-        repo.insert_dek_wrapping(rev_result.rotated_wrapping)
-        repo.store_compiled_policy(
-            rev_result.rotated_record.policy_id, rev_result.compiled_policy
-        )
-        repo.upsert_lifecycle_state(
-            record_id=record_id,
-            state=LifecycleState.REVOKED,
-            last_event_id=str(rev_result.transition_event.event_id),
-        )
-        repo.insert_transition_event(rev_result.transition_event)
+        # Claim the transition first, as a compare-and-set from the event's own
+        # from_state (review N1): revoking a record that is not in that state
+        # (e.g. EMERGENCY_OPEN) is refused with no side effects.
+        event = rev_result.transition_event
+        try:
+            repo.transition_lifecycle_state(
+                record_id,
+                expected=event.from_state,
+                new=event.to_state,
+                last_event_id=str(event.event_id),
+            )
+        except StateConflictError as exc:
+            _log_denial(
+                audit_url,
+                repo,
+                audit_key,
+                sink=audit_sink,
+                record_id=record_id,
+                requester_id=payload.actor_id,
+                denied_by=DENIED_BY_REVOCATION_AUTHZ,
+                reason=str(exc),
+                actor_id=facility_id,
+                correlation_id=payload.correlation_id or str(uuid4()),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Revocation refused: {exc}",
+            ) from exc
+
+        try:
+            repo.insert_record(rev_result.rotated_record)
+            repo.insert_dek_wrapping(rev_result.rotated_wrapping)
+            repo.store_compiled_policy(
+                rev_result.rotated_record.policy_id, rev_result.compiled_policy
+            )
+            repo.insert_transition_event(event)
+        except Exception as exc:
+            # Undo the claim so a failed write cannot leave the record
+            # REVOKED without its rotated ciphertext.
+            repo.transition_lifecycle_state(
+                record_id, expected=event.to_state, new=event.from_state
+            )
+            if isinstance(exc, RecordExistsError):
+                # The Postgres store has no in-place record rotation yet
+                # (review F10, blocked on D3/D4); refuse instead of a 500.
+                raise HTTPException(
+                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                    detail="revocation persistence on this store is not implemented",
+                ) from exc
+            raise
 
         return RevokeRecordResponse(
             record_id=record_id,
             new_generation=rev_result.rotated_wrapping.generation,
             new_policy_id=rev_result.rotated_record.policy_id,
-            transition_event=rev_result.transition_event,
+            transition_event=event,
         )
 
     # --- Break-Glass Emergency Endpoint (P3-5, P3-10, P3-11) ------------------
@@ -856,117 +975,65 @@ def create_hospital_app(
         audit_key: AuditKeyDep,
         audit_url: AuditUrlDep,
     ) -> BreakglassUnlockResponse:
-        """Execute 2-of-3 threshold emergency unlock for a record (P3-5)."""
-        # 1. Five-point validation of EmergencyAssertion (P3-10, P3-11)
+        """Execute 2-of-3 threshold emergency unlock for a record (P3-5).
+
+        Order (review F7): parse and validate everything the caller sent,
+        claim the lifecycle state with a compare-and-set, run the gate, log
+        the re-wrap (log-before-release), register the expiry session, then
+        record the signed event. Any failure after the claim undoes it, so a
+        refused or failed unlock leaves the record as it was.
+        """
+        corr_id = payload.correlation_id or str(uuid4())
+        clinician_id = payload.assertion.clinician_id
+
+        def deny(denied_by: str, reason: str, code: int, detail: str) -> HTTPException:
+            # Every refusal is audited with its own reason (review F8).
+            _log_denial(
+                audit_url,
+                repo,
+                audit_key,
+                sink=audit_sink,
+                record_id=record_id,
+                requester_id=clinician_id,
+                denied_by=denied_by,
+                reason=reason,
+                actor_id=facility_id,
+                correlation_id=corr_id,
+            )
+            return HTTPException(status_code=code, detail=detail)
+
+        exp_manager = app.state.expiry_manager
+        if trust is None or exp_manager is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "break-glass is not configured on this facility: it needs "
+                    "configured trust anchors and an expiry manager"
+                ),
+            )
+
+        # 1. Parse the caller's inputs before anything else (F7).
         try:
             cl_cert = certificate_from_pem(
                 payload.clinician_certificate_pem.encode("utf-8")
             )
-            ca_cert = (
-                certificate_from_pem(
-                    payload.facility_ca_certificate_pem.encode("utf-8")
-                )
-                if payload.facility_ca_certificate_pem
-                else None
-            )
-            root_cert = (
-                certificate_from_pem(
-                    payload.trusted_root_certificate_pem.encode("utf-8")
-                )
-                if payload.trusted_root_certificate_pem
-                else None
-            )
-        except KeyFormatError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Certificate parsing failed: {exc}",
-            ) from exc
-
-        try:
-            validate_emergency_assertion(
-                assertion=payload.assertion,
-                clinician_certificate=cl_cert,
-                facility_ca_certificate=ca_cert,
-                trusted_root=root_cert,
-                expected_facility_id=facility_id,
-                consumed_store=consumed_store,
-            )
-        except (
-            AssertionExpiredError,
-            ClinicianMismatchError,
-            FacilityMismatchError,
-            InvalidSignatureError,
-            ReplayedAssertionError,
-        ) as exc:
-            _log_denial(
-                audit_url,
-                repo,
-                audit_key,
-                record_id=record_id,
-                requester_id=payload.assertion.clinician_id,
-                denied_by="breakglass_assertion",
-                reason=str(exc),
-                actor_id=facility_id,
-                correlation_id=payload.correlation_id or str(uuid4()),
-            )
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Emergency assertion invalid ({exc.__class__.__name__}): {exc}",
-            ) from exc
-
-        # 2. Fetch record and emergency DEK wrapping
-        record = repo.get_record(record_id)
-        if not record:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Record {record_id!r} not found",
-            )
-
-        # An assertion opens the patient it names and nobody else
-        # (ARCHITECTURE.md §8). Checked before any lifecycle change so a
-        # mismatched assertion has no side effect on the record.
-        if record.patient_id != payload.assertion.patient_id:
-            reason = "assertion patient_id does not match the record's patient"
-            _log_denial(
-                audit_url,
-                repo,
-                audit_key,
-                record_id=record_id,
-                requester_id=payload.assertion.clinician_id,
-                denied_by="breakglass_patient_binding",
-                reason=reason,
-                actor_id=facility_id,
-                correlation_id=payload.correlation_id or str(uuid4()),
-            )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Emergency assertion not valid for this record: {reason}",
-            )
-
-        wrapping = repo.get_wrapping_for_record(record_id, wrapped_for="emergency")
-        if not wrapping:
-            wrapping = repo.get_wrapping_for_record(record_id)
-        if not wrapping:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No DEK wrapping found for record {record_id!r}",
-            )
-
-        source_state = _effective_lifecycle_state(
-            repo, app.state.expiry_manager, record_id
-        )
-
-        # 3. Parse shares and signing key
-        try:
             lifecycle_priv = private_key_from_pem(
                 payload.lifecycle_signing_key_pem.encode("utf-8")
             )
         except KeyFormatError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid lifecycle signing key PEM: {exc}",
+                detail=f"Certificate or key parsing failed: {exc}",
             ) from exc
-
+        try:
+            base_wrapping_key = base64.b64decode(
+                payload.baseline_wrapping_key_b64, validate=True
+            )
+        except (ValueError, binascii.Error) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid base64 baseline_wrapping_key: {exc}",
+            ) from exc
         shares_list: list[Share] = []
         for x, share_hex in payload.shares:
             try:
@@ -976,94 +1043,226 @@ def create_hospital_app(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid hex share for x={x}: {exc}",
                 ) from exc
+        # A caller may shorten the configured time-box, never extend it (F6).
+        configured = exp_manager.default_duration_seconds
+        duration = min(payload.emergency_duration_seconds or configured, configured)
 
-        # 4. Open emergency access via 2-of-3 threshold gate
-        corr_id = payload.correlation_id or str(uuid4())
-        try:
-            unlock_result = open_emergency_access(
-                shares_presented=shares_list,
-                dek_wrapping=wrapping,
-                transition_source_state=source_state,
-                record_id=record_id,
-                actor_id=payload.assertion.clinician_id,
-                correlation_id=corr_id,
-                reason_code=payload.assertion.reason_code,
-                lifecycle_signing_key=lifecycle_priv,
-                pre_rewrap_key=payload.pre_rewrap_key,
+        # 2. Validate the assertion against configured trust anchors (F1).
+        ca_cert = trust.issuing_ca(cl_cert)
+        if ca_cert is None:
+            reason = "clinician certificate was not issued by a configured facility CA"
+            raise deny(
+                DENIED_BY_BREAKGLASS_CHAIN,
+                reason,
+                status.HTTP_403_FORBIDDEN,
+                f"Emergency assertion refused: {reason}",
             )
-        except InsufficientSharesError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Insufficient threshold shares: {exc}",
+        try:
+            validate_emergency_assertion(
+                assertion=payload.assertion,
+                clinician_certificate=cl_cert,
+                facility_ca_certificate=ca_cert,
+                trusted_root=trust.root,
+                expected_facility_id=facility_id,
+                consumed_store=consumed_store,
+                revoked_serials=trust.revoked_serials,
+            )
+        except (
+            ChainValidationError,
+            CertificateExpiredError,
+            CertificateRevokedError,
+        ) as exc:
+            raise deny(
+                DENIED_BY_BREAKGLASS_CHAIN,
+                str(exc),
+                status.HTTP_403_FORBIDDEN,
+                f"Clinician certificate refused ({exc.__class__.__name__}): {exc}",
             ) from exc
-        except (UnwrappingError, IllegalTransitionError) as exc:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Emergency unlock rejected: {exc}",
+        except (
+            AssertionExpiredError,
+            AssertionLifetimeError,
+            ClinicianMismatchError,
+            FacilityMismatchError,
+            InvalidSignatureError,
+            ReplayedAssertionError,
+        ) as exc:
+            raise deny(
+                DENIED_BY_BREAKGLASS_ASSERTION,
+                str(exc),
+                status.HTTP_400_BAD_REQUEST,
+                f"Emergency assertion invalid ({exc.__class__.__name__}): {exc}",
             ) from exc
 
-        # 5. Persist transition and log federation re-wrap
-        repo.upsert_lifecycle_state(
-            record_id=record_id,
-            state=LifecycleState.EMERGENCY_OPEN,
-            last_event_id=str(unlock_result.transition_event.event_id),
+        # 3. Fetch record and emergency DEK wrapping
+        record = repo.get_record(record_id)
+        if not record:
+            raise deny(
+                DENIED_BY_RECORD_NOT_FOUND,
+                "record not found",
+                status.HTTP_404_NOT_FOUND,
+                f"Record {record_id!r} not found",
+            )
+
+        # An assertion opens the patient it names and nobody else
+        # (ARCHITECTURE.md §8). Checked before any lifecycle change so a
+        # mismatched assertion has no side effect on the record.
+        if record.patient_id != payload.assertion.patient_id:
+            reason = "assertion patient_id does not match the record's patient"
+            raise deny(
+                "breakglass_patient_binding",
+                reason,
+                status.HTTP_403_FORBIDDEN,
+                f"Emergency assertion not valid for this record: {reason}",
+            )
+
+        wrapping = repo.get_wrapping_for_record(record_id, wrapped_for="emergency")
+        if not wrapping:
+            wrapping = repo.get_wrapping_for_record(record_id)
+        if not wrapping:
+            raise deny(
+                DENIED_BY_RECORD_NOT_FOUND,
+                "no DEK wrapping",
+                status.HTTP_404_NOT_FOUND,
+                f"No DEK wrapping found for record {record_id!r}",
+            )
+        baseline_wrapping = (
+            repo.get_wrapping_for_record(record_id, wrapped_for=record.policy_id)
+            or wrapping
         )
-        repo.insert_transition_event(unlock_result.transition_event)
 
-        # Register session with expiry manager if baseline wrapping key supplied
-        exp_manager = app.state.expiry_manager
-        if exp_manager and payload.baseline_wrapping_key_b64:
+        # 4. Claim the state (N1, F7): of two concurrent opens exactly one wins.
+        source_state = _current_lifecycle_state(repo, record_id)
+        if source_state is LifecycleState.EMERGENCY_OPEN:
+            reason = (
+                "record is already emergency_open; a second break-glass waits "
+                "for the current session to expire"
+            )
+            raise deny(
+                DENIED_BY_BREAKGLASS_TRANSITION,
+                reason,
+                status.HTTP_409_CONFLICT,
+                reason,
+            )
+        try:
+            repo.transition_lifecycle_state(
+                record_id, expected=source_state, new=LifecycleState.EMERGENCY_OPEN
+            )
+        except StateConflictError as exc:
+            raise deny(
+                DENIED_BY_BREAKGLASS_TRANSITION,
+                str(exc),
+                status.HTTP_409_CONFLICT,
+                f"Break-glass refused: {exc}",
+            ) from exc
+
+        session_registered = False
+        try:
+            # 5. Open emergency access via 2-of-3 threshold gate
             try:
-                base_wrapping_key = base64.b64decode(
-                    payload.baseline_wrapping_key_b64, validate=True
-                )
-            except (ValueError, binascii.Error) as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid base64 baseline_wrapping_key: {exc}",
-                ) from exc
-            try:
-                baseline_wrapping = (
-                    repo.get_wrapping_for_record(
-                        record_id, wrapped_for=record.policy_id
-                    )
-                    or wrapping
-                )
-                exp_manager.register_session(
+                unlock_result = open_emergency_access(
+                    shares_presented=shares_list,
+                    dek_wrapping=wrapping,
+                    transition_source_state=source_state,
                     record_id=record_id,
-                    actor_id=payload.assertion.clinician_id,
+                    actor_id=clinician_id,
+                    correlation_id=corr_id,
+                    reason_code=payload.assertion.reason_code,
+                    lifecycle_signing_key=lifecycle_priv,
+                    pre_rewrap_key=payload.pre_rewrap_key,
+                )
+            except InsufficientSharesError as exc:
+                raise deny(
+                    DENIED_BY_BREAKGLASS_GATE,
+                    str(exc),
+                    status.HTTP_400_BAD_REQUEST,
+                    f"Insufficient threshold shares: {exc}",
+                ) from exc
+            except SecretSharingError as exc:
+                raise deny(
+                    DENIED_BY_BREAKGLASS_GATE,
+                    str(exc),
+                    status.HTTP_400_BAD_REQUEST,
+                    f"Invalid threshold shares: {exc}",
+                ) from exc
+            except UnwrappingError as exc:
+                raise deny(
+                    DENIED_BY_BREAKGLASS_GATE,
+                    str(exc),
+                    status.HTTP_403_FORBIDDEN,
+                    f"Emergency unlock rejected: {exc}",
+                ) from exc
+            except (IllegalTransitionError, MissingReasonCodeError) as exc:
+                raise deny(
+                    DENIED_BY_BREAKGLASS_TRANSITION,
+                    str(exc),
+                    status.HTTP_403_FORBIDDEN,
+                    f"Emergency unlock rejected: {exc}",
+                ) from exc
+
+            # 6. Log-before-release: an audit outage raises (503) and undoes
+            # the claim below, so nothing is released without a chain entry.
+            _log_rewrap(
+                audit_url,
+                repo,
+                audit_key,
+                sink=audit_sink,
+                record_id=record_id,
+                source_facility_id=record.facility_id,
+                target_actor_id=clinician_id,
+                actor_id=facility_id,
+                correlation_id=corr_id,
+            )
+
+            # 7. Every unlock is time-boxed; there is no path that skips it.
+            try:
+                session = exp_manager.register_session(
+                    record_id=record_id,
+                    actor_id=clinician_id,
                     correlation_id=corr_id,
                     emergency_key=unlock_result.emergency_key,
                     baseline_wrapping_key=base_wrapping_key,
                     baseline_wrapping=baseline_wrapping,
                     emergency_wrapping=wrapping,
                     current_record=record,
-                    duration_seconds=payload.emergency_duration_seconds,
+                    duration_seconds=duration,
                 )
             except ValueError as exc:
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status_code=status.HTTP_409_CONFLICT,
                     detail=f"Failed to register emergency session: {exc}",
                 ) from exc
+            session_registered = True
 
-        _log_rewrap(
-            audit_url,
-            repo,
-            audit_key,
-            record_id=record_id,
-            source_facility_id=record.facility_id,
-            target_actor_id=payload.assertion.clinician_id,
-            actor_id=facility_id,
-            correlation_id=corr_id,
-        )
+            # 8. Record the signed event against the claimed state.
+            event = unlock_result.transition_event
+            repo.insert_transition_event(event)
+            repo.transition_lifecycle_state(
+                record_id,
+                expected=LifecycleState.EMERGENCY_OPEN,
+                new=LifecycleState.EMERGENCY_OPEN,
+                last_event_id=str(event.event_id),
+            )
+        except Exception:
+            if session_registered:
+                exp_manager.unregister_session(record_id)
+            try:
+                repo.transition_lifecycle_state(
+                    record_id, expected=LifecycleState.EMERGENCY_OPEN, new=source_state
+                )
+            except StateConflictError:
+                _logger.error(
+                    "could not roll back the break-glass claim on record %s", record_id
+                )
+            raise
 
         return BreakglassUnlockResponse(
             record_id=record_id,
             rewrapped_dek_b64=base64.b64encode(unlock_result.rewrapped_dek).decode(
                 "ascii"
             ),
-            transition_event=unlock_result.transition_event,
+            transition_event=event,
             correlation_id=corr_id,
+            expires_at=session.expires_at,
         )
 
     # --- Search & Discovery Endpoints -----------------------------------------
@@ -1081,6 +1280,7 @@ def create_hospital_app(
             audit_url,
             repo,
             audit_key,
+            sink=audit_sink,
             patient_id=patient_id,
             requester_id=facility_id,
             record_ids=record_ids,
@@ -1121,8 +1321,15 @@ def create_hospital_app(
         record_id: str,
         payload: EmergencySearchRequest,
         repo: RepoDep,
+        audit_key: AuditKeyDep,
+        audit_url: AuditUrlDep,
     ) -> SearchRecordsResponse:
-        """Search encrypted index using active emergency session (P3-8)."""
+        """Search encrypted index using active emergency session (P3-8).
+
+        Every search is audited with the requesting clinician (review F8):
+        a refusal as a denial, a result as an access, logged before release.
+        """
+        corr_id = payload.correlation_id or str(uuid4())
         exp_manager = app.state.expiry_manager
         if not exp_manager:
             raise HTTPException(
@@ -1130,31 +1337,42 @@ def create_hospital_app(
                 detail="Emergency expiry manager not configured on this facility node",
             )
 
-        # NOTE: CONVENTIONS.md §2 rule 10 forbids crypto in api/. The Postgres
-        # path stays clean because search.service does the HKDF internally; the
-        # in-memory fallback still calls derive_search_token from here so tests
-        # without a DB run end-to-end. A repo-agnostic helper in search.service
-        # would close this — cross-owner change, tracked separately.
+        # The token is derived in search.service, for either repository
+        # (CONVENTIONS.md §2 rule 10, review F33).
         try:
-            if isinstance(repo, PostgresStorageRepository):
-                matches = search_records_with_emergency(
-                    conn=repo._conn,
-                    expiry_manager=exp_manager,
-                    record_id=record_id,
-                    search_term=payload.search_term,
-                )
-            else:
-                em_key = exp_manager.get_active_emergency_key(record_id)
-                from search.service import derive_search_token
-
-                coded_term = derive_search_token(em_key, payload.search_term)
-                matches = repo.find_records_by_search_term(coded_term)
+            coded_term = emergency_search_token(
+                exp_manager, record_id, payload.search_term
+            )
+            matches = repo.find_records_by_search_term(coded_term)
         except (EmergencySessionExpiredError, SessionNotFoundError) as exc:
+            _log_denial(
+                audit_url,
+                repo,
+                audit_key,
+                sink=audit_sink,
+                record_id=record_id,
+                requester_id=payload.requester_id,
+                denied_by=DENIED_BY_EMERGENCY_SEARCH,
+                reason=str(exc),
+                actor_id=facility_id,
+                correlation_id=corr_id,
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Emergency search unavailable: {exc}",
             ) from exc
 
+        _log_granted(
+            audit_url,
+            repo,
+            audit_key,
+            sink=audit_sink,
+            record_id=record_id,
+            requester_id=payload.requester_id,
+            access_via=ACCESS_VIA_EMERGENCY_SEARCH,
+            actor_id=facility_id,
+            correlation_id=corr_id,
+        )
         return SearchRecordsResponse(
             record_ids=matches,
             record_count=len(matches),
@@ -1171,7 +1389,16 @@ def create_hospital_app(
         payload: IngestRecordRequest,
         repo: RepoDep,
     ) -> IngestRecordResponse:
-        """Ingest, encrypt, compile policy, wrap DEK, and index a record (P3-14)."""
+        """Ingest, encrypt, compile policy, wrap DEK, and index a record (P3-14).
+
+        A ``record_id`` that already exists is refused with 409 (review F4):
+        overwriting would orphan the emergency shares deposited for it.
+        """
+        if payload.record_id is not None and repo.get_record(payload.record_id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Record {payload.record_id!r} already exists",
+            )
         try:
             plaintext = base64.b64decode(payload.plaintext_b64, validate=True)
         except (ValueError, binascii.Error) as exc:
@@ -1212,12 +1439,20 @@ def create_hospital_app(
                 detail=f"Ingest failed: {exc}",
             ) from exc
 
-        repo.insert_record(result.record)
+        try:
+            repo.insert_record(result.record)
+        except RecordExistsError as exc:
+            # A concurrent ingest won the primary key between the check and
+            # the insert.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Record {result.record.record_id!r} already exists",
+            ) from exc
         repo.insert_dek_wrapping(result.dek_wrapping)
         if result.emergency_dek_wrapping:
             repo.insert_dek_wrapping(result.emergency_dek_wrapping)
         repo.store_compiled_policy(result.record.policy_id, result.compiled_policy)
-        repo.upsert_lifecycle_state(
+        repo.insert_lifecycle_state(
             record_id=result.record.record_id,
             state=result.lifecycle_state,
         )
