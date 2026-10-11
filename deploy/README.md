@@ -95,6 +95,34 @@ same dataset themselves (`python -m demo.driver`, `python -m
 deploy.run_scenario`); the authorities, facilities and patient ids are still
 registered.
 
+### Running the scenario against Compose
+
+`python -m deploy.run_scenario` runs on the host and needs two settings that
+Path A does not:
+
+- **`SEED_DATA=false`.** The scenario ingests `rec-001`, which the seed data
+  already uses. Shares are never overwritten (review F4), so a seeded stack
+  answers the scenario's share deposit with 409.
+- **The bridge gateway in `AUTHORING_CALLERS`.** Only the `custodian` and
+  `bootstrap` containers may fetch authoring keys (review F14, ADR-0052).
+  Host traffic reaches the authorities from the Docker bridge gateway, so
+  without it the scenario gets 403 on `/attribute-keys/author`.
+
+The gateway address is only known once the network exists, so start the stack,
+read it, then recreate the stack with it:
+
+```bash
+SEED_DATA=false docker compose -f deploy/docker-compose.yml up --build -d
+GW=$(docker network inspect deploy_federation --format '{{(index .IPAM.Config 0).Gateway}}')
+SEED_DATA=false AUTHORING_CALLERS="custodian,bootstrap,$GW" docker compose -f deploy/docker-compose.yml up -d --force-recreate
+python -m deploy.run_scenario
+```
+
+For the TLS profile, add `TLS_ENABLED=true` to both `up` commands and run the
+scenario with `--scheme https`. On Windows, set `PYTHONIOENCODING=utf-8`
+first, or the scenario fails while printing its ✓ marks. Recreate the stack
+without these variables to return to the seeded default.
+
 ## What gets written where
 
 Both paths write `deploy/pki/federation.json` (Path B via a bind-mounted
@@ -132,7 +160,8 @@ TLS stack is running.
 Path A also supports `TLS_ENABLED=true` after certificate generation. Run the
 scenario with `python -m deploy.run_scenario --scheme https`; it uses the same
 trust bundle. As before, start a fresh federation with `SEED_DATA=false` when
-using a scenario/driver that seeds its own records.
+using a scenario/driver that seeds its own records; under Compose, see
+"Running the scenario against Compose" above.
 
 ## Restarts and recovery
 
