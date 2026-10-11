@@ -21,6 +21,7 @@ from ledger.models import (
     PatientNotification,
 )
 from portal_core.testing import (
+    TEST_PASSWORD,
     RECORD_META,
     SIGNED_REQUEST,
     SUBJECT_PATIENT,
@@ -38,7 +39,7 @@ class PatientRecordViewTests(TestCase):
 
     def setUp(self) -> None:
         self.user = patient()
-        self.client.login(username="alice", password="pw12345")
+        self.client.login(username="alice", password=TEST_PASSWORD)
 
     def test_owner_read_streams_plaintext_for_this_request_only(self) -> None:
         payload = base64.b64encode(b'{"diagnosis": "AMI"}').decode()
@@ -108,7 +109,7 @@ class PatientConsentTests(TestCase):
     def setUp(self) -> None:
         self.user = patient()
         clinician()
-        self.client.login(username="alice", password="pw12345")
+        self.client.login(username="alice", password=TEST_PASSWORD)
         self.row = ConsentRecord.objects.create(
             request_id=SIGNED_REQUEST["request_id"],
             patient_id="pat-101",
@@ -208,7 +209,7 @@ class PatientConsentTests(TestCase):
 class PatientHistoryAndRoleTests(TestCase):
     def test_break_glass_rows_are_badged(self) -> None:
         patient()
-        self.client.login(username="alice", password="pw12345")
+        self.client.login(username="alice", password=TEST_PASSWORD)
         entries = [
             {
                 "seq": 7,
@@ -240,7 +241,7 @@ class PatientHistoryAndRoleTests(TestCase):
 
     def test_patient_is_routed_away_from_clinician_pages(self) -> None:
         patient()
-        self.client.login(username="alice", password="pw12345")
+        self.client.login(username="alice", password=TEST_PASSWORD)
         resp = self.client.get("/clinician/identify/")
         self.assertEqual(resp.status_code, 302)
         self.assertTrue(resp["Location"].startswith("/patient/"))
@@ -251,7 +252,7 @@ class PatientUploadTests(TestCase):
 
     def setUp(self) -> None:
         patient()
-        self.client.login(username="alice", password="pw12345")
+        self.client.login(username="alice", password=TEST_PASSWORD)
 
     def _post(self, **extra):
         from django.core.files.uploadedfile import SimpleUploadedFile
@@ -304,7 +305,7 @@ class PortalHygieneTests(TestCase):
 
     def setUp(self) -> None:
         self.user = patient()
-        self.client.login(username="alice", password="pw12345")
+        self.client.login(username="alice", password=TEST_PASSWORD)
 
     def _note(self) -> PatientNotification:
         return PatientNotification.objects.create(

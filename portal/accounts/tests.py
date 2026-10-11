@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from django.test import TestCase
 from portal_core import stubs
+from portal_core.testing import TEST_PASSWORD
 
 from accounts.models import Profile, RegistrationRequest, RequestStatus
 
@@ -17,7 +18,7 @@ class RegistrationTests(TestCase):
     def test_patient_self_registration_creates_pending_request(self):
         resp = self.client.post(
             "/accounts/register/patient/",
-            {"username": "alice", "password": "pw12345", "patient_id": "pat-101"},
+            {"username": "alice", "password": TEST_PASSWORD, "patient_id": "pat-101"},
         )
         self.assertEqual(resp.status_code, 302)
         # Review F17: the request records the id; no identity is bound yet.
@@ -31,7 +32,7 @@ class RegistrationTests(TestCase):
             "/accounts/register/clinician/",
             {
                 "username": "bob",
-                "password": "pw12345",
+                "password": TEST_PASSWORD,
                 "clinician_id": "doc-201",
                 "requested_attributes": "role:physician",
                 "license_info": "lic-999",
@@ -45,7 +46,7 @@ class RegistrationTests(TestCase):
         """The ADR-0021 invariant: a self-registered account gets no credential."""
         self.client.post(
             "/accounts/register/clinician/",
-            {"username": "carol", "password": "pw12345", "clinician_id": "doc-301"},
+            {"username": "carol", "password": TEST_PASSWORD, "clinician_id": "doc-301"},
         )
         # Nothing is ISSUED anywhere, and the issue path is not reachable from here.
         self.assertFalse(
@@ -74,7 +75,7 @@ class SelfRegistrationCannotClaimAnIdentityTests(TestCase):
 
         self.client.post(
             "/accounts/register/clinician/",
-            {"username": "mallory", "password": "pw12345", "clinician_id": "doc-301"},
+            {"username": "mallory", "password": TEST_PASSWORD, "clinician_id": "doc-301"},
         )
         with patched(custodian_subject=mock.Mock()) as services:
             resp = self.client.get("/clinician/")
@@ -92,7 +93,7 @@ class SelfRegistrationCannotClaimAnIdentityTests(TestCase):
         RegistrationRequest.objects.create(
             user=user, role="clinician", subject_id="doc-777"
         )
-        self.client.login(username="newdoc", password="pw12345")
+        self.client.login(username="newdoc", password=TEST_PASSWORD)
         resp = self.client.get("/clinician/")
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(resp["Location"], "/")
@@ -103,7 +104,7 @@ class SelfRegistrationCannotClaimAnIdentityTests(TestCase):
         clinician(username="house", subject_id="doc-201")
         resp = self.client.post(
             "/accounts/register/clinician/",
-            {"username": "mallory", "password": "pw12345", "clinician_id": "doc-201"},
+            {"username": "mallory", "password": TEST_PASSWORD, "clinician_id": "doc-201"},
         )
         self.assertContains(resp, "already taken")
         self.assertFalse(
@@ -117,7 +118,7 @@ class SelfRegistrationCannotClaimAnIdentityTests(TestCase):
             "/accounts/register/patient/",
             {
                 "username": "eve",
-                "password": "pw12345",
+                "password": TEST_PASSWORD,
                 "patient_id": "pat-555",
                 "given_name": "Eve",
                 "family_name": "Mallory",

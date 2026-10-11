@@ -43,6 +43,7 @@ def _check_seq_advances(audit_service_url: str, seq: int) -> None:
             )
         _last_seq[audit_service_url] = seq
 
+
 _DISABLE_VALUES = {"0", "false", "no"}
 
 

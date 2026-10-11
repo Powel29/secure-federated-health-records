@@ -162,9 +162,7 @@ def is_plaintext(resp: httpx.Response) -> bool:
 def is_refused(resp: httpx.Response) -> bool:
     # A denial is a 403. A 503 is an outage, not evidence the control
     # refused (review F42).
-    return (
-        resp.status_code == 403 and not is_plaintext(resp) and "Refused" in resp.text
-    )
+    return resp.status_code == 403 and not is_plaintext(resp) and "Refused" in resp.text
 
 
 def full_cycle(

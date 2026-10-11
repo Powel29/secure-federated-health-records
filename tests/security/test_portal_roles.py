@@ -9,6 +9,7 @@ portal bug could rewrite lifecycle state or the audit log. It now connects as
 from __future__ import annotations
 
 import os
+import secrets
 from pathlib import Path
 
 import psycopg
@@ -21,7 +22,7 @@ from tests.security.conftest import skip_or_fail_without_postgres
 
 ROLES_SQL = Path(__file__).resolve().parents[2] / "portal" / "sql" / "roles.sql"
 _DB_URL = os.environ.get("DATABASE_URL")
-_PASSWORD = "portal_app_test"  # noqa: S105 - throwaway test role password
+_PASSWORD = secrets.token_urlsafe(16)
 
 
 @pytest.fixture()

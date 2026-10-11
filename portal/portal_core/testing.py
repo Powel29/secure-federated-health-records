@@ -9,6 +9,7 @@ crypto core, which has its own suites under ``tests/``.
 
 from __future__ import annotations
 
+import secrets
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Iterator
@@ -19,9 +20,12 @@ from django.contrib.auth.models import User
 from accounts.models import Profile, Role
 from portal_core.services import ServiceError
 
+# Generated per test run so no login password is committed.
+TEST_PASSWORD = secrets.token_urlsafe(16)
+
 
 def make_user(username: str, role: str, subject_id: str, facility: str = "") -> User:
-    user = User.objects.create_user(username=username, password="pw12345")
+    user = User.objects.create_user(username=username, password=TEST_PASSWORD)
     Profile.objects.create(
         user=user, role=role, subject_id=subject_id, home_facility_id=facility
     )

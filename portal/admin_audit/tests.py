@@ -11,7 +11,7 @@ from django.utils import timezone
 from accounts.models import RegistrationRequest, RequestStatus, Role
 from ledger.models import BreakglassCase, CaseStatus
 from portal_core.services import ServiceStatus
-from portal_core.testing import admin, patched
+from portal_core.testing import TEST_PASSWORD, admin, patched
 
 ENTRIES = [
     {"seq": 10, "event_type": "patient.lookup", "event_data": {"candidate_count": 2, "selected_patient_id": "pat-101"},
@@ -29,7 +29,7 @@ ENTRIES = [
 class TraceTests(TestCase):
     def setUp(self) -> None:
         admin()
-        self.client.login(username="auditor", password="pw12345")
+        self.client.login(username="auditor", password=TEST_PASSWORD)
 
     def test_trace_by_correlation_id_shows_the_whole_flow(self) -> None:
         BreakglassCase.objects.create(
@@ -93,7 +93,7 @@ class TraceTests(TestCase):
 class OverviewTests(TestCase):
     def test_overview_renders_with_chain_stats(self) -> None:
         admin()
-        self.client.login(username="auditor", password="pw12345")
+        self.client.login(username="auditor", password=TEST_PASSWORD)
         with mock.patch("portal_core.store_reader.chain_stats", return_value={"head": None, "length": 3}), mock.patch(
             "portal_core.store_reader.recent_audit", return_value=[]
         ), mock.patch("portal_core.store_reader.event_type_counts", return_value=[]), patched(
@@ -107,7 +107,7 @@ class OverviewTests(TestCase):
 class CaseReviewTests(TestCase):
     def setUp(self) -> None:
         admin()
-        self.client.login(username="auditor", password="pw12345")
+        self.client.login(username="auditor", password=TEST_PASSWORD)
 
     def test_chain_only_flow_without_a_portal_case_renders(self) -> None:
         """A break-glass in the chain with no ledger row must not 500 the page."""
@@ -137,7 +137,7 @@ class HygieneTests(TestCase):
 
     def setUp(self) -> None:
         admin()
-        self.client.login(username="auditor", password="pw12345")
+        self.client.login(username="auditor", password=TEST_PASSWORD)
 
     def test_non_numeric_approve_is_400_not_500(self) -> None:
         resp = self.client.post("/oversight/registrations/", {"approve": "abc"})

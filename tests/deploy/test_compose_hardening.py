@@ -6,6 +6,7 @@ everywhere; each pins one property a later edit could silently undo.
 
 from __future__ import annotations
 
+import secrets
 from pathlib import Path
 
 import pytest
@@ -87,8 +88,9 @@ def test_env_flag_rejects_a_typo(monkeypatch):
 
 def test_portal_takes_the_store_password_from_deploy_env(monkeypatch, tmp_path):
     """N12: the documented password-less portal DSN works against the store."""
+    store_password = secrets.token_urlsafe(16)
     env_file = tmp_path / ".env"
-    env_file.write_text("POSTGRES_PASSWORD=s3cret\n", encoding="utf-8")
+    env_file.write_text(f"POSTGRES_PASSWORD={store_password}\n", encoding="utf-8")
     monkeypatch.setattr(seed_portal, "COMPOSE_ENV", env_file)
     monkeypatch.delenv("PGPASSWORD", raising=False)
     monkeypatch.setenv("PGPASSWORD", "")
@@ -97,4 +99,4 @@ def test_portal_takes_the_store_password_from_deploy_env(monkeypatch, tmp_path):
     seed_portal._use_compose_store_password("postgresql://postgres@127.0.0.1:55433/ehr")
     import os
 
-    assert os.environ["PGPASSWORD"] == "s3cret"
+    assert os.environ["PGPASSWORD"] == store_password

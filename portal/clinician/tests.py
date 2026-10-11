@@ -19,6 +19,7 @@ from ledger.models import (
     PatientNotification,
 )
 from portal_core.testing import (
+    TEST_PASSWORD,
     RECORD_META,
     SIGNED_REQUEST,
     SUBJECT_CLINICIAN,
@@ -66,7 +67,7 @@ class IdentifyTests(TestCase):
     def setUp(self) -> None:
         clinician()
         _directory()
-        self.client.login(username="house", password="pw12345")
+        self.client.login(username="house", password=TEST_PASSWORD)
 
     def test_ambiguous_match_shows_every_candidate_and_selects_none(self) -> None:
         audit = AuditLog()
@@ -133,7 +134,7 @@ class BreakglassTests(TestCase):
         clinician()
         patient()
         _directory()
-        self.client.login(username="house", password="pw12345")
+        self.client.login(username="house", password=TEST_PASSWORD)
 
     def _identify(self, audit: AuditLog) -> None:
         with patched(audit_append=audit, custodian_subject=mock.Mock(return_value=SUBJECT_CLINICIAN)):
@@ -250,7 +251,7 @@ class BreakglassTests(TestCase):
 class ConsentReadTests(TestCase):
     def setUp(self) -> None:
         clinician()
-        self.client.login(username="house", password="pw12345")
+        self.client.login(username="house", password=TEST_PASSWORD)
         self.row = ConsentRecord.objects.create(
             request_id=SIGNED_REQUEST["request_id"], patient_id="pat-101", requester_id="doc-201",
             requester_facility_id="facility-b", scope=["rec-001"], purpose="pre-op",

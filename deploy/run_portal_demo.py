@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import secrets
 import subprocess
 import sys
 import time
@@ -54,10 +55,12 @@ PORTAL_DIR = REPO_ROOT / "portal"
 ROLES_SQL = PORTAL_DIR / "sql" / "roles.sql"
 
 STORE_RO_USER = "portal_ro"
-STORE_RO_PASSWORD = "portal_ro"  # noqa: S105 - dev-only role password, see roles.sql
 # Django's own role: owns the portal schema, no store privileges (review F36).
 PORTAL_APP_USER = "portal_app"
-PORTAL_APP_PASSWORD = "portal_app"  # noqa: S105 - dev-only role password, see roles.sql
+# Role passwords are generated per run, set on the roles by _prepare_portal_schema
+# and handed to Django through its environment: none is ever committed.
+STORE_RO_PASSWORD = secrets.token_urlsafe(16)
+PORTAL_APP_PASSWORD = secrets.token_urlsafe(16)
 
 
 def _db_parts(database_url: str) -> dict[str, str]:

@@ -154,7 +154,6 @@ def test_lifecycle_audit_logger_uses_entrys_own_actor_and_correlation(monkeypatc
     assert captured["event_data"]["record_id"] == "rec-1"
 
 
-
 @pytest.fixture(autouse=True)
 def _fresh_seq_memory(monkeypatch):
     """Each test starts with no remembered chain position."""
