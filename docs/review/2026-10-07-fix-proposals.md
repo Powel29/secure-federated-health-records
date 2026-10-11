@@ -8,6 +8,7 @@
 |---|---|---|
 | 1st, 2026-10-07 | whole repo at `3c42094` | Rule violations and bugs → decisions **D1–D11**, fixes **F1–F44** |
 | 2nd, 2026-10-09 | `3c42094...4ddc201` (branch `full-deploy`, 106 files) | Status of every D/F item, plus new findings **N1–N16** from the Phase 5 and full-deploy code |
+| Update, 2026-10-11 | `4ddc201...a40a5a7` (one code commit) | Status of the items that commit touched (N2, N11, N12, N14, N16, F20, F42), plus the list of fixes that need no decision |
 
 Both reviews were four- or three-way parallel reviews (standards × spec),
 and the main findings were re-checked by hand. Smells are left out; this
@@ -75,6 +76,77 @@ covers rule violations and bugs only. Status lines marked **Status at
 | F43 | **FIXED (diverged, sound)** | Versioned JSONB with a strict codec (`storage/policy_codec.py`), encrypted leaves only; `test_policy_and_consent_survive_a_new_process`, `test_stored_policy_still_requires_attribute_keys` | An HTTP-level `test_read_succeeds_after_facility_restart` |
 
 **Totals:** 4 fixed, 7 partial or diverged, 33 open. No decisions made.
+
+## Status at `a40a5a7` (update, 2026-10-11)
+
+Only `a40a5a7` ("Harden Compose deploy per review") changed code since `4ddc201`. Every item not listed here is unchanged.
+
+| ID | Status | Evidence | What remains |
+|---|---|---|---|
+| N11 | **FIXED (diverged, sound)** | `bootstrap.run_migrations(reset=True)` refuses any non-loopback / non-socket host in the DSN or `PGHOST`/`PGHOSTADDR`, before connecting (`deploy/bootstrap.py:99-135`); `tests/security/test_deployment_reset_guard.py`. A host check replaces the proposed name check, which a remote DB with the same name would pass (recorded in ADR-0047). | Nothing |
+| N12 | **MOSTLY FIXED** | `POSTGRES_HOST_AUTH_METHOD: trust` removed; Compose refuses to start without `POSTGRES_PASSWORD` from the git-ignored `deploy/.env`; `.dockerignore` excludes `**/.env*` | The `portal-compose` entry in `.claude/launch.json` still uses a DSN with no password, so it fails against the new store. Bootstrap doesn't generate the password (it's a manual one-liner in `deploy/README.md`). The proposed test (Compose file has no `trust`) wasn't added. Services still connect as the `postgres` superuser (see F36). |
+| N14 | **PARTIAL** | Each container mounts only `wire/certs/<service>/` plus `wire/certs/trust/`, so a compromised service holds only its own TLS key | All five table rows: no `USER` in the Dockerfile; `ENV HOST=0.0.0.0` (`deploy/Dockerfile:29`); `TLS_VERIFY` still wired (`bootstrap._http_verify`, `run_scenario.py:65`); every cert still has `localhost`/`127.0.0.1` SANs (`wire/tls.py:50-51`); four copies of env-flag parsing |
+| N2 | **PARTIAL** | A `state_writer` failure is now logged at ERROR, not raised (`audit_client.py:146-161`), so it can't kill the monitor; `test_store_write_failure_after_audit_is_logged_not_raised` | A record can still get stuck in EXPIRED: the EXPIRED mirror succeeds, then the GRANTED append or mirror fails. ADR-0047 says the facility reconciles a stale `emergency_open`, but that is not true for `expired`, and that reconciliation is the unconditional ADR-0044 reset (N1, D7). The retry is not done. |
+| F20 | **OPEN** | `expiry.py` untouched | An `audit_logger` HTTP error still ends `_loop`. Only the `state_writer` path is covered (N2). |
+| F42 | **PARTIAL** (row 1) | Compose runs the portal with `DJANGO_DEBUG=0` and fixed `DJANGO_ALLOWED_HOSTS` | `portal/config/settings.py:21` still defaults DEBUG on. The other six rows are unchanged. |
+| N16 | **PARTIAL** | ADR-0047 decider is now "Avaneeth (proposal); Ojas to review `deploy/` and `wire/`", still **Proposed**; tracker row updated | Owner reviews of 638c2c6 and 9721387; the `PROJECT.md` expiry paragraph (line 287) still has no heading |
+
+---
+
+## Fixes that need no decisions (at `a40a5a7`)
+
+These items have no **⚑ needs D#** and are still open or partial. Each one can start now. **ADR** still means "write an ADR in the same PR", not "wait for the team".
+
+**Quick (S), in suggested order**
+
+| ID | Fix | Owner |
+|---|---|---|
+| N6 | Assert unconditionally in the C4 strict-xfail test | Powel |
+| N9 | Generate canaries ≥ 16 chars; reject a manifest with an unsearchable canary | Powel |
+| N8 | Count gaps per flow; a gap makes claim 1 inconclusive; don't join across gaps | Powel |
+| N10 | Re-run benchmarks and leakage, commit with `environment.json` (or delete the stale files) | Nandini |
+| N12 (rest) | Fix the `portal-compose` DSN; add the no-`trust` test | Avaneeth |
+| N14 (rest) | `USER app`, drop `ENV HOST`, delete `TLS_VERIFY`, per-service SANs, one `env_flag` | Avaneeth |
+| N15 | The eight small correctness rows | Powel, Avaneeth, Nandini |
+| N7 | Mutation runner: green baseline first; only exit 1 counts as caught | Powel |
+| N4 | Revoke step in the scenario; `/revoke` and `old_dek_b64` in the analyser | Powel + Avaneeth |
+| N13 | Postgres variant of the C8 restart test | Powel + Avaneeth |
+| N16 (rest) | Owner reviews of 638c2c6 / 9721387; heading for the PROJECT.md expiry paragraph | Powel, Avaneeth |
+| F19 | `_log_event` raises without an audit sink; `AUDIT_SERVICE_URL` required | Avaneeth |
+| F24 | Replace `hazmat` hints with `crypto_core.types`; invariant test scans all of `src/` | Ojas, Powel, Avaneeth |
+| F25 | `secrets.token_bytes` for nonces; grep test | Powel |
+| F26 | `field(repr=False)` on key fields; repr test | Powel, Avaneeth |
+| F27 | Range-check Shamir `x` and `y` | Powel |
+| F6 | Bound `emergency_duration_seconds`; assertion `max_ttl` and skew | Avaneeth, Ojas, Powel |
+| F8 | Every refusal goes through `_log_denial`; audit emergency search | Avaneeth, Ojas |
+| F4 | Reorder ingest before share deposit; 409 on duplicate `record_id`; no share overwrite | Ojas, Avaneeth |
+| F14 (interim) | `AUTHORING_CALLERS` allowlist on `/attribute-keys/author` | Ojas |
+| F21 | `consumed_store` / `revocation_registry` become required arguments | Powel, Ojas/Avaneeth |
+| F42 (rest) | DEBUG default, open redirect, upload `nosniff`, `int()` 400, three-state links, narrow `except`, e2e skip counts | Mixed |
+| F30 | Make the consent TTL comment and value agree (owner picks 7 days or 1 year) | Powel |
+| F35 | `psycopg.sql` composition in `store_reader.py` | Ojas/Powel |
+| F36 | `portal_app` role with no store-table privileges | Avaneeth |
+| F31 | Reject non-integer floats; custodian verifies returned entries; facility keeps the last head | Ojas |
+| F40 | Pick `bench/captures/` or amend §7 | Ojas |
+| F41 | Server-side `LookupSession`; break-glass form posts the lookup id | Nandini |
+| F43 (rest) | HTTP-level `test_read_succeeds_after_facility_restart` | Avaneeth |
+
+**Larger (M/L)**
+
+| ID | Fix | Owner |
+|---|---|---|
+| N3 | Claim status from a real run, not a collection; collection errors are errors; fix C2/C5 evidence | Powel |
+| N5 | Delete stale pcaps, check dumpcap exit; tie pcap to manifest; full TLS preconditions | Powel |
+| N1 (with F12) | Use the CAS for break-glass, revoke and the timer mirror; insert-only ingest; drop the ADR-0044 write | Avaneeth |
+| N2 (rest, with F20) | Claim the session as `expiring`, retry with backoff, resume from the stored state | Powel + Avaneeth |
+| F1 · ADR | Trust root and facility CAs from config; drop the PEM fields; chain errors → 403 + denial; revoked serials | Avaneeth, Ojas, Powel |
+| F7 | Validate → CAS claim → gate → log → session → one DB transaction; roll back on failure. Needs N1's CAS. | Avaneeth |
+| F17 | Require an ISSUED profile; bind `subject_id` at issuance; unique constraint | Nandini, Ojas |
+| F37 (rest) | Audit verifies the chain at startup; others depend on it; tampered-genesis test | Ojas |
+| F38 | Spawn portal-demo services as processes on fixed ports | Ojas, Avaneeth |
+| F33 (part) | Move search-token, hashing and custodian crypto out of `api/`; extend `forbidden_calls`. Emergency provisioning waits for F9 (D3). | Avaneeth, Ojas, Nandini |
+
+**Not on this list, because they wait on a decision:** F2 (D1), F3 (D2), F5 (D7), F9 (D3), F10 (D3, D4), F11 (D7, D8), F13 (D4), F14 proper (D5), F15 (D4), F18 system fix (D6), F23 (D9), F29 (after F23, so D9), F32 (D11), F34 (D5), F44 (D10).
 
 ---
 
@@ -598,6 +670,8 @@ Found in code merged between `3c42094` and `4ddc201`.
 - `test_stale_emergency_open_returns_409_not_silent_reset`.
 
 ### N2 — A partly failed expiry leaves the record stuck in EXPIRED; a DB error kills the monitor · MED · Powel (lifecycle) + Avaneeth (audit_client) · M
+**Status at `a40a5a7`:** **PARTIAL.** A `state_writer` error is logged, not raised, so it no longer kills the monitor. The stuck-in-EXPIRED case and the retry are still open.
+
 **Problem.** `audit_client._log` mirrors after each append separately.
 - If the EXPIRED append and its mirror succeed but the GRANTED append fails, the store holds `expired`. `_effective_lifecycle_state` only reconciles EMERGENCY_OPEN, EXPIRED → EMERGENCY_OPEN is illegal, and the session was already deleted (`expiry.py:375`). Every later break-glass on that record gets 403, with no retry.
 - Any exception from `state_writer` now also ends the monitor thread (`expiry.py:491-494`), a new way to hit F20.
@@ -713,6 +787,8 @@ All of these files predate the fixes, so the paper's evidence doesn't match the 
 **Fix.** Re-run `bench/run_benchmarks.py` and the leakage analysis on the current code. Commit the results together with `environment.json`, or delete the stale files until exit-plan E2 is re-run.
 
 ### N11 — `run_local` drops the schema of any database · MED · Avaneeth (deploy) · S
+**Status at `a40a5a7`:** **FIXED (diverged, sound).** A host guard instead of a name guard; `test_deployment_reset_guard.py`.
+
 **Problem.** `deploy/run_local.py:159` calls `run_migrations(reset=True)`, which runs `DROP SCHEMA public CASCADE` (`migrate.py:58-67`) on whatever `DATABASE_URL` names, with no guard. ADR-0047 doesn't cover it.
 
 **Fix.** Refuse to reset unless the database name is in `{"ehr_test", "ehr"}` **or** `--reset` is passed. One `if` before `run_migrations`. Add a line to ADR-0047.
@@ -720,6 +796,8 @@ All of these files predate the fixes, so the paper's evidence doesn't match the 
 **Test.** `test_run_local_refuses_to_reset_unknown_database`.
 
 ### N12 — Postgres is published to the host with `trust` auth · MED · Avaneeth (deploy) · S
+**Status at `a40a5a7`:** **MOSTLY FIXED.** `trust` removed and the password is required. Remaining: the `portal-compose` launch entry has no password, there's no no-`trust` test, and bootstrap doesn't generate the password.
+
 **Problem.** `docker-compose.yml:22,29` publishes `127.0.0.1:55433` with `POSTGRES_HOST_AUTH_METHOD: trust`. It was not published before this branch. Any local process gets superuser without a password, and could:
 - run `DELETE FROM consumed_ids`, which reopens replay and undoes F22;
 - rewrite `lifecycle_state` or `audit_log`.
@@ -736,6 +814,8 @@ All of these files predate the fixes, so the paper's evidence doesn't match the 
 **Fix.** Add a Postgres-backed variant: two app instances on the same DSN, replay across them → 409/400.
 
 ### N14 — Container and TLS hardening · LOW · Avaneeth (deploy) · S
+**Status at `a40a5a7`:** **PARTIAL.** Per-service key mounts landed. All five rows below are still open.
+
 | Issue | Fix |
 |---|---|
 | `deploy/Dockerfile` has no `USER`; services run as root | `RUN useradd -r app` + `USER app` |
@@ -767,7 +847,7 @@ All of these files predate the fixes, so the paper's evidence doesn't match the 
 
 1. **Stop false evidence first:** N3, N6, N5, N8, N9, N10. Until these are fixed, the claim table and the analyser can say "holds" or "pass" for something that wasn't shown.
 2. **Stop the state from being overwritten:** N1, then N2 (with F20).
-3. **Quick hardening:** N11, N12, N14, N15, N7.
+3. **Quick hardening:** ~~N11~~ (done in `a40a5a7`), N12 (remaining items), N14 (remaining rows), N15, N7.
 4. **Close coverage gaps:** N4, N13.
 5. **Quick first-review fixes that need no decisions:** F19, F24, F25, F26, F27, F6, F8, F4, F14 (interim), F42 (remaining rows).
 6. **Make the decisions:** D7 first (now urgent), then D1, D4, D5, D6, D8. One team sync, with ADRs written in the same PR as the code.
@@ -799,6 +879,6 @@ All of these files predate the fixes, so the paper's evidence doesn't match the 
 - **Still open from the first review:** F2, F3, F4, F14, F15, F31, F38, F40 (lead) and your parts of F1, F6, F8, F9, F13, F18, F21, F23, F24, F32, F33, F35, F42. F37 is partly done: the chain still isn't verified before the services start.
 
 ### Avaneeth: facility API, storage, deploy
-- **Lead:** N1 (wire the CAS everywhere), N11 (reset guard), N12 (Postgres auth), N14 (container and TLS hardening).
+- **Lead:** N1 (wire the CAS everywhere), N12 (remaining: `portal-compose` DSN, no-`trust` test), N14 (all five rows; only the key mounts landed). N11 is done (`a40a5a7`).
 - **Shared:** N2 (`audit_client` mirror), N4 (revoke step in `run_scenario`), N13 (storage side), N15 (`policy_codec`), N16 (9721387 review, ADR-0047 decider).
 - **Still open from the first review:** F1, F5, F7, F8, F10, F19, F29, F34, F36 (lead) and your parts of F4, F6, F9, F11, F12, F13, F21, F22, F24, F26, F33, F38, F42.

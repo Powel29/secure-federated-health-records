@@ -21,6 +21,12 @@ and the work we did on 2026-10-02.
 7. **Synthetic data only, simulated federation, simulated HSM.**
 8. **Scalability curves were cut** to fund the web portals. State this as a
    limitation rather than implying those runs exist (`PROJECT.md` D4).
+9. **The deployment is a local demo, not a production system** (ADR-0047).
+   Private keys, emergency sessions and replay caches live in process memory,
+   so restarting a key service means recreating the whole federation (which
+   wipes the synthetic data). Ports bind to loopback only; the custodian
+   trusts local callers; the browser portal is plain HTTP on loopback. There is
+   no persistent key custody and no internet-facing authentication.
 
 ## What the automated stress test found
 
@@ -38,9 +44,26 @@ still verifying, and found **three real bugs**:
 Merged as PR #35 with tests and **ADR-0044** (status: Proposed, waiting for the
 module owners to ratify).
 
-**Be precise about fix 2.** It is a stop-gap. The store now says "granted", but
-the freshly re-keyed record from expiry is still held only in memory. Full
-persistence of that re-keying is open work (ADR-0043, task P5-4). Say so.
+**Be precise about fix 2.** The deployment now also mirrors each audited timer
+transition (`expired`, then `granted`) into the store, so the portal status
+follows automatic expiry (ADR-0047). But the freshly re-keyed record is still
+not persisted: the custodian supplies a throwaway re-baseline key, and
+persisting that result would lock out routine readers. So emergency **search**
+does die at expiry, but do not claim persisted post-expiry key rotation or
+forward secrecy from it in the deployed demo (`PROJECT.md`, ADR-0043/0044).
+Say so.
+
+## What the deployment review found
+
+Running each facility as its own process (Compose) exposed a bug the
+in-process tests hid: compiled policies and consent lived in Python
+dictionaries, so a **cross-facility read returned HTTP 500**. Fixed by storing
+the encrypted policy layout and the signed consent artifacts in Postgres
+(no new crypto, no contract change). The same review made bootstrap record
+completion only after seeding and chain verification, refuse partial or stale
+reruns, switch TLS to verified certificates, require a store password, and
+refuse a schema reset against any non-local database. ADR-0047, status
+Proposed.
 
 ## How to tell this story in the viva
 

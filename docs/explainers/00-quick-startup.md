@@ -117,7 +117,22 @@ docker rm -f p08pg         # delete it and all data; then repeat step 1
 
 - **Federation only, no web portals** (Path A): `python -m deploy.run_local`
   with `DATABASE_URL` set. Prints the service URLs.
-- **Docker Compose** (reproducible, brings its own Postgres):
-  `docker compose -f deploy/docker-compose.yml up`
+- **Docker Compose** (reproducible, brings its own Postgres and the portals).
+  Create a store password once, then start it:
+
+  ```powershell
+  python -c "import secrets, pathlib; pathlib.Path('deploy/.env').write_text('POSTGRES_PASSWORD=' + secrets.token_urlsafe(16) + '\n')"
+  docker compose -f deploy/docker-compose.yml up --build -d
+  docker compose -f deploy/docker-compose.yml logs bootstrap
+  ```
+
+  Portals at http://127.0.0.1:8000/ with the same logins. All ports bind to
+  loopback only; the store is on `55433`. Keys live only in process memory, so
+  after a key-service restart or a failed bootstrap, `down` then `up --build -d`
+  (this resets the synthetic data). Bootstrap refuses a partial or stale rerun
+  and says so. Full details: `deploy/README.md`.
+- **Verified TLS between services:** `python -m wire.tls`, then
+  `$env:TLS_ENABLED="true"` before either path. Generated certificates are
+  trusted explicitly; verification is never switched off.
 - **Wireshark capture** (Phase 5 module): see `README.md` §6 and
   [06-traffic-analysis-module.md](06-traffic-analysis-module.md).
