@@ -9,12 +9,14 @@
 | 1st, 2026-10-07 | whole repo at `3c42094` | Rule violations and bugs → decisions **D1–D11**, fixes **F1–F44** |
 | 2nd, 2026-10-09 | `3c42094...4ddc201` (branch `full-deploy`, 106 files) | Status of every D/F item, plus new findings **N1–N16** from the Phase 5 and full-deploy code |
 | Update, 2026-10-11 | `4ddc201...a40a5a7` (one code commit) | Status of the items that commit touched (N2, N11, N12, N14, N16, F20, F42), plus the list of fixes that need no decision |
-| Fix batch, 2026-10-11 | working tree on `full-deploy` after `a40a5a7` | Every fix in "Fixes that need no decisions" implemented (ADR-0048 to ADR-0054); status below |
+| Fix batch, 2026-10-11 | `a40a5a7...443ca0f` (commit `443ca0f`) | Every fix in "Fixes that need no decisions" implemented (ADR-0048 to ADR-0054); status below |
 
 Both reviews were four- or three-way parallel reviews (standards × spec),
 and the main findings were re-checked by hand. Smells are left out; this
 covers rule violations and bugs only. Status lines marked **Status at
-`4ddc201`** come from the second review.
+`4ddc201`** come from the second review. Headings marked **FIXED**,
+**PARTIAL** or **INTERIM FIX** carry a **Status at `443ca0f`** line naming
+the change that fixed them; unmarked items are still open.
 
 ## How to review
 
@@ -94,10 +96,10 @@ Only `a40a5a7` ("Harden Compose deploy per review") changed code since `4ddc201`
 
 ---
 
-## Status after the no-decision fix batch (2026-10-11)
+## Status after the no-decision fix batch (2026-10-11, `443ca0f`)
 
-All of "Fixes that need no decisions" below was implemented in one batch on
-`full-deploy` (ADR-0051: across module owners, each owner reviews their
+All of "Fixes that need no decisions" below was implemented in commit
+`443ca0f` on `full-deploy` (ADR-0051: across module owners, each owner reviews their
 directories before merge). Full suite: 754 passed, 4 strict xfails (C3, C4,
 C7, C9, all decision-blocked), 1 failure: the live-capture test, which now
 correctly refuses the committed captures because they predate the run stamp
@@ -143,6 +145,8 @@ correctly refuses the committed captures because they predate the run stamp
 | N16 | **PARTIAL** | PROJECT.md expiry paragraph is now §5 caveat 6 | Owner reviews of 638c2c6, 9721387 and this batch (ADR-0051) |
 
 ## Fixes that need no decisions (at `a40a5a7`)
+
+*All implemented in `443ca0f` except the remainders of N10, N14 and N16; see the status table above.*
 
 These items have no **⚑ needs D#** and are still open or partial. Each one can start now. **ADR** still means "write an ADR in the same PR", not "wait for the team".
 
@@ -201,7 +205,9 @@ These items have no **⚑ needs D#** and are still open or partial. Each one can
 
 ## 1. Break-glass gate (the novelty claim)
 
-### F1 — Facility trusts a root CA chosen by the caller · HIGH · Avaneeth (api) + Ojas (deploy) + Powel (breakglass) · ADR · M
+### F1 — Facility trusts a root CA chosen by the caller · HIGH · Avaneeth (api) + Ojas (deploy) + Powel (breakglass) · ADR · M · **FIXED**
+**Status at `443ca0f`:** **FIXED** (ADR-0048). The facility loads the root, facility CAs and revoked serials from config at startup (`load_trust` in `deploy/asgi/facility.py`, `FacilityTrust` in `hospital.py`) and matches the leaf's issuer to a configured CA. `BreakglassUnlockRequest` drops the PEM fields and forbids extras, so a caller still sending them gets 422. Chain, expiry and revocation errors are 403 with a denial logged. `validate_emergency_assertion` takes a required `revoked_serials`. The Compose `pki` job generates the trust anchors, and facilities refuse to start without them. Remaining: a static serial list, no CRL/OCSP.
+
 **Problem.** [hospital.py:861-893](../../src/api/hospital.py) builds `ca_cert` and `root_cert` from
 `facility_ca_certificate_pem` / `trusted_root_certificate_pem` in the request
 body. An attacker mints their own root and CA plus a `CN=doc-201` leaf and passes
@@ -253,7 +259,9 @@ rule 9 (HARD).
 
 **(D2-b)** Instead: amend ARCHITECTURE §5, PROJECT §5 and the paper to say 2-of-2.
 
-### F4 — Ingest with an existing `record_id` overwrites shares · HIGH · Ojas (custodian) + Avaneeth (ingest endpoint) · S
+### F4 — Ingest with an existing `record_id` overwrites shares · HIGH · Ojas (custodian) + Avaneeth (ingest endpoint) · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** The custodian ingests at the facility before depositing shares. A duplicate `record_id` is 409 (`RecordExistsError` from the unique violation). The audit `ShareRegistry.put` and the custodian vault refuse to overwrite a share (409). A deposit failure after ingest is 503 with `breakglass_provisioned=false`.
+
 **Problem.** `custodian_service.py:753-771` deposits share 3 and share 1 **before** the facility ingest. A duplicate `record_id` makes the ingest 500, but the old shares are already replaced, and break-glass on that record is broken for good.
 
 **Fix.**
@@ -286,7 +294,9 @@ rule 9 (HARD).
 - `test_expiry_after_breakglass_on_revoked_record_returns_to_revoked`.
 - `test_restart_reconciles_only_own_sessions`.
 
-### F6 — Time-box and assertion lifetime unbounded · MED · Avaneeth (schemas, api) + Ojas (custodian schemas) + Powel (assertion) · S
+### F6 — Time-box and assertion lifetime unbounded · MED · Avaneeth (schemas, api) + Ojas (custodian schemas) + Powel (assertion) · S · **FIXED**
+**Status at `443ca0f`:** **FIXED** (ADR-0049). `validate_emergency_assertion` enforces `max_ttl` = 3 days and rejects an `issued_at` more than 30 s in the future (`AssertionLifetimeError`), before the assertion is consumed. `emergency_duration_seconds` is `gt=0, le=3 days` and capped at the facility's configured window. The response returns the real `expires_at`. Custodian TTLs are capped at 3 days.
+
 **Problem.** `emergency_duration_seconds` (`schemas.py:195`, `custodian_schemas.py:207`) has no bound and overrides `EMERGENCY_DURATION_SECONDS`. A huge value raises `OverflowError` → 500 after state is written. Assertion `expires_at` has no maximum, and `issued_at` is not checked (`assertion.py:270`).
 
 **Fix.**
@@ -297,7 +307,9 @@ rule 9 (HARD).
 
 **Tests.** `test_breakglass_duration_cannot_exceed_configured`, `test_assertion_with_ten_year_lifetime_rejected`, `test_future_dated_assertion_rejected`.
 
-### F7 — Break-glass leaves side effects on failure; open requests race · MED · Avaneeth (api) · M
+### F7 — Break-glass leaves side effects on failure; open requests race · MED · Avaneeth (api) · M · **FIXED**
+**Status at `443ca0f`:** **FIXED.** The break-glass handler parses and validates everything first, claims the state with a compare-and-set, then runs the gate, logs, registers the session and writes the event. Any failure after the claim unregisters the session and rolls the state back. Break-glass needs an expiry manager and a baseline key (503 otherwise), and a second open is 409.
+
 **Problem.** [hospital.py:1005-1057](../../src/api/hospital.py) persists `EMERGENCY_OPEN` + the transition event, then registers the session, then logs the rewrap. An audit outage (503) or a session failure therefore leaves the record open with no timer. A missing `baseline_wrapping_key_b64` or expiry manager silently skips the time-box. The read at `:954` and the write at `:1005` are not atomic.
 
 **Fix.** New order: validate everything (including decoding the baseline key) → CAS-claim the state (F12) → gate → `_log_rewrap` (log-before-release) → `register_session` → persist state + event **in one DB transaction** → respond.
@@ -306,7 +318,9 @@ rule 9 (HARD).
 
 **Tests.** `test_audit_outage_during_breakglass_leaves_state_unchanged`, `test_breakglass_without_expiry_manager_refused`, `test_concurrent_breakglass_one_wins` (two threads → one 200, one 409).
 
-### F8 — Several denials are never audited · MED · Avaneeth (api) + Ojas (event types) · S
+### F8 — Several denials are never audited · MED · Avaneeth (api) + Ojas (event types) · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** Every break-glass refusal (chain, assertion, gate, transition, record not found, patient binding), every read-path unwrap failure and every revoke refusal goes through `_log_denial`. Emergency search is audited when granted and when denied (`ACCESS_VIA_EMERGENCY_SEARCH`, required `requester_id`).
+
 **Problem.** Not audited:
 - `InsufficientSharesError`, `UnwrappingError`, `IllegalTransitionError` ([hospital.py:993-1002](../../src/api/hospital.py)).
 - Record-not-found.
@@ -383,7 +397,9 @@ rule 9 (HARD).
 
 **Tests.** `test_transition_event_with_invalid_signature_rejected` (exit criterion, at the HTTP level), `test_illegal_transition_rejected` (EMERGENCY_OPEN→REVOKED), `test_replayed_transition_event_rejected`.
 
-### F12 — No compare-and-set on lifecycle state; `ConsumedEventIds` unlocked · MED · Avaneeth (storage) + Powel (lifecycle) · S
+### F12 — No compare-and-set on lifecycle state; `ConsumedEventIds` unlocked · MED · Avaneeth (storage) + Powel (lifecycle) · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** Via N1: every lifecycle write now goes through `transition_lifecycle_state` (compare-and-set).
+
 **Status at `4ddc201`:** **PARTIAL (overclaimed by 638c2c6).** `transition_lifecycle_state` and the `ConsumedEventIds` lock exist with unit tests, but **nothing in production calls the CAS**. See N1.
 
 **Problem.** `upsert_lifecycle_state` ([repositories.py:270](../../src/storage/repositories.py)) overwrites unconditionally, so two concurrent transitions can both succeed. `ConsumedEventIds` (`state_machine.py:232`) has no lock, unlike `breakglass/replay.py`.
@@ -420,7 +436,9 @@ rule 9 (HARD).
 
 ## 3. Key release and identity
 
-### F14 — `/attribute-keys/author` hands out keys with no authentication · HIGH · Ojas (authority service) · ⚑ needs D5 (interim fix needs nothing) · ADR · S→M
+### F14 — `/attribute-keys/author` hands out keys with no authentication · HIGH · Ojas (authority service) · ⚑ needs D5 (interim fix needs nothing) · ADR · S→M · **INTERIM FIX**
+**Status at `443ca0f`:** **INTERIM FIX** (ADR-0052). `/attribute-keys/author` only answers callers listed in `AUTHORING_CALLERS` (default loopback; Compose: `custodian,bootstrap`). Host-run scenarios against Compose need the bridge gateway in the list (`deploy/README.md`). Remaining: the proper fix (D5-a).
+
 **Problem.** [authority_service.py:247-262](../../src/api/authority_service.py) returns
 `authority.attribute_key(name, value)`, the same key `/release` gates. One
 unauthenticated POST for `owner:pat-101` reads every one of Alice's records.
@@ -445,7 +463,9 @@ The authority verifies the envelope against the subject's cert (clinician: exist
 
 **Test.** `test_copied_credential_without_subject_signature_gets_no_key`, `test_replayed_release_envelope_rejected`.
 
-### F16 — Services listen on all interfaces; Compose publishes every port · HIGH · Ojas (deploy) · S
+### F16 — Services listen on all interfaces; Compose publishes every port · HIGH · Ojas (deploy) · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** Fixed in `3c42094...4ddc201`: services bind to `127.0.0.1` by default and Compose publishes ports on `127.0.0.1` only. `443ca0f` dropped the Dockerfile's `ENV HOST=0.0.0.0` (N14).
+
 **Status at `4ddc201`:** **FIXED.** `entrypoint.py` defaults to `127.0.0.1`; Compose ports bound to `127.0.0.1:`; `tests/deploy/test_bind_address.py`. The Dockerfile's `ENV HOST=0.0.0.0` still overrides it for a plain `docker run` (N14).
 
 **Problem.** `deploy/entrypoint.py:44` defaults `HOST` to `0.0.0.0`; `run_local.py` never sets it; `docker-compose.yml` publishes 8010, 8011, 8020, 8001, 8002 and 8030 on every interface. §8 drops authentication *because* there is "no public exposure".
@@ -456,7 +476,9 @@ The authority verifies the envelope against the subject's cert (clinician: exist
 
 **Test.** A deploy smoke test asserting each service's bind address is loopback on Path A.
 
-### F17 — Self-registration can claim an existing identity · HIGH · Nandini (accounts) + Ojas (portal_core) · M
+### F17 — Self-registration can claim an existing identity · HIGH · Nandini (accounts) + Ojas (portal_core) · M · **FIXED**
+**Status at `443ca0f`:** **FIXED** (ADR-0053). Sign-up records a `RegistrationRequest` only (no profile, no directory row) and refuses an existing subject id. Portals require an issued profile (`is_issued` in `portal_core/access.py`). Remaining: issuance itself is still the P2-2 stub.
+
 **Problem.** `accounts/views.py:53-63, 104-110` binds whatever `patient_id` or `clinician_id` the visitor types and logs them in at once. Nothing in the portal checks `RegistrationRequest.status`, so the first person to register `doc-201` acts as that clinician through the custodian. That breaks ADR-0014.
 
 **Fix.**
@@ -492,26 +514,34 @@ The authority verifies the envelope against the subject's cert (clinician: exist
 
 **Fix — system:** D6-a (client-side crypto, shares delivered wrapped to the recipient), or D6-b with the narrowed claim written into PROJECT §4A and the paper. F11 (no signing key on the wire) and F13 (no patient private key on the wire) remove the private keys under either option.
 
-### F39 — Capture accepts any interface · LOW (CLAUDE.md capture rule) · Ojas · S
+### F39 — Capture accepts any interface · LOW (CLAUDE.md capture rule) · Ojas · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** The interface check before `dumpcap` landed in `3c42094...4ddc201`. `443ca0f` matches Docker bridges exactly (`br-[0-9a-f]{12}`).
+
 **Status at `4ddc201`:** **FIXED.** `capture.is_allowed_interface` refuses before `dumpcap` runs; two tests. `br-*` also matches non-Docker bridges (N15).
 
 **Fix.** `wire/capture.py --interface` accepts only a loopback adapter (`lo`, `\Device\NPF_Loopback`, "Adapter for loopback traffic capture") or a Docker bridge (`docker0`, `br-*`). Anything else exits 2 with the rule quoted. Test the allowlist function.
 
-### F40 — Capture path / `bench/` · LOW · Ojas · S
+### F40 — Capture path / `bench/` · LOW · Ojas · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** ARCHITECTURE §7 now names `wire/captures/`.
+
 **Fix.** Write PCAPs to `bench/captures/` as §7 says (or amend §7 to `wire/captures/`). `bench/` being empty is a phase item (D4 deliverable), not a bug.
 
 ---
 
 ## 5. Fail-closed and audit plumbing
 
-### F19 — `_log_event` silently does nothing without an audit sink · MED (HARD: §2 rule 6) · Avaneeth (api) · S
+### F19 — `_log_event` silently does nothing without an audit sink · MED (HARD: §2 rule 6) · Avaneeth (api) · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** `_log_event` raises `AuditServiceError` (503) when no audit URL, logger or sink is configured. The facility requires `AUDIT_SERVICE_URL`. Tests pass an explicit `RecordingAuditSink`.
+
 **Problem.** [hospital.py:179-196](../../src/api/hospital.py) falls through with no `else`. `AUDIT_SERVICE_URL` is optional in `facility.py`, so reads return plaintext with nothing logged.
 
 **Fix.** Add `else: raise AuditServiceError("no audit sink configured")`. `facility.py`: make `AUDIT_SERVICE_URL` required (fail at startup). Tests that want no audit pass an explicit in-memory sink.
 
 **Test.** `test_read_without_audit_sink_returns_503_not_plaintext`.
 
-### F20 — One exception kills the expiry monitor for good · MED · Powel (lifecycle) · M
+### F20 — One exception kills the expiry monitor for good · MED · Powel (lifecycle) · M · **FIXED**
+**Status at `443ca0f`:** **FIXED.** The expiry manager claims a session as `expiring`, retries a failed expiry with backoff (1 s, doubling to 60 s) and resumes without re-signing. The monitor loop logs and survives every exception (`lifecycle/expiry.py`).
+
 **Problem.** `check_and_expire_due` (`expiry.py:445`) catches only `SessionNotFoundError`. An `audit_logger` HTTP error ends `_loop`, and the session was already deleted at claim (`:357`), so it is never retried.
 
 **Fix.**
@@ -522,14 +552,18 @@ The authority verifies the envelope against the subject's cert (clinician: exist
 
 **Test.** `test_monitor_survives_audit_outage_and_retries`.
 
-### F21 — Optional arguments that skip security checks · MED (§2 rule 6) · Powel (assertion, envelopes) + Ojas/Avaneeth (credential lifecycle, P2-6) · S
+### F21 — Optional arguments that skip security checks · MED (§2 rule 6) · Powel (assertion, envelopes) + Ojas/Avaneeth (credential lifecycle, P2-6) · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** `consumed_store`, `revoked_serials` and `revocation_registry` are required keyword arguments (`breakglass/assertion.py`, `breakglass/envelopes.py`, `authority/issuance.py`); `tests/security/test_required_security_args.py`.
+
 **Problem.** `consumed_store=None` skips the replay check (`assertion.py:197`, `envelopes.py`). `revocation_registry=None` skips the revocation check (`verify_credential`).
 
 **Fix.** Make them required keyword arguments with no default. Callers that don't care pass a fresh store or an empty registry explicitly.
 
 **Test.** A signature test (`inspect.signature`) asserting there is no default.
 
-### F22 — Replay stores are in memory only · MED · Powel (breakglass) + Avaneeth (storage migration) · M
+### F22 — Replay stores are in memory only · MED · Powel (breakglass) + Avaneeth (storage migration) · M · **FIXED (facility)**
+**Status at `443ca0f`:** **FIXED (facility).** The facility's persistent replay store landed in `3c42094...4ddc201`. `443ca0f` added the Postgres test across two facility processes (N13). Remaining: the audit and authority consumers, which come with F2 and F15.
+
 **Status at `4ddc201`:** **FIXED (facility only).** Migration `0002_consumed_ids.sql` + Postgres backend wired in `facility.py`; C8 system test. The Postgres variant of the test is missing (N13); the audit and authority consumers wait on F2 and F15.
 
 **Problem.** `ConsumedAssertionIds()` lives in the process (`hospital.py:425`). A restart reopens replay for any unexpired assertion.
@@ -538,7 +572,9 @@ The authority verifies the envelope against the subject's cert (clinician: exist
 
 **Test.** `test_assertion_replay_rejected_across_app_restart`.
 
-### F31 — Audit chain edge cases · LOW · Ojas (audit) + Ojas (custodian) · S
+### F31 — Audit chain edge cases · LOW · Ojas (audit) + Ojas (custodian) · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** Audit append rejects floats (422). The custodian verifies each release entry's signature, correlation and seq (`verify_entry_signature`). Facility audit clients refuse a backwards seq. Remaining: the facility's high-water mark is in memory, not persisted.
+
 **Problem.** A float like `1e20` changes form after a jsonb round-trip and raises a false `TamperedEntryError`. Deleting the last entries goes undetected, and the custodian never verifies the entry it gets back (`custodian_service.py:900`).
 
 **Fix.**
@@ -563,15 +599,21 @@ The authority verifies the envelope against the subject's cert (clinician: exist
 
 **Tests.** `test_grant_field_boundary_unambiguous` (the example above must produce different bytes), `test_assertion_signature_not_valid_as_transition_signature`.
 
-### F24 — `hazmat` imported outside `crypto_core` · HARD (CLAUDE.md, §2 rule 1) · Ojas (audit ×3) + Powel (gate, expiry) + Avaneeth/Powel (revocation) · S
+### F24 — `hazmat` imported outside `crypto_core` · HARD (CLAUDE.md, §2 rule 1) · Ojas (audit ×3) + Powel (gate, expiry) + Avaneeth/Powel (revocation) · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** Type hints use `crypto_core.types` instead of `hazmat` in `audit/` (3 files), `breakglass/gate.py`, `lifecycle/expiry.py` and `records/revocation.py`. The invariant test scans all of `src/`.
+
 **Problem.** [chain.py:31](../../src/audit/chain.py), `audit/events.py:55`, `audit/share_custody.py:27`, [gate.py:62](../../src/breakglass/gate.py), [expiry.py:47](../../src/lifecycle/expiry.py), [revocation.py:44](../../src/records/revocation.py).
 
 **Fix.** Replace `ec.EllipticCurvePrivateKey` / `ec.EllipticCurvePublicKey` hints with `crypto_core.types.ECPrivateKey` / `ECPublicKey`. Extend the invariant test to scan **all of `src/`** except `crypto_core`, not just `api/`.
 
-### F25 — Nonces from `os.urandom` · HARD, minor (§2 rule 2) · Powel · S
+### F25 — Nonces from `os.urandom` · HARD, minor (§2 rule 2) · Powel · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** `crypto_core/symmetric.py` draws nonces from `secrets.token_bytes`, with a grep test.
+
 **Fix.** `crypto_core/symmetric.py:51` → `secrets.token_bytes(num_bytes)`. Add a grep-style test forbidding `os.urandom` / `random.` in `src/`.
 
-### F26 — Keys printed by default `repr` · LOW (§2 rule 3) · Powel (gate, expiry) + Avaneeth (ingest, revocation) · S
+### F26 — Keys printed by default `repr` · LOW (§2 rule 3) · Powel (gate, expiry) + Avaneeth (ingest, revocation) · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** Key fields of `EmergencyUnlockResult`, `EmergencySession`, `IngestResult` and `RevocationResult` are `field(repr=False)`; `tests/security/test_key_reprs.py`.
+
 **Fix.** `field(repr=False)` on:
 - `EmergencyUnlockResult.emergency_key` and `.rewrapped_dek`;
 - `EmergencySession.emergency_key` and `.baseline_wrapping_key`;
@@ -580,7 +622,9 @@ The authority verifies the envelope against the subject's cert (clinician: exist
 
 **Test.** `test_result_reprs_contain_no_key_bytes` (assert the hex and base64 of each key are absent from `repr()`).
 
-### F27 — Shamir share index not range-checked · LOW · Powel (shamir) · S
+### F27 — Shamir share index not range-checked · LOW · Powel (shamir) · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** `combine_shares` checks `1 <= x < P` and `y < P` (`InvalidShareError`), and the gate range-checks `x` before counting. The docstring now says P is prime but not a safe prime.
+
 **Problem.** `x` and `x+P` pass the duplicate check and the gate's `unique_by_x`, then raise a bare `ValueError`. `x=0` (where the secret sits) and `y ≥ P` are accepted. The docstring calls P a "safe prime".
 
 **Fix.** In `combine_shares` (and the gate before counting), require `1 ≤ x < P` and `0 ≤ y < P`, else `InvalidShareError`. Fix the docstring ("prime", 257-bit).
@@ -594,7 +638,9 @@ The authority verifies the envelope against the subject's cert (clinician: exist
 
 **Test.** `test_old_generation_wrapping_does_not_unwrap_as_current`.
 
-### F30 — Consent TTL comment wrong · LOW · Powel · S
+### F30 — Consent TTL comment wrong · LOW · Powel · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** The comment now matches the values (requests 7 days, grants 30).
+
 **Fix.** `consent/service.py:38`: the comment says one year and the value is 7 days. Make them agree, and decide which is intended.
 
 ### F32 — PRE docstrings overstate the scheme · LOW · Ojas (pre) + Powel (gate) · ⚑ needs D11 · S
@@ -604,7 +650,9 @@ The authority verifies the envelope against the subject's cert (clinician: exist
 
 ## 7. API-layer conventions
 
-### F33 — Crypto in `api/`, and the invariant test misses it · MED (HARD: §2 rule 10) · Avaneeth (api) + Ojas (custodian) + Nandini (search) · M
+### F33 — Crypto in `api/`, and the invariant test misses it · MED (HARD: §2 rule 10) · Avaneeth (api) + Ojas (custodian) + Nandini (search) · M · **FIXED (listed calls)**
+**Status at `443ca0f`:** **FIXED (listed calls).** Search token via `search.emergency_search_token`, patient hash via `audit.events.patient_id_hash`, read path via `policy.decrypt_record_via_policy`; custodian crypto moved to the new `src/custodian/`. The invariant forbids these calls in `api/`. Remaining: emergency provisioning moves to `breakglass.provision_emergency_path` with F9 (D3).
+
 **Problem.** `generate_emergency_key`/`split_emergency_key` (`custodian_service.py:763`), `derive_search_token` ([hospital.py:1149](../../src/api/hospital.py)), `sha256_digest` (`:336`), and the custodian's `decrypt_record` / `open_delivery_package` / `create_emergency_assertion`. `test_no_crypto_invariant.py:36` doesn't list them.
 
 **Fix.**
@@ -623,10 +671,14 @@ The authority verifies the envelope against the subject's cert (clinician: exist
 
 **Test (exit criterion).** `test_bola_authenticated_but_unauthorised_caller_denied_before_crypto_or_db`: a spy repo asserts that `get_record` / `get_wrapping_for_record` are never called.
 
-### F35 — f-string SQL in `store_reader.py` · LOW (HARD as written: §2 rule 7) · Ojas/Powel (portal_core) · S
+### F35 — f-string SQL in `store_reader.py` · LOW (HARD as written: §2 rule 7) · Ojas/Powel (portal_core) · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** `store_reader.py` composes SQL with `psycopg.sql`.
+
 **Fix.** `portal_core/store_reader.py:52,60,76,222`: compose with `psycopg.sql.SQL(...).format(sql.Identifier(...))` / `sql.SQL(_AUDIT_COLUMNS)`. The values are constants today, so this is about rule compliance, not an exploit.
 
-### F36 — Portal's default DB connection is the postgres superuser · MED · Avaneeth (PS-6) · S
+### F36 — Portal's default DB connection is the postgres superuser · MED · Avaneeth (PS-6) · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** `portal/sql/roles.sql` creates a `portal_app` role that owns the portal schema and has no store-table privileges; the portal uses it; `tests/security/test_portal_roles.py`.
+
 **Problem.** `settings.py:76-84` / `run_portal_demo.py:~153`: `default` uses the DATABASE_URL user with `search_path=portal,public`, so Django can write the store tables. `portal_ro` limits only the `store` alias.
 
 **Fix.**
@@ -635,7 +687,9 @@ The authority verifies the envelope against the subject's cert (clinician: exist
 
 **Test.** `test_portal_default_connection_cannot_write_store_tables`.
 
-### F43 — Compiled policies live only in a class-level dict · MED · Avaneeth (api, storage) · M
+### F43 — Compiled policies live only in a class-level dict · MED · Avaneeth (api, storage) · M · **FIXED**
+**Status at `443ca0f`:** **FIXED.** Policies were persisted in `3c42094...4ddc201` (`storage/policy_codec.py`). `443ca0f` added the HTTP-level read-after-facility-restart test on Postgres and tightened the codec (rejects a bool version, checks `authority_id`).
+
 **Status at `4ddc201`:** **FIXED (diverged, sound).** Versioned JSONB with a strict codec (`storage/policy_codec.py`), encrypted leaves only; cross-process tests. An HTTP-level restart test is still missing.
 
 **Problem.** `api/repository.py:276`: `_shared_*` dicts are shared by every facility in one process and lost on restart, after which reads return 500 (`hospital.py:509`).
@@ -648,7 +702,9 @@ The authority verifies the envelope against the subject's cert (clinician: exist
 
 ## 8. Deployment and portal
 
-### F37 — Bootstrap order and Path B · MED · Ojas (deploy) · M
+### F37 — Bootstrap order and Path B · MED · Ojas (deploy) · M · **FIXED**
+**Status at `443ca0f`:** **FIXED.** The audit service verifies its chain at startup, and every service that writes to it waits for it to be healthy. Tampered-genesis test added.
+
 **Status at `4ddc201`:** **PARTIAL.** URL scheme follows `TLS_ENABLED`; the custodian is seeded on Compose. Chain verification still runs after the services start; no tampered-genesis test.
 
 **Problem.**
@@ -663,19 +719,25 @@ The authority verifies the envelope against the subject's cert (clinician: exist
 
 **Test.** A deploy smoke test with a tampered genesis → facilities never start.
 
-### F38 — Portal demo runs audit in-process · MED · Ojas (deploy) + Avaneeth (demo driver) · M
+### F38 — Portal demo runs audit in-process · MED · Ojas (deploy) + Avaneeth (demo driver) · M · **FIXED**
+**Status at `443ca0f`:** **FIXED.** `deploy/run_portal_demo.py` runs Path A's services as separate processes on fixed ports by default (`run_local.start_federation`); `--in-process` keeps the old path for tests. Run live on 2026-10-11.
+
 **Problem.** `run_portal_demo.py` runs audit and both facilities as threads (`demo/driver._LiveServer`) on random ports. §7 says audit **must** be a separate process, and the capture filter misses the random ports.
 
 **Fix.** Spawn the services with `deploy/entrypoint.py` on the fixed ports from `run_local`. Keep threads only behind `--in-process` for tests.
 
-### F41 — The ADR-0033 lookup can be skipped · LOW · Nandini (clinician portal) · S
+### F41 — The ADR-0033 lookup can be skipped · LOW · Nandini (clinician portal) · S · **FIXED**
+**Status at `443ca0f`:** **FIXED** (ADR-0053). Break-glass acts only on the patient identified in the session's logged lookup; a different `patient_id` is 400 (also checked in the live portal on 2026-10-11).
+
 **Problem.** The break-glass view takes `patient_id` from GET/POST. No `patient.lookup` event is written, and a fresh correlation id is minted.
 
 **Fix.** The lookup creates a server-side `LookupSession` (portal DB: selected `patient_id`, correlation id) and writes the `patient.lookup` event. The break-glass form posts the lookup id; a raw `patient_id` gets 400.
 
 **Test.** `test_breakglass_without_lookup_refused`.
 
-### F42 — Portal and test hygiene · LOW · Mixed · S each
+### F42 — Portal and test hygiene · LOW · Mixed · S each · **FIXED**
+**Status at `443ca0f`:** **FIXED.** Row 1 partly in `a40a5a7`, the rest in `443ca0f`. DEBUG off and `ALLOWED_HOSTS` loopback by default; safe `next` redirect; uploads download with `nosniff`; bad ids are 400; three-state link check; chain-verify DB errors are 503; the e2e script reports PASS/FAIL/SKIP and counts only 403 as a denial.
+
 **Status at `4ddc201`:** **PARTIAL.** CI now fails instead of skipping (`skip_or_fail_without_postgres`). The other seven rows remain; some tests still use a plain `pytest.skip` (N3).
 
 | Issue | Fix | Owner |
@@ -698,7 +760,9 @@ The authority verifies the envelope against the subject's cert (clinician: exist
 
 Found in code merged between `3c42094` and `4ddc201`.
 
-### N1 — Compare-and-set is never used, and the new state mirror overwrites any state · HIGH · Avaneeth (api, storage, deploy) · M
+### N1 — Compare-and-set is never used, and the new state mirror overwrites any state · HIGH · Avaneeth (api, storage, deploy) · M · **FIXED**
+**Status at `443ca0f`:** **FIXED** (ADR-0050). Break-glass, revoke and the timer mirror all use the compare-and-set. Ingest is insert-only (`insert_lifecycle_state`). The ADR-0044 reset is gone, so a stale `emergency_open` is 409. The in-memory CAS keeps `last_event_id`. Postgres concurrency tests added. Remaining: restart reconciliation (F5, D7).
+
 **Problem.**
 - `transition_lifecycle_state` has no production caller. Every write still goes through the unconditional `upsert_lifecycle_state`: `hospital.py:221` (ADR-0044 reset), `:831` (revoke), `:1006` (break-glass), `:1220` (ingest), plus the new timer mirror (`facility.py:61` → `audit_client.py:142-145`).
 - **Concurrent break-glass:** two requests both read GRANTED and both write EMERGENCY_OPEN; neither gets a conflict.
@@ -718,7 +782,9 @@ Found in code merged between `3c42094` and `4ddc201`.
 - `test_timer_mirror_does_not_overwrite_a_changed_state`: set REVOKED mid-session, expire, assert still REVOKED.
 - `test_stale_emergency_open_returns_409_not_silent_reset`.
 
-### N2 — A partly failed expiry leaves the record stuck in EXPIRED; a DB error kills the monitor · MED · Powel (lifecycle) + Avaneeth (audit_client) · M
+### N2 — A partly failed expiry leaves the record stuck in EXPIRED; a DB error kills the monitor · MED · Powel (lifecycle) + Avaneeth (audit_client) · M · **FIXED**
+**Status at `443ca0f`:** **FIXED.** `a40a5a7` stopped a store-write failure from killing the monitor; `443ca0f` finished it with F20. A record stuck in EXPIRED is retried to GRANTED. Remaining: the final state is still GRANTED (D7).
+
 **Status at `a40a5a7`:** **PARTIAL.** A `state_writer` error is logged, not raised, so it no longer kills the monitor. The stuck-in-EXPIRED case and the retry are still open.
 
 **Problem.** `audit_client._log` mirrors after each append separately.
@@ -733,7 +799,9 @@ Found in code merged between `3c42094` and `4ddc201`.
 
 **Test.** `test_expiry_retries_after_second_append_fails`: a fake audit that fails once on the GRANTED append; assert the record ends GRANTED (or `prior_state`), not EXPIRED, and the monitor is still alive.
 
-### N3 — Claim registry says "holds" without running the tests · HIGH · Powel (tests/security) · M
+### N3 — Claim registry says "holds" without running the tests · HIGH · Powel (tests/security) · M · **FIXED**
+**Status at `443ca0f`:** **FIXED** (ADR-0054). Claim status comes from a real run (`_claim_collector.py`, `claims.py`); a skipped test shows as UNVERIFIED and collection errors void the table. `skip_or_fail_without_postgres` is used everywhere. The P5-1 evidence was regenerated.
+
 **Problem.** ADR-0046 §2: a claim holds "only if every one of its system tests runs without `xfail`".
 - `claim_status` (`tests/security/claims.py:140-147`) decides from **collection only**: no xfail marker = "holds". A skipped or erroring test still "holds".
 - C2's only system test (`tests/api/test_audit_service.py:24-31`) uses a plain `pytest.skip`, so the F42 CI guard never applies. With no Postgres, C2 and C5 print "holds", and `docs/review/p5-1-evidence.md` repeats that.
@@ -751,7 +819,9 @@ Found in code merged between `3c42094` and `4ddc201`.
 
 **Test.** `test_skipped_system_test_is_not_reported_as_holding` (feed the status function a skipped outcome), `test_collection_error_is_an_error`.
 
-### N4 — Property 1 never covers revocation · HIGH · Powel (wire) + Avaneeth (`run_scenario.py`) · S
+### N4 — Property 1 never covers revocation · HIGH · Powel (wire) + Avaneeth (`run_scenario.py`) · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** The scenario sends a revoke; the analyser expects `/records/rec-001/revoke` and catches `old_dek_b64` on the plain profile.
+
 **Problem.** PROJECT §4A(1) requires no secrets in the clear "during normal read, revocation, or break-glass". `deploy/run_scenario.py` never calls revoke, and `wire/analyze_traffic.py:42-51` doesn't expect `/revoke`. The revoke API takes `old_dek_b64` (`hospital.py:792`) and is never captured.
 
 **Fix.**
@@ -761,7 +831,9 @@ Found in code merged between `3c42094` and `4ddc201`.
 
 **Test.** A synthetic-fixture test in `tests/wire/test_checks.py`: a revoke exchange carrying `old_dek_b64` fails claim 1.
 
-### N5 — Stale or empty captures pass claims 1 and 4 · HIGH · Powel (wire) · M
+### N5 — Stale or empty captures pass claims 1 and 4 · HIGH · Powel (wire) · M · **FIXED**
+**Status at `443ca0f`:** **FIXED.** Capture deletes the old pcap and fails on a dumpcap early exit or an empty file. The canary manifest carries `run_id` and `started_at`, and the analyser refuses a capture that doesn't match (`StaleCaptureError`). TLS is required on every port, and the TLS unlock burst must be at least the plain request's size. Remaining: re-record the captures (E2).
+
 **Problem.**
 - `wire/capture.py:141-168` never deletes an old pcap and ignores dumpcap's exit status, while the canary manifest is rewritten every run (`run_scenario.py:516`). A failed TLS capture leaves the old `tls.pcap` alongside new canaries: zero hits, so claim 1 (`--claim1-scope tls`) and claim 4 pass.
 - The TLS precondition (`analyze_traffic.py:85-91`) only needs **one** TLS record on any service port.
@@ -777,7 +849,9 @@ Found in code merged between `3c42094` and `4ddc201`.
 - `test_tls_capture_with_single_handshake_fails_preconditions`.
 - `test_tls_breakglass_without_unlock_burst_fails_claim4`.
 
-### N6 — C4's strict-xfail test can pass without checking anything · MED · Powel (tests/security) · S
+### N6 — C4's strict-xfail test can pass without checking anything · MED · Powel (tests/security) · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** The C4 strict-xfail test asserts unconditionally.
+
 **Problem.** `test_p51_system_claims.py:333` asserts only inside `if reopened.status_code == 200`. Any refusal, a 500 included, passes. Once F9 lands, strict mode turns it red, the marker is removed, and C4 reads "holds" without proving search is dead.
 
 **Fix.**
@@ -790,7 +864,9 @@ if reopened.status_code == 200:
 
 **Test.** It is the test. Also scan the other claim tests for `if … status_code` guards.
 
-### N7 — Mutation runner counts a crash as "caught" · MED · Powel (tests/security) · S
+### N7 — Mutation runner counts a crash as "caught" · MED · Powel (tests/security) · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** The mutation runner requires a green baseline and counts only pytest exit 1 as caught (`_classify`). Mutation C6b was added because C6 now holds through the compare-and-set.
+
 **Problem.** `tests/security/mutations.py:274-276`: any non-zero exit counts as red (caught). That includes:
 - an `AttributeError` in `apply()` after a rename;
 - a collection error;
@@ -805,7 +881,9 @@ A test that is already red at baseline is never flagged (`:294`). (Skip detectio
 
 **Test.** `test_mutation_that_fails_to_apply_is_error_not_caught`.
 
-### N8 — TCP reassembly bridges gaps silently · MED · Powel (wire) · S
+### N8 — TCP reassembly bridges gaps silently · MED · Powel (wire) · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** Flows track gaps (`Flow.gaps`, `spans_gap`); a gap makes claim 1 inconclusive, and no match spans a gap.
+
 **Problem.** `wire/streams.py:86-97, 187-221` joins the bytes on either side of a missing segment.
 - The docstring says this "can only hide a match". For claim 1, a hidden match is a false pass.
 - Joining can also create a match that never existed.
@@ -818,14 +896,18 @@ A test that is already red at baseline is never flagged (`:294`). (Skip detectio
 
 **Test.** `test_flow_with_missing_segment_makes_claim1_inconclusive`.
 
-### N9 — Short canaries are silently dropped · MED · Powel (wire) · S
+### N9 — Short canaries are silently dropped · MED · Powel (wire) · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** A manifest with an unsearchable canary is rejected (`UnsearchableCanaryError`).
+
 **Problem.** `wire/canaries.py:31,101` drops patterns shorter than 16 chars. A canary left with no patterns is never searched and never reported.
 
 **Fix.** The scenario controls canary generation, so generate them at ≥ 16 chars. At manifest load, **fail** if any canary has zero patterns. (JSON `\u` escaping only affects non-ASCII and the canaries are ASCII, so skip that.)
 
 **Test.** `test_manifest_with_unsearchable_canary_is_rejected`.
 
-### N10 — Committed benchmark results are stale · MED · Nandini (bench) · S
+### N10 — Committed benchmark results are stale · MED · Nandini (bench) · S · **PARTIAL**
+**Status at `443ca0f`:** **PARTIAL.** Benchmarks re-run on current code (Python 3.11 image) and committed with `environment.json`; the stale `p53_search_leakage.json` was removed. Remaining: the leakage analysis on a fresh capture (E2).
+
 **Problem.**
 - `bench/results/p53_search_leakage.json` still shows the response double-counting fixed in 390651a (4 requests, empty-method rows).
 - `benchmark_summary.csv` has no p95 and no warm-up.
@@ -835,7 +917,9 @@ All of these files predate the fixes, so the paper's evidence doesn't match the 
 
 **Fix.** Re-run `bench/run_benchmarks.py` and the leakage analysis on the current code. Commit the results together with `environment.json`, or delete the stale files until exit-plan E2 is re-run.
 
-### N11 — `run_local` drops the schema of any database · MED · Avaneeth (deploy) · S
+### N11 — `run_local` drops the schema of any database · MED · Avaneeth (deploy) · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** Fixed in `a40a5a7`. `run_migrations(reset=True)` refuses any non-local database host.
+
 **Status at `a40a5a7`:** **FIXED (diverged, sound).** A host guard instead of a name guard; `test_deployment_reset_guard.py`.
 
 **Problem.** `deploy/run_local.py:159` calls `run_migrations(reset=True)`, which runs `DROP SCHEMA public CASCADE` (`migrate.py:58-67`) on whatever `DATABASE_URL` names, with no guard. ADR-0047 doesn't cover it.
@@ -844,7 +928,9 @@ All of these files predate the fixes, so the paper's evidence doesn't match the 
 
 **Test.** `test_run_local_refuses_to_reset_unknown_database`.
 
-### N12 — Postgres is published to the host with `trust` auth · MED · Avaneeth (deploy) · S
+### N12 — Postgres is published to the host with `trust` auth · MED · Avaneeth (deploy) · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** `a40a5a7` removed `trust` auth and requires `POSTGRES_PASSWORD`. `443ca0f` added the no-`trust` test, and the host-side portal reads the password from `deploy/.env`. Remaining: password generation is still a documented manual step.
+
 **Status at `a40a5a7`:** **MOSTLY FIXED.** `trust` removed and the password is required. Remaining: the `portal-compose` launch entry has no password, there's no no-`trust` test, and bootstrap doesn't generate the password.
 
 **Problem.** `docker-compose.yml:22,29` publishes `127.0.0.1:55433` with `POSTGRES_HOST_AUTH_METHOD: trust`. It was not published before this branch. Any local process gets superuser without a password, and could:
@@ -857,12 +943,16 @@ All of these files predate the fixes, so the paper's evidence doesn't match the 
 
 **Test.** Extend `tests/deploy/test_transport.py`: the Compose file has no `trust` auth method.
 
-### N13 — The C8 restart test never touches Postgres · LOW · Powel + Avaneeth (storage) · S
+### N13 — The C8 restart test never touches Postgres · LOW · Powel + Avaneeth (storage) · S · **FIXED**
+**Status at `443ca0f`:** **FIXED.** `test_c8_replayed_assertion_rejected_across_processes_on_postgres`.
+
 **Problem.** `test_p51_system_claims.py:430-440` uses `InMemoryStorageRepository`, so the "restart" shares one Python object, and the durable `consume_id` path has only unit coverage (`phase5-exit-plan.md:111`).
 
 **Fix.** Add a Postgres-backed variant: two app instances on the same DSN, replay across them → 409/400.
 
-### N14 — Container and TLS hardening · LOW · Avaneeth (deploy) · S
+### N14 — Container and TLS hardening · LOW · Avaneeth (deploy) · S · **PARTIAL**
+**Status at `443ca0f`:** **PARTIAL.** `a40a5a7` mounted only each service's own TLS key. `443ca0f` added `USER app`, dropped `ENV HOST`, removed the lone `TLS_VERIFY=false` path and merged the flag parsing into one `env_flag`. Remaining: per-service SANs, which need a decision because host-run TLS reaches the services as `localhost`.
+
 **Status at `a40a5a7`:** **PARTIAL.** Per-service key mounts landed. All five rows below are still open.
 
 | Issue | Fix |
@@ -873,7 +963,9 @@ All of these files predate the fixes, so the paper's evidence doesn't match the 
 | Every service cert lists `localhost`/`127.0.0.1` as a SAN, so any service key can impersonate any other service on the host | Give each service cert only its own Compose hostname; host access goes through a single host-facing cert (portal) |
 | Four copies of env-flag parsing (`bootstrap`, `seed_enabled`, `config.tls_enabled`, `entrypoint`) | One `env_flag(name)` in `deploy/config.py` |
 
-### N15 — Small correctness fixes · LOW · as listed · S each
+### N15 — Small correctness fixes · LOW · as listed · S each · **FIXED**
+**Status at `443ca0f`:** **FIXED.** Malformed status line handled; exact bridge names; `--db-port` from `DATABASE_URL`; word-boundary finding match; `policy_codec` type checks; query labels; live test scope `all`; exit-plan TLS row.
+
 | Location | Problem | Fix | Owner |
 |---|---|---|---|
 | `wire/http_messages.py:252` | `int(start_line[1])` raises on a malformed status line | Catch `ValueError` and stop walking that flow (as the docstring promises) | Powel |
@@ -885,7 +977,9 @@ All of these files predate the fixes, so the paper's evidence doesn't match the 
 | `tests/wire/test_live_capture.py:40` | Defaults to `tls` scope while D6 is open | Default to `plain`, which is what the paper must defend until D6 says otherwise | Powel |
 | `docs/plans/phase5-exit-plan.md` step A2 | Still says `TLS_VERIFY=false`, contradicting ADR-0047 | Remove the step | Powel |
 
-### N16 — Process · Powel, Avaneeth · S
+### N16 — Process · Powel, Avaneeth · S · **PARTIAL**
+**Status at `443ca0f`:** **PARTIAL.** The PROJECT.md expiry paragraph is now §5 caveat 6. Remaining: owner reviews of 638c2c6, 9721387 and `443ca0f` (ADR-0051).
+
 - **CONVENTIONS §3 (one owner):** 638c2c6 (Powel) edits `src/api` and `src/storage`; 9721387 (Avaneeth) edits `src/lifecycle`, `wire` and `tests/security`. The owners of those parts should review each and say so in the PR or the ADR tracker.
 - **ADR-0047:** the decider is "Tejas request", who is not on the team. Name the deciding member and keep it **Proposed** until the team ratifies it. Commit 9721387's message says "ADR-0045" but adds 0047.
 - **PROJECT.md:** the new expiry paragraph sits between §4B and §5A with no heading. Give it one.
