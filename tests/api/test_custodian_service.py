@@ -246,7 +246,13 @@ def federation():
     )
     audit_sink = RecordingAuditSink()
     app_fa = create_hospital_app(
-        "facility-a", repository=repo, trust=trust, audit_sink=audit_sink
+        "facility-a",
+        repository=repo,
+        trust=trust,
+        audit_sink=audit_sink,
+        expiry_manager=EmergencyExpiryManager(
+            signing_key=life_priv, default_duration_seconds=60
+        ),
     )
     app_fb = create_hospital_app(
         "facility-b",
@@ -545,7 +551,7 @@ def test_breakglass_unlocks_with_clinician_and_audit_shares(federation):
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["facility_id"] == "facility-b"
+    assert body["facility_id"] == "facility-a"  # Home node owns the shared timer.
     assert body["transition_event"]["to_state"] == "emergency_open"
     assert [s["holder"] for s in body["shares_presented"]] == [
         "clinician",
@@ -721,13 +727,14 @@ def test_patient_upload_is_sealed_with_owner_leaf_and_readable_by_owner(federati
         base64.b64decode(r.json()["plaintext_b64"]) == b"Echocardiogram report: EF 35%"
     )
     assert r.json()["content_type"] == "text/plain"
-    # ... a cardiologist through the clinical branch ...
+    # ... specialty alone is not a treating relationship for a new upload ...
     r = client.post(
         f"/subjects/{DOC_CARDIO}/read",
         json={"record_id": rid, "facility_id": "facility-a"},
     )
-    assert r.status_code == 200, r.text
-    # ... and an ER physician is refused by policy.
+    assert r.status_code == 403, r.text
+    assert "care-episode grant" in r.json()["detail"]
+    # ... and an ER physician without consent is also refused.
     r = client.post(
         f"/subjects/{DOC_ER}/read", json={"record_id": rid, "facility_id": "facility-b"}
     )
@@ -743,7 +750,12 @@ def test_uploaded_record_can_be_opened_by_break_glass(federation):
     rid = r.json()["record_id"]
     r = client.post(
         f"/subjects/{DOC_ER}/breakglass",
-        json={"patient_id": PATIENT, "record_id": rid, "reason_code": "stroke"},
+        json={
+            "patient_id": PATIENT,
+            "record_id": rid,
+            "reason_code": "stroke",
+            "justification": "Urgent stroke treatment needs medication history.",
+        },
     )
     assert r.status_code == 200, r.text
     assert base64.b64decode(r.json()["plaintext_b64"]) == b"Uploaded by the patient"
@@ -770,6 +782,7 @@ def test_ingest_with_existing_record_id_leaves_shares_intact(federation):
             "patient_id": PATIENT,
             "record_id": "rec-dup-001",
             "reason_code": "stroke",
+            "justification": "Urgent stroke treatment needs medication history.",
         },
     )
     assert r.status_code == 200, r.text

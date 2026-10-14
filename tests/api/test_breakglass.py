@@ -9,6 +9,8 @@ Verifies:
 - The caller can only shorten the time-box (F6).
 - A failed unlock leaves no side effects; concurrent opens cannot both win
   (F7, N1).
+- A second unlock on an open record joins it: same threshold, logged before
+  release, no transition, no extension (ADR-0057).
 - Every refusal is audited exactly once (F8).
 """
 
@@ -17,6 +19,7 @@ from __future__ import annotations
 import base64
 import datetime
 import threading
+import time
 
 import pytest
 from api.audit_client import AuditServiceError
@@ -222,13 +225,10 @@ class TestHospitalBreakglassEndpoint:
         ).status_code == (200)
         assert repo.get_lifecycle_state("rec-001") == LifecycleState.EMERGENCY_OPEN
 
-        # While the session is live a second unlock is refused as a conflict.
-        assert (
-            client.post(
-                "/records/rec-001/breakglass", json=_payload(test_setup)
-            ).status_code
-            == 409
-        )
+        # While the session is live a second unlock joins it (ADR-0057).
+        joined = client.post("/records/rec-001/breakglass", json=_payload(test_setup))
+        assert joined.status_code == 200, joined.text
+        assert joined.json()["joined"] is True
 
         test_setup["expiry_manager"].expire_session("rec-001", force=True)
         assert repo.get_lifecycle_state("rec-001") == LifecycleState.GRANTED
@@ -435,7 +435,11 @@ class TestFailureLeavesNoTrace:
         assert ok.status_code == 200
 
     def test_concurrent_breakglass_one_wins(self, test_setup):
-        """Two simultaneous opens of one record: exactly one 200, one 409."""
+        """Two simultaneous opens of one record: exactly one transition wins.
+
+        The other request either loses the claim (409) or joins the session
+        the winner opened (200, ADR-0057); it never signs a second transition.
+        """
         client = test_setup["client"]
         payloads = [_payload(test_setup), _payload(test_setup)]
         results: list[int] = []
@@ -453,7 +457,114 @@ class TestFailureLeavesNoTrace:
         for t in threads:
             t.join()
 
-        assert sorted(results) == [200, 409]
+        assert 200 in results and set(results) <= {200, 409}
+        assert len(test_setup["repo"].transition_events) == 1
+        assert (
+            test_setup["repo"].get_lifecycle_state("rec-001")
+            == LifecycleState.EMERGENCY_OPEN
+        )
+
+
+class TestJoinOpenSession:
+    """ADR-0057: a record already open is joined, not refused -- but every
+    viewer still needs the threshold and a committed audit entry, and joining
+    never extends the window."""
+
+    def _open(self, test_setup, **extra):
+        response = test_setup["client"].post(
+            "/records/rec-001/breakglass", json=_payload(test_setup, **extra)
+        )
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def test_second_unlock_joins_without_transition_or_extension(self, test_setup):
+        """The clinician can see the record again inside the same window."""
+        pki = test_setup["pki"]
+        sink = test_setup["audit_sink"]
+        first = self._open(test_setup)
+
+        second = test_setup["client"].post(
+            "/records/rec-001/breakglass",
+            json=_payload(test_setup, emergency_duration_seconds=3 * 24 * 3600),
+        )
+
+        assert second.status_code == 200, second.text
+        body = second.json()
+        assert body["joined"] is True
+        assert body["transition_event"] is None
+        assert body["expires_at"] == first["expires_at"]
+        dek_first = _unwrap_rewrapped_dek(
+            base64.b64decode(first["rewrapped_dek_b64"]),
+            pki["alice_pre_priv"],
+            "rec-001",
+        )
+        dek_second = _unwrap_rewrapped_dek(
+            base64.b64decode(body["rewrapped_dek_b64"]),
+            pki["alice_pre_priv"],
+            "rec-001",
+        )
+        assert dek_second == dek_first
+        assert len(test_setup["repo"].transition_events) == 1
+        assert len(sink.of_type(EVENT_FEDERATION_REWRAP)) == 2
+
+    def test_join_with_one_share_releases_nothing(self, test_setup):
+        """Joining is not a shortcut around the 2-of-3 threshold."""
+        sink = test_setup["audit_sink"]
+        em_shares = test_setup["em_shares"]
+        self._open(test_setup)
+
+        response = test_setup["client"].post(
+            "/records/rec-001/breakglass",
+            json=_payload(
+                test_setup, shares=[(em_shares[0][0], em_shares[0][1].hex())]
+            ),
+        )
+
+        assert response.status_code == 400
+        assert "requires 2 unique shares" in response.json()["detail"]
+        assert "rewrapped_dek_b64" not in response.text
+        assert len(sink.of_type(EVENT_FEDERATION_REWRAP)) == 1
+        assert [
+            d["event_data"]["denied_by"] for d in sink.of_type(EVENT_ACCESS_DENIED)
+        ] == ["breakglass_gate"]
+
+    def test_join_after_window_ran_out_is_refused(self, test_setup):
+        """A window past expires_at cannot be joined, even before the sweep."""
+        sink = test_setup["audit_sink"]
+        self._open(test_setup, emergency_duration_seconds=0.05)
+        time.sleep(0.1)  # the monitor is not running; the session is only late
+
+        response = test_setup["client"].post(
+            "/records/rec-001/breakglass", json=_payload(test_setup)
+        )
+
+        assert response.status_code == 409
+        assert "no live session to join" in response.json()["detail"]
+        assert "rewrapped_dek_b64" not in response.text
+        assert len(sink.of_type(EVENT_FEDERATION_REWRAP)) == 1
+
+    def test_join_with_audit_outage_releases_nothing(self, test_setup):
+        """Log-before-release holds for every viewer, not only the opener."""
+        self._open(test_setup)
+
+        def failing_sink(event_type, event_data, actor_id, correlation_id):
+            if event_type == EVENT_FEDERATION_REWRAP:
+                raise AuditServiceError("audit down")
+
+        app = create_hospital_app(
+            facility_id="facility-a",
+            repository=test_setup["repo"],
+            expiry_manager=test_setup["expiry_manager"],
+            trust=make_trust(test_setup["pki"]),
+            audit_sink=failing_sink,
+        )
+        response = TestClient(app).post(
+            "/records/rec-001/breakglass", json=_payload(test_setup)
+        )
+
+        assert response.status_code == 503
+        assert "rewrapped_dek_b64" not in response.text
+        assert len(test_setup["repo"].transition_events) == 1
 
 
 class TestEveryRefusalIsAudited:

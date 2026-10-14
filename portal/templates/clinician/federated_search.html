@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card"><h1>Emergency search across the patient's federation records</h1>
+<p>{{ checked }} records checked for “{{ term }}”. Each record had its own audited threshold authorization. Search matches indexed terms, not complete clinical content.</p>
+{% if errors %}<div role="alert"><h2>Incomplete search — do not interpret missing results as absence</h2>{% for error in errors %}<p>{{ error }}</p>{% endfor %}</div>{% endif %}
+{% for hit in hits %}<p><a href="{% url 'clinician:case_detail' hit.case.pk %}">{{ hit.record.clinical.title }} · {{ hit.record.clinical.clinical_date|default:"date unknown" }} · {{ hit.record.facility_id }} · {{ hit.record.record_id }}</a></p>{% empty %}<p>No matches in the records successfully checked. This does not establish that an allergy, medication or condition is absent.</p>{% endfor %}
+<a href="{% url 'clinician:case_detail' case.pk %}">Return to original case</a></section>
+{% endblock %}

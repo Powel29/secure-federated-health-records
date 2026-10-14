@@ -164,6 +164,8 @@ def custodian_breakglass(
     correlation_id: str,
     facility_id: str | None = None,
     emergency_duration_seconds: float | None = None,
+    justification: str = "",
+    sensitive_justification: str = "",
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "patient_id": patient_id,
@@ -171,6 +173,8 @@ def custodian_breakglass(
         "reason_code": reason_code,
         "correlation_id": correlation_id,
         "emergency_duration_seconds": emergency_duration_seconds,
+        "justification": justification,
+        "sensitive_justification": sensitive_justification,
     }
     if facility_id:
         body["facility_id"] = facility_id
@@ -190,6 +194,7 @@ def custodian_ingest(
     content_type: str,
     clinical_policy: dict[str, Any],
     search_terms: list[str],
+    clinical: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Upload a record of the patient's own; the custodian seals it at the facility."""
     import base64
@@ -204,6 +209,7 @@ def custodian_ingest(
             "content_type": content_type,
             "clinical_policy": clinical_policy,
             "search_terms": search_terms,
+            "clinical": clinical or {},
         },
     )
 

@@ -2,11 +2,12 @@
 {% block title %}Access history · {{ product_name }}{% endblock %}
 {% block content %}
 {% include "patient/_case_banner.html" %}
-<div class="card">
+<section class="card" aria-labelledby="hist-h">
   <div class="subhead">
-    <h3 class="card-title">Who touched your records</h3>
+    <h2 class="card-title" id="hist-h">Who touched your records</h2>
     <form method="get" class="flex">
-      <select class="input" name="type" onchange="this.form.submit()" style="min-width:200px">
+      <label for="hist-filter" class="label">Show</label>
+      <select class="input" id="hist-filter" name="type" onchange="this.form.submit()" style="min-width:220px">
         <option value="all" {% if filter == "all" %}selected{% endif %}>All events</option>
         <option value="breakglass" {% if filter == "breakglass" %}selected{% endif %}>Break-glass only</option>
         <option value="reads" {% if filter == "reads" %}selected{% endif %}>Successful reads</option>
@@ -15,35 +16,36 @@
       <noscript><button class="btn btn-secondary btn-sm">Filter</button></noscript>
     </form>
   </div>
-  {% if store_error %}<div class="notice notice-error">Audit chain not readable from the portal: {{ store_error }}</div>{% endif %}
+  {% if store_error %}<div class="notice notice-error" role="alert">{% include "_icon.html" with name="x" %}<div>The audit chain could not be read from the portal, so no history is shown. Reason: {{ store_error }}</div></div>{% endif %}
   <div class="table-wrap">
-  <table class="table">
-    <thead><tr><th>Seq</th><th>When (UTC)</th><th>Actor</th><th>Event</th><th>Detail</th><th>Correlation</th></tr></thead>
+  <table class="table stack-sm">
+    <thead><tr><th>Seq</th><th>When (UTC)</th><th>What happened</th><th>Flow</th></tr></thead>
     <tbody>
     {% for r in rows %}
       <tr id="cid-{{ r.correlation_id }}">
-        <td class="mono">{{ r.seq }}</td>
-        <td class="mono small">{{ r.recorded_at|date:"Y-m-d H:i:s" }}</td>
-        <td>{{ r.actor }}</td>
-        <td>
-          {% if r.kind == "breakglass" %}<span class="tag tag-accent">break-glass</span>
-          {% elif r.kind == "denial" %}<span class="tag tag-neutral">denied</span>
-          {% elif r.kind == "read" %}<span class="tag tag-ok">read</span>
-          {% elif r.kind == "lifecycle" %}<span class="tag tag-outline">lifecycle</span>
-          {% elif r.kind == "consent" %}<span class="tag tag-outline">consent</span>
-          {% elif r.kind == "notice" %}<span class="tag tag-neutral">notified</span>
-          {% else %}<span class="tag tag-neutral">{{ r.event_type }}</span>{% endif %}
-          <span class="sub mono">{{ r.event_type }}</span>
+        <td data-label="Seq" class="mono">{{ r.seq }}</td>
+        <td data-label="When" class="mono small nowrap">{{ r.recorded_at|date:"Y-m-d H:i:s" }}</td>
+        <td data-label="What">
+          <div class="flex">
+            {% if r.kind == "breakglass" %}<span class="tag tag-emergency">Break-glass</span>
+            {% elif r.kind == "denial" %}<span class="tag tag-fail">Denied</span>
+            {% elif r.kind == "read" %}<span class="tag tag-ok">Read</span>
+            {% elif r.kind == "lifecycle" %}<span class="tag tag-quiet">Lifecycle</span>
+            {% elif r.kind == "consent" %}<span class="tag tag-quiet">Consent</span>
+            {% elif r.kind == "notice" %}<span class="tag tag-quiet">Notified</span>
+            {% else %}<span class="tag tag-id">{{ r.event_type }}</span>{% endif %}
+            <span>{{ r.sentence }}</span>
+          </div>
+          <span class="sub mono">{{ r.event_type }}{% if r.detail %} · {{ r.detail }}{% endif %}</span>
         </td>
-        <td class="small mono">{{ r.detail }}</td>
-        <td class="mono tiny">{{ r.correlation_id|truncatechars:28 }}<span class="sub">head {{ r.entry_hash_hex|slice:":10" }}</span></td>
+        <td data-label="Flow"><span class="cid">{{ r.correlation_id|truncatechars:28 }}</span><span class="sub mono">head {{ r.entry_hash_hex|slice:":10" }}</span></td>
       </tr>
     {% empty %}
-      <tr><td colspan="6" class="empty">No access events recorded for your records{% if filter != "all" %} under this filter{% endif %}.</td></tr>
+      <tr><td colspan="4" class="empty">No access events are recorded for your records{% if filter != "all" %} under this filter. Choose "All events" to see everything{% endif %}.</td></tr>
     {% endfor %}
     </tbody>
   </table>
   </div>
-  <div class="tiny text-muted">Rows come straight from the hash-chained audit log through a read-only connection. Break-glass rows are the share release, the PRE re-wrap and the lifecycle transitions of one correlation id; ordinary reads are logged before plaintext is released (log-before-release).</div>
-</div>
+  <p class="basis">Rows come straight from the hash-chained audit log over a read-only connection. A break-glass flow is the share release, the PRE re-wrap and the lifecycle transitions under one correlation id. Ordinary reads are logged before plaintext is released.</p>
+</section>
 {% endblock %}

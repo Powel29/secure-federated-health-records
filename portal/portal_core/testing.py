@@ -86,7 +86,7 @@ def patched(**overrides: Any) -> Iterator[dict[str, Any]]:
 SUBJECT_CLINICIAN = {
     "subject_id": "doc-201",
     "kind": "clinician",
-    "display_name": "Dr. Gregory House",
+    "display_name": "Dr. Arjun Rao",
     "facility_id": "facility-b",
     "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMFk\n-----END PUBLIC KEY-----\n",
     "certificate_pem": "-----BEGIN CERTIFICATE-----\nMII\n-----END CERTIFICATE-----\n",
@@ -127,7 +127,7 @@ RECORD_META = {
     "record_id": "rec-001",
     "patient_id": "pat-101",
     "facility_id": "facility-a",
-    "facility_name": "St. Jude Hospital",
+    "facility_name": "Northvale General Hospital",
     "content_type": "application/json",
     "ciphertext_bytes": 512,
     # A real datetime, as the store reader returns -- the session cache must cope.

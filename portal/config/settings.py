@@ -65,6 +65,7 @@ TEMPLATES = [
                 "django.contrib.messages.context_processors.messages",
                 "portal_core.context.product",
             ],
+            "builtins": ["portal_core.display"],
         },
     },
 ]
@@ -154,6 +155,8 @@ AUTHORITY_URLS = _url_map(
 )
 SERVICE_TIMEOUT_SECONDS = float(os.environ.get("SERVICE_TIMEOUT_SECONDS", "8"))
 # Break-glass time-box the clinician portal requests, in seconds. ARCHITECTURE
-# §7: "must be adjustable" -- 900 for the paper, 60-120 for a live demo.
-EMERGENCY_DURATION_SECONDS = float(os.environ.get("EMERGENCY_DURATION_SECONDS", "120"))
+# Four hours by default; request 60-120 seconds explicitly for a timer demo.
+EMERGENCY_DURATION_SECONDS = float(
+    os.environ.get("EMERGENCY_DURATION_SECONDS", "14400")
+)
 PRODUCT_NAME = os.environ.get("PORTAL_PRODUCT_NAME", "CUSTOS")

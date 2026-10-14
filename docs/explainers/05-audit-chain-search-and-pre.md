@@ -56,12 +56,12 @@ person A into one addressed to person B **without learning the plaintext**.
 Unidirectional ElGamal-style, hand-rolled (`src/pre`, ADR-0012).
 
 ```
-DEK wrapped for "emergency"  --(re-encryption key)-->  wrapped for Dr. House
+DEK wrapped for "emergency"  --(re-encryption key)-->  wrapped for Dr. Rao
         proxy sees only ciphertext, both before and after
 ```
 
 In the demo you see this as the `federation.rewrap` audit event and the
-"PRE delivery package" the custodian opens for House.
+"PRE delivery package" the custodian opens for Rao.
 
 ## Federated discovery
 

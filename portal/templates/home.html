@@ -2,17 +2,17 @@
 {% block title %}{{ product_name }}{% endblock %}
 {% block shell %}
 <div class="auth">
-  <div class="auth-card">
-    <div class="wordmark">{{ product_name }}</div>
-    <div class="sub">Federated key-lifecycle protocol · v4.2</div>
-    <p class="small text-muted">Three portals — patient, clinician, admin &amp; audit — over one cryptographic core. Choose how to sign in or register.</p>
+  <main class="auth-card" id="content">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span><span class="brand-name">{{ product_name }}</span><span class="brand-sub">Federated break-glass EHR</span></span></div>
+    <h1>Three portals, one cryptographic core</h1>
+    <p>Patient, clinician, and admin &amp; audit portals. Each one identifies you and shows data; keys decide every access.</p>
     <div class="flex">
       <a class="btn btn-primary" href="{% url 'accounts:login' %}">Log in</a>
       <a class="btn btn-secondary" href="{% url 'accounts:register_patient' %}">Register as patient</a>
       <a class="btn btn-secondary" href="{% url 'accounts:register_clinician' %}">Register as clinician</a>
     </div>
-    {% if pending %}<div class="notice notice-info mt-4">Your registration is pending approval. An authority has to verify and issue your credential before any portal opens.</div>
-    {% elif user.is_authenticated %}<div class="notice notice-info mt-4">Signed in as {{ user.username }} with no portal profile. {% if user.is_superuser %}<a href="{% url 'admin_audit:home' %}">Open the admin &amp; audit portal</a>.{% endif %}</div>{% endif %}
-  </div>
+    {% if pending %}<div class="notice notice-info" role="status">{% include "_icon.html" with name="info" %}<div>Your registration is pending approval. An authority has to verify and issue your credential before any portal opens.</div></div>
+    {% elif user.is_authenticated %}<div class="notice notice-info" role="status">{% include "_icon.html" with name="info" %}<div>Signed in as {{ user.username }} with no portal profile. {% if user.is_superuser %}<a href="{% url 'admin_audit:home' %}">Open the admin &amp; audit portal</a>.{% endif %}</div></div>{% endif %}
+  </main>
 </div>
 {% endblock %}

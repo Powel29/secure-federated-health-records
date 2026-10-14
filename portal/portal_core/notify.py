@@ -91,15 +91,28 @@ def notify_patient(
 
 
 def notify_breakglass(
-    *, patient_id: str, record_id: str, clinician_id: str, facility_id: str,
-    correlation_id: str, reason_code: str,
+    *,
+    patient_id: str,
+    record_id: str,
+    clinician_id: str,
+    facility_id: str,
+    correlation_id: str,
+    reason_code: str,
 ) -> PatientNotification:
-    return notify_patient(
+    from accounts.models import PatientRepresentative
+    from django.utils import timezone
+
+    try:
+        subject = services.custodian_subject(clinician_id) or {}
+        clinician_name = subject.get("display_name") or clinician_id
+    except ServiceError:
+        clinician_name = clinician_id
+    note = notify_patient(
         patient_id=patient_id,
         kind=NotificationKind.BREAKGLASS,
         title="Your record was opened under emergency break-glass",
         body=(
-            f"Record {record_id} was opened by {clinician_id} at {facility_id} "
+            f"Record {record_id} was opened by {clinician_name} ({clinician_id}) at {facility_id} "
             f"(reason: {reason_code}). The access is time-boxed and fully logged; "
             f"follow the correlation id to the audit evidence."
         ),
@@ -107,6 +120,21 @@ def notify_breakglass(
         correlation_id=correlation_id,
         actor_id=clinician_id,
     )
+    for representative in PatientRepresentative.objects.filter(
+        patient__subject_id=patient_id,
+        receive_notifications=True,
+        revoked_at__isnull=True,
+        expires_at__gt=timezone.now(),
+    ):
+        notify_patient(
+            patient_id=representative.representative_id,
+            kind=NotificationKind.BREAKGLASS,
+            title="Emergency access notice for a patient you represent",
+            body="An emergency access event has been recorded. Contact the care team through the approved channel for details.",
+            correlation_id=correlation_id,
+            actor_id=clinician_id,
+        )
+    return note
 
 
 def notify_revoked(
@@ -142,4 +170,6 @@ def notify_consent_request(
 
 def query_hash(*parts: str) -> str:
     """Hash of a lookup query so the chain records *that* a search happened, not *what* was typed."""
-    return hashlib.sha256("\x1f".join(p.strip().lower() for p in parts).encode()).hexdigest()
+    return hashlib.sha256(
+        "\x1f".join(p.strip().lower() for p in parts).encode()
+    ).hexdigest()

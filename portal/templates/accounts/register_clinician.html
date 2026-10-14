@@ -2,23 +2,23 @@
 {% block title %}Register as clinician · {{ product_name }}{% endblock %}
 {% block shell %}
 <div class="auth">
-  <div class="auth-card">
-    <div class="wordmark">{{ product_name }}</div>
-    <div class="sub">Clinician enrolment · request-then-issue</div>
-    <p class="small text-muted">This records what you are asking to be certified for. An authority verifies your licence and issues the attribute — until then you hold nothing and can open nothing.</p>
-    {% if error %}<div class="notice notice-error mb-3">{{ error }}</div>{% endif %}
+  <main class="auth-card" id="content">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span><span class="brand-name">{{ product_name }}</span><span class="brand-sub">Clinician enrolment</span></span></div>
+    <h1>Register as clinician</h1>
+    <p>This records what you are asking to be certified for. An authority verifies your licence and issues the attribute; until then you hold nothing and can open nothing.</p>
+    {% if error %}<div class="notice notice-error" role="alert">{% include "_icon.html" with name="x" %}<div>{{ error }}</div></div>{% endif %}
     <form method="post" class="stack">
       {% csrf_token %}
       <div class="form-grid">
-        <div class="field"><label>Username</label><input class="input" name="username" required></div>
-        <div class="field"><label>Password</label><input class="input" type="password" name="password" required></div>
+        <div class="field"><label for="rc-user">Username</label><input class="input" id="rc-user" name="username" autocomplete="username" required></div>
+        <div class="field"><label for="rc-pass">Password</label><input class="input" id="rc-pass" type="password" name="password" autocomplete="new-password" required></div>
       </div>
-      <div class="field"><label>Clinician id</label><input class="input mono" name="clinician_id" placeholder="doc-201" required></div>
-      <div class="field"><label>Requested attributes</label><input class="input mono" name="requested_attributes" placeholder="role:physician, specialty:cardiology"></div>
-      <div class="field"><label>Licence / proof</label><textarea class="input" name="license_info" placeholder="Registration number, issuing council…"></textarea></div>
-      <button class="btn btn-primary btn-block">Create account &amp; request credential</button>
+      <div class="field"><label for="rc-id">Clinician id</label><input class="input mono" id="rc-id" name="clinician_id" placeholder="e.g. doc-201" required></div>
+      <div class="field"><label for="rc-attrs">Requested attributes</label><input class="input mono" id="rc-attrs" name="requested_attributes" placeholder="e.g. role:physician, specialty:cardiology" aria-describedby="rc-attrs-hint"><div class="hint" id="rc-attrs-hint">Comma-separated <span class="mono">name:value</span> pairs.</div></div>
+      <div class="field"><label for="rc-lic">Licence or proof</label><textarea class="input" id="rc-lic" name="license_info" placeholder="Registration number, issuing council"></textarea></div>
+      <button class="btn btn-primary btn-block">Create account and request credential</button>
     </form>
-    <div class="small text-muted mt-3"><a href="{% url 'accounts:login' %}">Back to log in</a></div>
-  </div>
+    <p class="small mb-0"><a href="{% url 'accounts:login' %}">Back to log in</a></p>
+  </main>
 </div>
 {% endblock %}

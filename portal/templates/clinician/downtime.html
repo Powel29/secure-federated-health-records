@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}<section class="card"><h1>Emergency downtime procedure</h1>
+{% if notice %}<p role="status">{{ notice }}</p>{% endif %}
+<p>Do not delay emergency assessment or treatment while waiting for the federation. Notify the local clinical lead and use your institution's approved emergency and downtime procedures.</p>
+<ol><li>Confirm identity using local identifiers, or assign a temporary wristband identifier for an unidentified arrival.</li><li>Use local available records and direct handover. Mark unavailable history and allergies as unknown.</li><li>Contact the records custodian through an approved verified channel if additional history is needed. Record the source and time in the local downtime chart.</li><li>Keep clinical notes in the approved local downtime system. This portal queue stores identifiers and the procedure used only.</li><li>After recovery, oversight reconciles these events into the audit chain. Clinicians reauthorize any electronic access and transcribe local notes with their original clinical time and provenance.</li></ol>
+<p>The encrypted federation cannot release records without its audit service. If this portal is also down, use the local paper downtime log and enter the event after recovery.</p>
+<form method="post">{% csrf_token %}<select class="input" name="procedure"><option value="local_downtime">Local emergency downtime procedure</option><option value="contact_records">Contact records custodian by approved channel</option></select><button class="btn btn-primary">Record downtime event for reconciliation</button></form>
+</section>{% endblock %}

@@ -54,6 +54,7 @@ from breakglass import (
     ConsumedAssertionIds,
     validate_emergency_assertion,
 )
+from breakglass.assertion import validate_clinical_context
 from breakglass.emergency_key import Share
 from breakglass.exceptions import (
     AssertionExpiredError,
@@ -64,7 +65,11 @@ from breakglass.exceptions import (
     InsufficientSharesError,
     ReplayedAssertionError,
 )
-from breakglass.gate import open_emergency_access
+from breakglass.gate import (
+    EmergencyUnlockResult,
+    join_emergency_access,
+    open_emergency_access,
+)
 from consent.exceptions import (
     ConsentDeniedError,
     ConsentExpiredError,
@@ -78,7 +83,7 @@ from consent.service import (
     revoke_consent_grant,
     verify_consent_grant,
 )
-from contracts.enums import LifecycleState
+from contracts.enums import ConsentStatus, LifecycleState
 from crypto_core import (
     certificate_from_pem,
     private_key_from_pem,
@@ -547,6 +552,28 @@ def create_hospital_app(
             )
 
         wrapping = repo.get_wrapping_for_record(record_id, wrapped_for=record.policy_id)
+        if (
+            (record.clinical.care_team_consent or record.clinical.source != "unknown")
+            and payload.requester_id != record.patient_id
+            and payload.grant is None
+        ):
+            _log_denial(
+                audit_url,
+                repo,
+                audit_key,
+                sink=audit_sink,
+                record_id=record_id,
+                requester_id=payload.requester_id,
+                denied_by=DENIED_BY_CONSENT,
+                reason="Patient-signed care-episode consent required",
+                actor_id=facility_id,
+                correlation_id=payload.correlation_id or str(uuid4()),
+            )
+            raise HTTPException(
+                403,
+                "A patient-signed care-episode grant is required; "
+                "specialty alone is not a treating relationship",
+            )
         if not wrapping:
             wrapping = repo.get_wrapping_for_record(record_id)
         if not wrapping:
@@ -583,6 +610,18 @@ def create_hospital_app(
 
             access_via = ACCESS_VIA_CONSENT
             try:
+                # Revocation is terminal for this request, including after the
+                # revocation artifact expires. Re-consent requires a new request.
+                for decision in repo.list_consent_grants_by_patient(record.patient_id):
+                    if (
+                        decision.request_id == payload.grant.request_id
+                        and decision.grantee_id == payload.requester_id
+                        and decision.status == ConsentStatus.REVOKED
+                    ):
+                        verify_consent_grant(decision, patient_pub)
+                        raise ConsentRevokedError(
+                            "A stored patient revocation supersedes this grant"
+                        )
                 plaintext_bytes = read_record_under_consent(
                     record=record,
                     wrapping=wrapping,
@@ -982,6 +1021,12 @@ def create_hospital_app(
         the re-wrap (log-before-release), register the expiry session, then
         record the signed event. Any failure after the claim undoes it, so a
         refused or failed unlock leaves the record as it was.
+
+        A record that is already EMERGENCY_OPEN with a live session here is
+        joined, not refused (ADR-0057): a second clinician, or the first one
+        viewing it again, passes the same validation and threshold and the
+        audit entry is still committed before the DEK is delivered, but no
+        transition is signed and the window is not extended.
         """
         corr_id = payload.correlation_id or str(uuid4())
         clinician_id = payload.assertion.clinician_id
@@ -1115,6 +1160,40 @@ def create_hospital_app(
                 f"Emergency assertion not valid for this record: {reason}",
             )
 
+        if (
+            record.clinical.source != "unknown"
+            or record.clinical.sensitivity != "general"
+            or payload.assertion.clinical_context_digest
+        ):
+            try:
+                validate_clinical_context(
+                    payload.assertion,
+                    record_id,
+                    payload.justification,
+                    payload.sensitive_justification,
+                )
+            except ValueError as exc:
+                raise deny("clinical_context", str(exc), 403, str(exc)) from exc
+            if (
+                record.clinical.source != "unknown"
+                and len(payload.justification.strip()) < 20
+            ):
+                raise deny(
+                    "clinical_context",
+                    "clinical necessity required",
+                    403,
+                    "Explain the immediate clinical need (at least 20 characters)",
+                )
+        if (
+            record.clinical.sensitivity != "general"
+            and len(payload.sensitive_justification.strip()) < 20
+        ):
+            raise deny(
+                "restricted_record",
+                "explicit necessity required",
+                403,
+                "Restricted record: explicit clinical necessity is required",
+            )
         wrapping = repo.get_wrapping_for_record(record_id, wrapped_for="emergency")
         if not wrapping:
             wrapping = repo.get_wrapping_for_record(record_id)
@@ -1130,46 +1209,12 @@ def create_hospital_app(
             or wrapping
         )
 
-        # 4. Claim the state (N1, F7): of two concurrent opens exactly one wins.
-        source_state = _current_lifecycle_state(repo, record_id)
-        if source_state is LifecycleState.EMERGENCY_OPEN:
-            reason = (
-                "record is already emergency_open; a second break-glass waits "
-                "for the current session to expire"
-            )
-            raise deny(
-                DENIED_BY_BREAKGLASS_TRANSITION,
-                reason,
-                status.HTTP_409_CONFLICT,
-                reason,
-            )
-        try:
-            repo.transition_lifecycle_state(
-                record_id, expected=source_state, new=LifecycleState.EMERGENCY_OPEN
-            )
-        except StateConflictError as exc:
-            raise deny(
-                DENIED_BY_BREAKGLASS_TRANSITION,
-                str(exc),
-                status.HTTP_409_CONFLICT,
-                f"Break-glass refused: {exc}",
-            ) from exc
-
-        session_registered = False
-        try:
-            # 5. Open emergency access via 2-of-3 threshold gate
+        def gate(
+            call: Callable[[], EmergencyUnlockResult | bytes]
+        ) -> EmergencyUnlockResult | bytes:
+            """Run the threshold gate, turning each refusal into an audited deny."""
             try:
-                unlock_result = open_emergency_access(
-                    shares_presented=shares_list,
-                    dek_wrapping=wrapping,
-                    transition_source_state=source_state,
-                    record_id=record_id,
-                    actor_id=clinician_id,
-                    correlation_id=corr_id,
-                    reason_code=payload.assertion.reason_code,
-                    lifecycle_signing_key=lifecycle_priv,
-                    pre_rewrap_key=payload.pre_rewrap_key,
-                )
+                return call()
             except InsufficientSharesError as exc:
                 raise deny(
                     DENIED_BY_BREAKGLASS_GATE,
@@ -1199,7 +1244,85 @@ def create_hospital_app(
                     f"Emergency unlock rejected: {exc}",
                 ) from exc
 
-            # 6. Log-before-release: an audit outage raises (503) and undoes
+        # 4. Already open: join the live session (ADR-0057).
+        source_state = _current_lifecycle_state(repo, record_id)
+        if source_state is LifecycleState.EMERGENCY_OPEN:
+            try:
+                session_expires_at = exp_manager.active_session_expires_at(record_id)
+            except (SessionNotFoundError, EmergencySessionExpiredError) as exc:
+                # ponytail: sessions live in the facility that opened them; a
+                # clinician at another facility cannot join until expiry.
+                reason = (
+                    "record is already emergency_open and this facility holds "
+                    f"no live session to join ({exc})"
+                )
+                raise deny(
+                    DENIED_BY_BREAKGLASS_TRANSITION,
+                    reason,
+                    status.HTTP_409_CONFLICT,
+                    reason,
+                ) from exc
+            rewrapped = gate(
+                lambda: join_emergency_access(
+                    shares_presented=shares_list,
+                    dek_wrapping=wrapping,
+                    record_id=record_id,
+                    pre_rewrap_key=payload.pre_rewrap_key,
+                )
+            )
+            # Log-before-release: an audit outage raises and nothing is sent.
+            _log_rewrap(
+                audit_url,
+                repo,
+                audit_key,
+                sink=audit_sink,
+                record_id=record_id,
+                source_facility_id=record.facility_id,
+                target_actor_id=clinician_id,
+                actor_id=facility_id,
+                correlation_id=corr_id,
+            )
+            return BreakglassUnlockResponse(
+                record_id=record_id,
+                rewrapped_dek_b64=base64.b64encode(rewrapped).decode("ascii"),
+                transition_event=None,
+                joined=True,
+                correlation_id=corr_id,
+                expires_at=session_expires_at,
+                message="Joined the open emergency session; DEK re-wrapped",
+            )
+
+        # 5. Claim the state (N1, F7): of two concurrent opens exactly one wins.
+        try:
+            repo.transition_lifecycle_state(
+                record_id, expected=source_state, new=LifecycleState.EMERGENCY_OPEN
+            )
+        except StateConflictError as exc:
+            raise deny(
+                DENIED_BY_BREAKGLASS_TRANSITION,
+                str(exc),
+                status.HTTP_409_CONFLICT,
+                f"Break-glass refused: {exc}",
+            ) from exc
+
+        session_registered = False
+        try:
+            # 6. Open emergency access via 2-of-3 threshold gate
+            unlock_result = gate(
+                lambda: open_emergency_access(
+                    shares_presented=shares_list,
+                    dek_wrapping=wrapping,
+                    transition_source_state=source_state,
+                    record_id=record_id,
+                    actor_id=clinician_id,
+                    correlation_id=corr_id,
+                    reason_code=payload.assertion.reason_code,
+                    lifecycle_signing_key=lifecycle_priv,
+                    pre_rewrap_key=payload.pre_rewrap_key,
+                )
+            )
+
+            # 7. Log-before-release: an audit outage raises (503) and undoes
             # the claim below, so nothing is released without a chain entry.
             _log_rewrap(
                 audit_url,
@@ -1213,7 +1336,7 @@ def create_hospital_app(
                 correlation_id=corr_id,
             )
 
-            # 7. Every unlock is time-boxed; there is no path that skips it.
+            # 8. Every unlock is time-boxed; there is no path that skips it.
             try:
                 session = exp_manager.register_session(
                     record_id=record_id,
@@ -1224,6 +1347,7 @@ def create_hospital_app(
                     baseline_wrapping=baseline_wrapping,
                     emergency_wrapping=wrapping,
                     current_record=record,
+                    return_state=source_state,
                     duration_seconds=duration,
                 )
             except ValueError as exc:
@@ -1233,7 +1357,7 @@ def create_hospital_app(
                 ) from exc
             session_registered = True
 
-            # 8. Record the signed event against the claimed state.
+            # 9. Record the signed event against the claimed state.
             event = unlock_result.transition_event
             repo.insert_transition_event(event)
             repo.transition_lifecycle_state(
@@ -1432,6 +1556,7 @@ def create_hospital_app(
                 emergency_key=em_key,
                 content_type=payload.content_type,
                 record_id=payload.record_id,
+                clinical=payload.clinical,
             )
         except (ValueError, PolicyCompileError, RecordError) as exc:
             raise HTTPException(

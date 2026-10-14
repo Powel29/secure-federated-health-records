@@ -35,9 +35,10 @@ def derive_search_token(emergency_key: bytes, search_term: str) -> bytes:
 
     Deterministic in ``(emergency_key, search_term)``: the same inputs always
     produce the same token, which is what makes equality search work. See the
-    ADR for the leakage this implies.
+    ADR for the leakage this implies. The term is trimmed and case-folded
+    first, on indexing and on query alike, so "Penicillin" finds "penicillin".
     """
-    info = _KDF_INFO_PREFIX + search_term.encode("utf-8")
+    info = _KDF_INFO_PREFIX + search_term.strip().casefold().encode("utf-8")
     return hkdf_derive(
         ikm=emergency_key,
         salt=_KDF_SALT,

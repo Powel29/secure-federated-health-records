@@ -27,6 +27,10 @@ and the work we did on 2026-10-02.
    wipes the synthetic data). Ports bind to loopback only; the custodian
    trusts local callers; the browser portal is plain HTTP on loopback. There is
    no persistent key custody and no internet-facing authentication.
+10. **Unidentified patients cannot be opened** (ADR-0059). Identification is a
+   name + date-of-birth lookup, so the demo patient carries an ID card. A
+   patient with no ID is a common emergency case we do not handle; the "John
+   Doe" flow is deferred (ADR-0033).
 
 ## What the automated stress test found
 

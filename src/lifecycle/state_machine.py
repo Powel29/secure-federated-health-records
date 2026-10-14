@@ -44,7 +44,8 @@ _FIELD_SEPARATOR = b"\x1f"
 # state machine states its own requirement rather than importing it.
 _NONCE_BYTES = 16
 
-# The six legal transitions the ARCHITECTURE §5 flows enumerate. Any pair not
+# The seven legal transitions the ARCHITECTURE §5 flows enumerate (ADR-0030;
+# EXPIRED -> REVOKED added by ADR-0058 so expiry restores a revocation). Any pair not
 # in this set is refused by :func:`validate_transition`. Extensions (for
 # example, ``EMERGENCY_OPEN -> REVOKED`` for premature termination) need an ADR
 # per the standing rule in ``CLAUDE.md``; adding one silently here would put
@@ -57,6 +58,7 @@ LEGAL_TRANSITIONS: frozenset[tuple[LifecycleState, LifecycleState]] = frozenset(
         (LifecycleState.REVOKED, LifecycleState.EMERGENCY_OPEN),
         (LifecycleState.EMERGENCY_OPEN, LifecycleState.EXPIRED),
         (LifecycleState.EXPIRED, LifecycleState.GRANTED),
+        (LifecycleState.EXPIRED, LifecycleState.REVOKED),
     }
 )
 

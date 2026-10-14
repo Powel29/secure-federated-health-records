@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import AwareDatetime, field_validator
+from pydantic import AwareDatetime, Field, field_validator
 
 from contracts.base import (
     GCM_NONCE_BYTES,
@@ -10,6 +10,7 @@ from contracts.base import (
     ContractModel,
     Identifier,
 )
+from contracts.clinical import ClinicalMetadata
 
 
 class Record(ContractModel):
@@ -30,6 +31,7 @@ class Record(ContractModel):
     nonce: B64Bytes  # per-encryption GCM nonce; never reused for a key (rule 5)
     aad: B64Bytes | None = None  # optional associated data bound by GCM
     created_at: AwareDatetime
+    clinical: ClinicalMetadata = Field(default_factory=ClinicalMetadata)
 
     @field_validator("nonce")
     @classmethod

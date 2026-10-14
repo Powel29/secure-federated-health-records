@@ -34,7 +34,12 @@ class ReasonCode(str, Enum):
     MAJOR_TRAUMA = "major_trauma"
     STROKE = "stroke"
     SEVERE_ALLERGIC_REACTION = "severe_allergic_reaction"
-    UNKNOWN_MEDICATION_HISTORY = "unknown_medication_history"
+    OVERDOSE = "overdose"
+    SEPSIS = "sepsis"
+    SEIZURE = "seizure"
+    OBSTETRIC_EMERGENCY = "obstetric_emergency"
+    DIABETIC_KETOACIDOSIS = "diabetic_ketoacidosis"
+    HAEMORRHAGE = "haemorrhage"
     OTHER_LIFE_THREATENING = "other_life_threatening"
 
 

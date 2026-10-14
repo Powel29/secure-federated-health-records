@@ -26,8 +26,8 @@ def insert_record(conn: psycopg.Connection, rec: Record) -> None:
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO records (record_id, patient_id, facility_id, policy_id,"
-            " content_type, ciphertext, nonce, aad, created_at)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            " content_type, ciphertext, nonce, aad, created_at, clinical)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 rec.record_id,
                 rec.patient_id,
@@ -38,6 +38,7 @@ def insert_record(conn: psycopg.Connection, rec: Record) -> None:
                 rec.nonce,
                 rec.aad,
                 rec.created_at,
+                Jsonb(rec.clinical.model_dump(mode="json")),
             ),
         )
 

@@ -51,6 +51,7 @@ from uuid import uuid4
 
 import httpx
 from audit.chain import verify_entry_signature
+from breakglass.assertion import clinical_context_digest
 from consent.service import (
     create_consent_grant,
     create_consent_request,
@@ -68,6 +69,7 @@ from crypto_core.exceptions import CryptoError, InvalidTagError, KeyFormatError
 from crypto_core.types import ECPrivateKey
 from custodian import (
     decrypt_delivered_record,
+    justification_digest,
     open_delivered_dek,
     prepare_unlock,
     provision_emergency_key,
@@ -793,7 +795,48 @@ def create_custodian_app(
         could never open, so the request is refused instead.
         """
         material = _require_subject(vault, subject_id)
-        _require_kind(material, "patient")
+        author_id = subject_id
+        source = "patient_upload"
+        if material.kind == "clinician":
+            if not payload.patient_id:
+                raise HTTPException(
+                    403,
+                    "A clinician cannot upload as a patient; "
+                    "a clinical note needs an authorized patient",
+                )
+            if payload.grant is not None:
+                if payload.grant.patient_id != payload.patient_id:
+                    raise HTTPException(403, "Grant belongs to another patient")
+                read_record(
+                    subject_id,
+                    ReadRecordPayload(
+                        record_id=payload.grant.scope[0],
+                        facility_id=payload.facility_id,
+                        grant=payload.grant,
+                    ),
+                    vault,
+                    endpoints,
+                    http,
+                )
+            elif payload.emergency is not None:
+                if payload.emergency.patient_id != payload.patient_id:
+                    raise HTTPException(403, "Emergency belongs to another patient")
+                declare_breakglass(
+                    subject_id, payload.emergency, vault, endpoints, http
+                )
+            else:
+                raise HTTPException(
+                    403,
+                    "A clinical note needs a live patient grant "
+                    "or a fresh emergency authorization",
+                )
+            subject_id = payload.patient_id
+            material = _require_subject(vault, subject_id)
+            source = "clinician_note"
+        else:
+            _require_kind(material, "patient")
+            if payload.patient_id and payload.patient_id != subject_id:
+                raise HTTPException(403, "Cannot upload for another patient")
         owner_creds = [
             c
             for c in material.credentials
@@ -854,6 +897,9 @@ def create_custodian_app(
                 "emergency_key_b64": base64.b64encode(emergency.key).decode("ascii"),
                 "content_type": payload.content_type,
                 "record_id": record_id,
+                "clinical": payload.clinical.model_copy(
+                    update={"author_id": author_id, "source": source}
+                ).model_dump(mode="json"),
             },
             what="record ingest",
         )
@@ -933,6 +979,27 @@ def create_custodian_app(
                 ),
             )
         facility_id = payload.facility_id or material.facility_id
+        # Route all viewers to the record's home node, where its timer lives.
+        loader = app.state.record_loader
+        target_record = loader(payload.record_id) if loader else None
+        if target_record is not None:
+            if target_record.patient_id != payload.patient_id:
+                raise HTTPException(403, "record belongs to another patient")
+            facility_id = target_record.facility_id
+            if (
+                target_record.clinical.source != "unknown"
+                and len(payload.justification.strip()) < 20
+            ):
+                raise HTTPException(
+                    403, "Explain the immediate clinical need (at least 20 characters)"
+                )
+            if target_record.clinical.sensitivity != "general":
+                if len(payload.sensitive_justification.strip()) < 20:
+                    raise HTTPException(
+                        403,
+                        "Restricted record: explain why its contents are essential "
+                        "now (at least 20 characters)",
+                    )
         if not facility_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -963,6 +1030,11 @@ def create_custodian_app(
             facility_id=facility_id,
             reason_code=payload.reason_code,
             assertion_ttl=datetime.timedelta(seconds=payload.assertion_ttl_seconds),
+            context_digest=clinical_context_digest(
+                payload.record_id,
+                payload.justification,
+                payload.sensitive_justification,
+            ),
         )
         assertion = unlock_material.assertion
 
@@ -980,6 +1052,14 @@ def create_custodian_app(
                     "facility_id": facility_id,
                     "assertion_id": str(assertion.assertion_id),
                     "reason_code": payload.reason_code.value,
+                    "justification_digest": justification_digest(payload.justification),
+                    "sensitive_justification_digest": justification_digest(
+                        payload.sensitive_justification
+                    ),
+                    "restricted": bool(
+                        target_record
+                        and target_record.clinical.sensitivity != "general"
+                    ),
                 },
                 "actor_id": SHARE_HOLDER_AUDIT,
                 "correlation_id": corr_id,
@@ -1034,11 +1114,22 @@ def create_custodian_app(
                 "correlation_id": corr_id,
                 "baseline_wrapping_key_b64": unlock_material.baseline_wrapping_key_b64,
                 "emergency_duration_seconds": payload.emergency_duration_seconds,
+                "sensitive_justification": payload.sensitive_justification,
+                "justification": payload.justification,
             },
             what="break-glass unlock",
         )
-        transition = TransitionEvent.model_validate(unlock["transition_event"])
-        opened_at = transition.issued_at
+        # A record already open is joined: no transition, same window (ADR-0057).
+        transition = (
+            TransitionEvent.model_validate(unlock["transition_event"])
+            if unlock.get("transition_event")
+            else None
+        )
+        opened_at = (
+            transition.issued_at
+            if transition
+            else datetime.datetime.now(datetime.timezone.utc)
+        )
 
         # 5. Open the PRE delivery package; decrypt if we can see the store.
         try:
@@ -1085,6 +1176,7 @@ def create_custodian_app(
             assertion_expires_at=assertion.expires_at,
             shares_presented=shares_presented,
             transition_event=transition,
+            joined=bool(unlock.get("joined")),
             opened_at=opened_at,
             expires_at=expires_at,
             content_type=content_type,

@@ -1,51 +1,62 @@
 {% extends "base.html" %}
 {% block title %}Clinician overview · {{ product_name }}{% endblock %}
 {% block content %}
-<div class="grid-2">
-  <div class="card">
+<p><a href="{% url 'clinician:encounter' %}">Care encounters / unidentified arrival</a> · <a href="{% url 'clinician:downtime' %}">Downtime procedure</a></p>
+<div class="callpoint-row">
+  <section class="callpoint" aria-labelledby="cp-home-h">
+    <div class="callpoint-label" id="cp-home-h">{% include "_icon.html" with name="glass" %}Break glass</div>
+    <div class="callpoint-pane">
+      <p><strong>Patient unable to consent?</strong> Identify them, locate their records across the federation, and declare time-boxed emergency access.</p>
+      <a class="btn btn-emergency btn-block" href="{% url 'clinician:identify' %}">Start emergency access</a>
+      <p class="tiny text-muted">Every step is logged. The patient is notified. Access closes on its own.</p>
+    </div>
+  </section>
+
+  <section class="card card-frame" aria-labelledby="cred-h">
     <div class="subhead">
-      <h3 class="card-title">Your credentials</h3>
-      {% if subject and subject.certificate_pem %}<span class="tag tag-accent">cert chains to root</span>{% else %}<span class="tag tag-neutral">no certificate held</span>{% endif %}
+      <h2 class="card-title" id="cred-h">Your credentials</h2>
+      {% if subject and subject.certificate_pem %}<span class="tag tag-ok">{% include "_icon.html" with name="check" %}Certificate chains to root</span>{% else %}<span class="tag tag-quiet">No certificate held</span>{% endif %}
     </div>
-    <div class="grid-stats">
-      <div><div class="kicker">Subject</div><div class="value mono">{{ subject_id }}</div></div>
-      <div><div class="kicker">Facility</div><div class="value mono">{{ facility_id|default:"—" }}</div></div>
-      <div><div class="kicker">PRE key</div><div class="value">{% if subject and subject.pre_public_key %}ElGamal · held by agent{% else %}—{% endif %}</div></div>
-    </div>
-    <div class="mt-2">
+    <dl class="facts">
+      <div><dt>Subject</dt><dd class="mono">{{ subject_id }}</dd></div>
+      <div><dt>Facility</dt><dd class="mono">{{ facility_id|default:"—" }}</dd></div>
+      <div><dt>PRE key</dt><dd>{% if subject and subject.pre_public_key %}ElGamal, held by your key agent{% else %}None{% endif %}</dd></div>
+    </dl>
+    <div class="flex">
       {% if subject %}
-        {% for c in subject.credentials %}<span class="tag tag-accent" title="issued by {{ c.issuer_id }}, serial {{ c.serial }}">{{ c.name }}:{{ c.value }}</span> {% empty %}<span class="tag tag-neutral">no attribute credential issued</span>{% endfor %}
+        {% for c in subject.credentials %}<span class="tag tag-id" title="issued by {{ c.issuer_id }}, serial {{ c.serial }}">{{ c.name }}:{{ c.value }}</span>{% empty %}<span class="tag tag-quiet">No attribute credential issued</span>{% endfor %}
       {% else %}
-        <span class="tag tag-neutral">no key agent enrolled</span>
+        <span class="tag tag-quiet">No key agent enrolled</span>
       {% endif %}
     </div>
-    {% for r in requests %}<div class="tiny text-muted mt-2">Registration: <span class="tag tag-neutral">{{ r.get_status_display }}</span> {{ r.requested_attributes }}</div>{% endfor %}
-    {% if not subject %}<div class="notice notice-info small mt-2">Your login identifies you, but no authority has issued you an attribute and no key agent holds a certificate for <span class="mono">{{ subject_id }}</span>. You can open nothing until an authority issues (ADR-0021).</div>{% endif %}
-    <div class="flex mt-3">
-      <a class="btn btn-primary btn-sm" href="{% url 'clinician:identify' %}">Identify a patient</a>
+    {% for r in requests %}<p class="tiny text-muted mb-0">Registration: <span class="tag tag-quiet">{{ r.get_status_display }}</span> {{ r.requested_attributes }}</p>{% endfor %}
+    {% if not subject %}<div class="notice notice-info small" role="status">{% include "_icon.html" with name="info" %}<div>Your login identifies you, but no authority has issued you an attribute and no key agent holds a certificate for <span class="mono">{{ subject_id }}</span>. You can open nothing until an authority issues one <span class="mono">(ADR-0021)</span>.</div></div>{% endif %}
+    <div class="flex">
       <a class="btn btn-secondary btn-sm" href="{% url 'clinician:consent_request' %}">Request consent</a>
     </div>
-  </div>
-
-  <div class="card card-accent">
-    <div class="subhead"><h3 class="card-title">Emergency sessions</h3><a class="small" href="{% url 'clinician:cases' %}">all sessions</a></div>
-    <div class="table-wrap"><table class="table">
-      <thead><tr><th>Case</th><th>Record</th><th>Patient</th><th>State</th></tr></thead>
-      <tbody>{% for c in cases %}
-        <tr><td><a class="mono" href="{% url 'clinician:case_detail' c.pk %}">{{ c.case_number }}</a></td><td class="mono">{{ c.record_id }}</td><td class="mono">{{ c.patient_id }}</td>
-          <td>{% if c.status == "open" %}<span class="tag tag-accent">open · <span data-countdown="{{ c.expires_at|date:'c' }}">--:--</span></span>{% elif c.status == "expired" %}<span class="tag tag-outline">expired · rotated</span>{% else %}<span class="tag tag-neutral">failed closed</span>{% endif %}</td></tr>
-      {% empty %}<tr><td colspan="4" class="empty">No break-glass declared yet.</td></tr>{% endfor %}</tbody></table></div>
-  </div>
+  </section>
 </div>
 
-<div class="card">
-  <div class="subhead"><h3 class="card-title">Consent requests you signed</h3><a class="small" href="{% url 'clinician:consent_request' %}">new request</a></div>
-  <div class="table-wrap"><table class="table">
-    <thead><tr><th>Patient</th><th>Records</th><th>Purpose</th><th>State</th><th class="right">Read</th></tr></thead>
-    <tbody>{% for r in consents %}
-      <tr><td class="mono">{{ r.patient_id }}</td><td class="mono small">{{ r.scope|join:", " }}</td><td class="small italic">{{ r.purpose|truncatechars:80 }}</td>
-        <td>{% if r.status == "granted" %}<span class="tag tag-accent">granted</span>{% elif r.status == "pending" %}<span class="tag tag-neutral">awaiting patient</span>{% else %}<span class="tag tag-outline">{{ r.status }}</span>{% endif %}</td>
-        <td class="right">{% if r.status == "granted" %}<a class="btn btn-primary btn-sm" href="{% url 'clinician:consent_read' r.request_id %}">Read under consent</a>{% else %}<button class="btn btn-ghost btn-sm" disabled>—</button>{% endif %}</td></tr>
-    {% empty %}<tr><td colspan="5" class="empty">No consent requests yet.</td></tr>{% endfor %}</tbody></table></div>
+<div class="grid-2">
+  <section class="card" aria-labelledby="sess-h">
+    <div class="subhead"><h2 class="card-title" id="sess-h">Emergency sessions</h2><a href="{% url 'clinician:cases' %}">All sessions</a></div>
+    <div class="table-wrap"><table class="table stack-sm">
+      <thead><tr><th>Case</th><th>Record</th><th>Patient</th><th>State</th></tr></thead>
+      <tbody>{% for c in cases %}
+        <tr><td data-label="Case"><a class="mono" href="{% url 'clinician:case_detail' c.pk %}">{{ c.case_number }}</a></td><td data-label="Record" class="mono">{{ c.record_id }}</td><td data-label="Patient" class="mono">{{ c.patient_id }}</td>
+          <td data-label="State">{% if c.status == "open" %}<span class="tag tag-emergency">Open · <span role="timer" data-countdown="{{ c.expires_at|date:'c' }}">--:--</span></span>{% elif c.status == "expired" %}<span class="tag tag-expired">Expired · key rotated</span>{% else %}<span class="tag tag-fail">Failed closed</span>{% endif %}</td></tr>
+      {% empty %}<tr><td colspan="4" class="empty">No break-glass declared yet.</td></tr>{% endfor %}</tbody></table></div>
+  </section>
+
+  <section class="card" aria-labelledby="cons-h">
+    <div class="subhead"><h2 class="card-title" id="cons-h">Consent requests you signed</h2><a href="{% url 'clinician:consent_request' %}">New request</a></div>
+    <div class="table-wrap"><table class="table stack-sm">
+      <thead><tr><th>Patient</th><th>Records</th><th>State</th><th class="right"><span class="sr-only">Read</span></th></tr></thead>
+      <tbody>{% for r in consents %}
+        <tr><td data-label="Patient" class="mono">{{ r.patient_id }}<span class="sub" style="font-family:var(--font-body)">{{ r.purpose|truncatechars:60 }}</span></td><td data-label="Records" class="mono small">{{ r.scope|join:", " }}</td>
+          <td data-label="State">{% if r.status == "granted" %}<span class="tag tag-ok">Granted</span>{% elif r.status == "pending" %}<span class="tag tag-warn">Awaiting patient</span>{% elif r.status == "revoked" %}<span class="tag tag-revoked">Revoked</span>{% else %}<span class="tag tag-quiet">{{ r.status|humanize_code }}</span>{% endif %}</td>
+          <td data-label="Read" class="right">{% if r.status == "granted" %}<a class="btn btn-primary btn-sm" href="{% url 'clinician:consent_read' r.request_id %}">Read under consent</a>{% endif %}</td></tr>
+      {% empty %}<tr><td colspan="4" class="empty">No consent requests yet.</td></tr>{% endfor %}</tbody></table></div>
+  </section>
 </div>
 {% endblock %}

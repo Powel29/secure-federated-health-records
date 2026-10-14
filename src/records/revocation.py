@@ -268,6 +268,7 @@ def revoke_record_access(
         aad=current_record.aad,
         record_id=current_record.record_id,
         created_at=now,
+        clinical=current_record.clinical,
     )
 
     # --- Step 5: Wrap the new DEK under the new root secret, generation++ ---

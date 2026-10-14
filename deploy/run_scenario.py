@@ -63,8 +63,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = REPO_ROOT / "deploy" / "pki" / "federation.json"
 
 
-
-
 def _unwrap_rewrapped_dek(rewrapped_dek: bytes, pre_priv: int, record_id: str) -> bytes:
     """Reverse the gate's fixed-length PRE delivery packaging."""
     field_bytes = 32

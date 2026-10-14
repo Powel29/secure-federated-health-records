@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -53,7 +53,11 @@ def _store(fn: Any, *args: Any, default: Any = None) -> tuple[Any, str | None]:
 
 
 def _refresh_case_status(case: BreakglassCase) -> BreakglassCase:
-    if case.status == CaseStatus.OPEN and case.expires_at and case.expires_at <= dj_tz.now():
+    if (
+        case.status == CaseStatus.OPEN
+        and case.expires_at
+        and case.expires_at <= dj_tz.now()
+    ):
         case.status = CaseStatus.EXPIRED
         case.save(update_fields=["status"])
     return case
@@ -96,11 +100,15 @@ def _base_ctx(request: Any, screen: str) -> dict[str, Any]:
 def home(request: Any) -> HttpResponse:
     ctx = _base_ctx(request, "Overview")
     subject_id = ctx["subject_id"]
-    records, store_error = _store(store_reader.records_for_patient, subject_id, default=[])
+    records, store_error = _store(
+        store_reader.records_for_patient, subject_id, default=[]
+    )
     pending = ConsentRecord.objects.filter(
         patient_id=subject_id, status=ConsentStatus.PENDING
     )
-    live = ConsentRecord.objects.filter(patient_id=subject_id, status=ConsentStatus.GRANTED)
+    live = ConsentRecord.objects.filter(
+        patient_id=subject_id, status=ConsentStatus.GRANTED
+    )
     notifications = PatientNotification.objects.filter(patient_id=subject_id)[:8]
     ctx.update(
         {
@@ -184,7 +192,10 @@ def decide(request: Any, request_id: str) -> HttpResponse:
         return redirect("patient:access")
     try:
         signed = services.custodian_decide_consent(
-            subject_id, request=row.request_json, status=decision, ttl_days=GRANT_TTL_DAYS
+            subject_id,
+            request=row.request_json,
+            status=decision,
+            ttl_days=GRANT_TTL_DAYS,
         )
         services.facility_submit_grant(
             row.requester_facility_id or _first_facility(row),
@@ -195,7 +206,9 @@ def decide(request: Any, request_id: str) -> HttpResponse:
         messages.error(request, f"Decision not recorded — {exc.service}: {exc.detail}")
         return redirect("patient:access")
     grant = signed["grant"]
-    row.status = ConsentStatus.GRANTED if decision == "granted" else ConsentStatus.DENIED
+    row.status = (
+        ConsentStatus.GRANTED if decision == "granted" else ConsentStatus.DENIED
+    )
     row.grant_json = grant
     row.grant_expires_at = _parse_ts(grant["expires_at"])
     row.decided_at = dj_tz.now()
@@ -231,14 +244,18 @@ def revoke(request: Any, request_id: str) -> HttpResponse:
         messages.error(request, "Only a live grant can be revoked.")
         return redirect("patient:access")
     try:
-        signed = services.custodian_revoke_consent(subject_id, prior_grant=row.grant_json)
+        signed = services.custodian_revoke_consent(
+            subject_id, prior_grant=row.grant_json
+        )
         services.facility_submit_grant(
             row.requester_facility_id or _first_facility(row),
             grant=signed["grant"],
             patient_public_key_pem=signed["patient_public_key_pem"],
         )
     except ServiceError as exc:
-        messages.error(request, f"Revocation not recorded — {exc.service}: {exc.detail}")
+        messages.error(
+            request, f"Revocation not recorded — {exc.service}: {exc.detail}"
+        )
         return redirect("patient:access")
     row.status = ConsentStatus.REVOKED
     row.grant_json = signed["grant"]
@@ -263,7 +280,9 @@ def revoke(request: Any, request_id: str) -> HttpResponse:
         scope=list(row.scope),
         correlation_id=row.correlation_id,
     )
-    messages.success(request, f"Revoked {row.requester_id}'s grant; the facility now refuses it.")
+    messages.success(
+        request, f"Revoked {row.requester_id}'s grant; the facility now refuses it."
+    )
     return redirect("patient:access")
 
 
@@ -309,16 +328,79 @@ def _describe(entry: dict[str, Any]) -> dict[str, Any]:
     detail = ", ".join(
         f"{k}={v}"
         for k, v in data.items()
-        if k in ("record_id", "access_via", "denied_by", "reason", "from_state", "to_state", "status", "kind", "reason_code", "record_count")
+        if k
+        in (
+            "record_id",
+            "access_via",
+            "denied_by",
+            "reason",
+            "from_state",
+            "to_state",
+            "status",
+            "kind",
+            "reason_code",
+            "record_count",
+        )
     )
-    return {**entry, "event_data": data, "kind": kind, "actor": actor, "detail": detail}
+    return {
+        **entry,
+        "event_data": data,
+        "kind": kind,
+        "actor": actor,
+        "detail": detail,
+        "sentence": _sentence(et, data, actor),
+    }
+
+
+def _plain(code: Any) -> str:
+    return str(code or "").replace("_", " ").replace("-", " ")
+
+
+def _sentence(et: str, data: dict[str, Any], actor: Any) -> str:
+    """One plain-language line per chain entry; the raw detail stays beside it."""
+    record = f" {data['record_id']}" if data.get("record_id") else ""
+    if et == "access_granted":
+        return f"{actor} read record{record}"
+    if et == "access_denied":
+        why = f": {data['reason']}" if data.get("reason") else ""
+        return f"{actor} was refused record{record}{why}"
+    if data.get("to_state"):
+        return (
+            f"Record{record} moved from {_plain(data.get('from_state')) or 'start'} "
+            f"to {_plain(data['to_state'])}"
+        )
+    if et in _SENTENCES:
+        return _SENTENCES[et].format(actor=actor, record=record)
+    if et == "consent.decision":
+        return (
+            f"Consent {_plain(data.get('status')) or 'decision'} recorded for {actor}"
+        )
+    if et in store_reader.BREAKGLASS_EVENT_TYPES:
+        return f"Emergency access on record{record}: {_plain(et)}"
+    return _plain(et).capitalize()
+
+
+_SENTENCES = {
+    "patient.notification": "You were notified",
+    "patient.lookup": "A clinician looked you up by name and date of birth",
+    "federation.discovery": "A facility searched the federation for your records",
+    "breakglass_share_released": (
+        "The audit service logged the emergency, then released its key share "
+        "for record{record}"
+    ),
+    "federation.rewrap": (
+        "Record{record}'s key was re-wrapped for the emergency clinician"
+    ),
+}
 
 
 @role_required(Role.PATIENT)
 def history(request: Any) -> HttpResponse:
     ctx = _base_ctx(request, "Access history")
     subject_id = ctx["subject_id"]
-    records, store_error = _store(store_reader.records_for_patient, subject_id, default=[])
+    records, store_error = _store(
+        store_reader.records_for_patient, subject_id, default=[]
+    )
     ids = [r["record_id"] for r in records]
     entries, err2 = _store(store_reader.audit_for_patient, subject_id, ids, default=[])
     rows = [_describe(e) for e in entries]
@@ -339,9 +421,15 @@ def history(request: Any) -> HttpResponse:
 @role_required(Role.PATIENT)
 def records(request: Any) -> HttpResponse:
     ctx = _base_ctx(request, "Encrypted health records")
-    rows, store_error = _store(store_reader.records_for_patient, ctx["subject_id"], default=[])
+    rows, store_error = _store(
+        store_reader.records_for_patient, ctx["subject_id"], default=[]
+    )
     ctx.update(
-        {"records": rows, "store_error": store_error, "enrolled": services_subject_safe(ctx["subject_id"])}
+        {
+            "records": rows,
+            "store_error": store_error,
+            "enrolled": services_subject_safe(ctx["subject_id"]),
+        }
     )
     return render(request, "patient/records.html", ctx)
 
@@ -372,8 +460,19 @@ def record_view(request: Any, record_id: str) -> HttpResponse:
             correlation_id=correlation_id,
         )
     except ServiceError as exc:
-        ctx.update({"denied": exc.detail, "denied_service": exc.service, "correlation_id": correlation_id})
-        return render(request, "patient/record_view.html", ctx, status=403 if exc.is_denial else 503)
+        ctx.update(
+            {
+                "denied": exc.detail,
+                "denied_service": exc.service,
+                "correlation_id": correlation_id,
+            }
+        )
+        return render(
+            request,
+            "patient/record_view.html",
+            ctx,
+            status=403 if exc.is_denial else 503,
+        )
 
     plaintext = base64.b64decode(result["plaintext_b64"])
     content_type = result.get("content_type") or meta["content_type"]
@@ -441,8 +540,12 @@ def upload(request: Any) -> HttpResponse:
     upload_file = request.FILES.get("file")
     preset = request.POST.get("preset", "")
     facility_id = request.POST.get("facility_id", "").strip()
-    terms = [t.strip() for t in request.POST.get("search_terms", "").split(",") if t.strip()]
-    ctx.update({"preset": preset, "facility_id": facility_id, "search_terms": ", ".join(terms)})
+    terms = [
+        t.strip() for t in request.POST.get("search_terms", "").split(",") if t.strip()
+    ]
+    ctx.update(
+        {"preset": preset, "facility_id": facility_id, "search_terms": ", ".join(terms)}
+    )
 
     policy = policies.policy_for(preset)
     if upload_file is None or policy is None or facility_id not in facilities:
@@ -455,6 +558,17 @@ def upload(request: Any) -> HttpResponse:
     content = upload_file.read()
     content_type = upload_file.content_type or "application/octet-stream"
     try:
+        clinical_date = (
+            date.fromisoformat(request.POST.get("clinical_date", ""))
+            if request.POST.get("clinical_date")
+            else None
+        )
+        if clinical_date and clinical_date > dj_tz.now().date():
+            raise ValueError("Clinical date cannot be in the future")
+    except ValueError as exc:
+        ctx["error"] = str(exc)
+        return render(request, "patient/upload.html", ctx, status=400)
+    try:
         result = services.custodian_ingest(
             subject_id,
             facility_id=facility_id,
@@ -462,10 +576,20 @@ def upload(request: Any) -> HttpResponse:
             content_type=content_type,
             clinical_policy=policy,
             search_terms=terms,
+            clinical={
+                "title": request.POST.get("title", "").strip() or upload_file.name,
+                "clinical_date": clinical_date.isoformat() if clinical_date else None,
+                "record_type": request.POST.get("record_type", "patient_document"),
+                "episode_id": request.POST.get("episode_id", "").strip(),
+                "sensitivity": request.POST.get("sensitivity", "general"),
+                "care_team_consent": True,
+            },
         )
     except ServiceError as exc:
         ctx["error"] = f"Not sealed — {exc.service}: {exc.detail}"
-        return render(request, "patient/upload.html", ctx, status=403 if exc.is_denial else 503)
+        return render(
+            request, "patient/upload.html", ctx, status=403 if exc.is_denial else 503
+        )
     finally:
         del content
 

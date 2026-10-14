@@ -8,6 +8,7 @@ payloads.
 
 from __future__ import annotations
 
+from contracts.clinical import ClinicalMetadata
 from contracts.consent import ConsentGrant, ConsentRequest
 from contracts.enums import LifecycleState, ReasonCode
 from contracts.lifecycle import TransitionEvent
@@ -167,6 +168,8 @@ class BreakglassUnlockRequest(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
+    sensitive_justification: str = Field(default="", max_length=2000)
+    justification: str = Field(default="", max_length=2000)
 
     assertion: EmergencyAssertion = Field(
         ...,
@@ -215,7 +218,14 @@ class BreakglassUnlockResponse(BaseModel):
         ...,
         description="Base64-encoded PRE-rewrapped DEK for emergency clinician",
     )
-    transition_event: TransitionEvent
+    transition_event: TransitionEvent | None = Field(
+        default=None,
+        description="The signed transition into EMERGENCY_OPEN; None when joined",
+    )
+    joined: bool = Field(
+        default=False,
+        description="True when this joined an already open session (ADR-0057)",
+    )
     correlation_id: str | None = None
     expires_at: AwareDatetime = Field(
         ...,
@@ -286,6 +296,7 @@ class IngestRecordRequest(BaseModel):
     emergency_key_b64: str | None = None
     content_type: str = "application/json"
     record_id: str | None = None
+    clinical: ClinicalMetadata = Field(default_factory=ClinicalMetadata)
 
 
 class IngestRecordResponse(BaseModel):

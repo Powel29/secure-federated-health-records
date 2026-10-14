@@ -26,7 +26,9 @@ state expires.
 All of this runs across a **simulated federation** of mock healthcare facilities
 and attribute authorities, so that a record follows the patient rather than the
 institution. The demo scenario is an unconscious patient arriving at an
-out-of-network clinic: the clinician breaks glass using federation-level
+out-of-network clinic carrying an ID card, from which the clinician reads the
+name and date of birth used to identify them (an unidentified patient is a
+stated limitation, §5 item 7): the clinician breaks glass using federation-level
 threshold shares, emergency search locates the record across the federation,
 access is time-boxed, and the emergency state auto-closes via forced key
 rotation with no administrator action required.
@@ -289,6 +291,12 @@ than this is the fastest way to lose credibility in the viva.
    claim persisted post-expiry DEK rotation or forward secrecy from that
    rotation. The unit-tested rotation primitive is distinct from this open
    storage integration gap (review F9, decision D3).
+7. **Unidentified patients are not supported (ADR-0033, ADR-0059).**
+   Break-glass is bound to a `patient_id` found by a name + date-of-birth
+   lookup, so the demo patient carries an ID card. A patient with no ID, or
+   one whose name or date of birth is unknown, cannot be opened at all; the
+   "John Doe" flow is deferred. In a real emergency department this is a
+   common case, so the paper must say the scenario assumes identification.
 
 ---
 
