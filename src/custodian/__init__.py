@@ -17,7 +17,12 @@ from breakglass import create_emergency_assertion
 from breakglass.emergency_key import Share, generate_emergency_key, split_emergency_key
 from contracts import EmergencyAssertion, Record
 from contracts.enums import ReasonCode
-from crypto_core import generate_ec_keypair, generate_key, private_key_to_pem
+from crypto_core import (
+    generate_ec_keypair,
+    generate_key,
+    private_key_to_pem,
+    sha256_digest,
+)
 from crypto_core.types import ECPrivateKey
 from pre import open_delivery_package
 from records.service import decrypt_record
@@ -64,6 +69,7 @@ def prepare_unlock(
     facility_id: str,
     reason_code: ReasonCode,
     assertion_ttl: datetime.timedelta,
+    context_digest: str = "",
 ) -> UnlockRequestMaterial:
     """Sign the emergency assertion and mint the per-unlock throwaway values."""
     assertion = create_emergency_assertion(
@@ -73,6 +79,7 @@ def prepare_unlock(
         reason_code=reason_code,
         signing_key=signing_key,
         ttl=assertion_ttl,
+        clinical_context_digest=context_digest,
     )
     transition_key, _ = generate_ec_keypair()
     return UnlockRequestMaterial(
@@ -102,3 +109,8 @@ def decrypt_delivered_record(record: Record, dek: bytes) -> bytes:
         DecryptionError: The DEK does not open this record.
     """
     return decrypt_record(record, dek)
+
+
+def justification_digest(text: str) -> str:
+    """Commit UTF-8 justification text without publishing clinical free text."""
+    return sha256_digest(text.strip().encode("utf-8")).hex()

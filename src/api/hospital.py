@@ -54,6 +54,7 @@ from breakglass import (
     ConsumedAssertionIds,
     validate_emergency_assertion,
 )
+from breakglass.assertion import validate_clinical_context
 from breakglass.emergency_key import Share
 from breakglass.exceptions import (
     AssertionExpiredError,
@@ -64,7 +65,11 @@ from breakglass.exceptions import (
     InsufficientSharesError,
     ReplayedAssertionError,
 )
-from breakglass.gate import open_emergency_access
+from breakglass.gate import (
+    EmergencyUnlockResult,
+    join_emergency_access,
+    open_emergency_access,
+)
 from consent.exceptions import (
     ConsentDeniedError,
     ConsentExpiredError,
@@ -78,21 +83,22 @@ from consent.service import (
     revoke_consent_grant,
     verify_consent_grant,
 )
-from contracts.enums import LifecycleState
+from contracts.enums import ConsentStatus, LifecycleState
 from crypto_core import (
     certificate_from_pem,
+    certificate_public_key,
     private_key_from_pem,
-    public_key_from_pem,
 )
 from crypto_core.exceptions import (
     CertificateExpiredError,
     InvalidSignatureError,
     KeyFormatError,
 )
-from crypto_core.types import ECPrivateKey
+from crypto_core.types import ECPrivateKey, ECPublicKey
 from cryptography.x509 import Certificate
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
+from identity import PatientCertificateError, validate_patient_certificate
 from identity.exceptions import ChainValidationError
 from lifecycle.exceptions import (
     EmergencySessionExpiredError,
@@ -110,6 +116,12 @@ from records.exceptions import (
     UnwrappingError,
 )
 from records.ingest import ingest_record
+from records.labels import (
+    LabelTrust,
+    LabelVerificationError,
+    disclosure_rules,
+    verify_clinical_labels,
+)
 from records.revocation import (
     check_revocation_authorization,
     revoke_record_access,
@@ -193,11 +205,15 @@ class FacilityTrust:
     facility_cas: Mapping[str, Certificate]
     revoked_serials: frozenset[int] = field(default_factory=frozenset)
 
-    def issuing_ca(self, leaf: Certificate) -> Certificate | None:
-        """The configured facility CA whose subject issued ``leaf``, if any."""
-        for ca in self.facility_cas.values():
+    def issuing_ca(self, leaf: Certificate) -> tuple[str, Certificate] | None:
+        """``(facility_id, CA)`` of the configured CA that issued ``leaf``, if any.
+
+        The facility id is the clinician's home facility once the chain
+        verifies against that CA (ADR-0063).
+        """
+        for fid, ca in self.facility_cas.items():
             if ca.subject == leaf.issuer:
-                return ca
+                return fid, ca
         return None
 
 
@@ -474,6 +490,60 @@ def create_hospital_app(
         expiry_manager.attach_state_writer(repo.transition_lifecycle_state)
     # Backed by the store so a facility restart does not re-open replay (F22).
     consumed_assertions = ConsumedAssertionIds(backend=repo)
+    # Clinical labels are trusted only when their patient signature verifies
+    # against these anchors; otherwise the strictest rules apply (ADR-0064).
+    label_trust = (
+        LabelTrust(
+            facility_cas=trust.facility_cas,
+            trusted_root=trust.root,
+            revoked_serials=trust.revoked_serials,
+        )
+        if trust is not None
+        else None
+    )
+
+    def patient_key(certificate_pem: str | None, patient_id: str) -> ECPublicKey:
+        """``patient_id``'s key from a certificate a configured CA issued.
+
+        Never a key the caller supplies (ADR-0064): a forger would sign with
+        their own and send that.
+        """
+        if trust is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="consent verification needs configured trust anchors",
+            )
+        if not certificate_pem:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="patient_certificate_pem required to verify consent grant",
+            )
+        try:
+            certificate = certificate_from_pem(certificate_pem.encode("utf-8"))
+        except KeyFormatError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid patient certificate PEM: {exc}",
+            ) from exc
+        try:
+            validate_patient_certificate(
+                certificate,
+                patient_id=patient_id,
+                facility_cas=trust.facility_cas,
+                trusted_root=trust.root,
+                revoked_serials=trust.revoked_serials,
+            )
+        except (
+            ChainValidationError,
+            CertificateExpiredError,
+            PatientCertificateError,
+        ) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Patient certificate refused: {exc}",
+            ) from exc
+        return certificate_public_key(certificate)
+
     audit_key: ECPrivateKey | None = (
         private_key_from_pem(audit_signing_key_pem.encode("utf-8"))
         if audit_signing_key_pem
@@ -547,6 +617,31 @@ def create_hospital_app(
             )
 
         wrapping = repo.get_wrapping_for_record(record_id, wrapped_for=record.policy_id)
+        # Only patient-signed labels can relax this; unsigned or tampered
+        # labels require consent (ADR-0064).
+        rules = disclosure_rules(record, label_trust)
+        if (
+            rules.consent_for_read
+            and payload.requester_id != record.patient_id
+            and payload.grant is None
+        ):
+            _log_denial(
+                audit_url,
+                repo,
+                audit_key,
+                sink=audit_sink,
+                record_id=record_id,
+                requester_id=payload.requester_id,
+                denied_by=DENIED_BY_CONSENT,
+                reason="Patient-signed care-episode consent required",
+                actor_id=facility_id,
+                correlation_id=payload.correlation_id or str(uuid4()),
+            )
+            raise HTTPException(
+                403,
+                "A patient-signed care-episode grant is required; "
+                "specialty alone is not a treating relationship",
+            )
         if not wrapping:
             wrapping = repo.get_wrapping_for_record(record_id)
         if not wrapping:
@@ -566,23 +661,35 @@ def create_hospital_app(
 
         # 1. If a consent grant is provided, read under the consent gate
         if payload.grant is not None:
-            if not payload.patient_public_key_pem:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="patient_public_key_pem required to verify consent grant",
-                )
-            try:
-                patient_pub = public_key_from_pem(
-                    payload.patient_public_key_pem.encode("utf-8")
-                )
-            except KeyFormatError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid patient public key PEM: {exc}",
-                ) from exc
+            patient_pub = patient_key(
+                payload.patient_certificate_pem, record.patient_id
+            )
 
             access_via = ACCESS_VIA_CONSENT
             try:
+                # Revocation is terminal for this request, including after the
+                # revocation artifact expires. Re-consent requires a new request.
+                for decision in repo.list_consent_grants_by_patient(record.patient_id):
+                    if (
+                        decision.request_id == payload.grant.request_id
+                        and decision.grantee_id == payload.requester_id
+                        and decision.status == ConsentStatus.REVOKED
+                    ):
+                        try:
+                            verify_consent_grant(decision, patient_pub)
+                        except InvalidSignatureError:
+                            # Not signed by this patient, so not a revocation of
+                            # theirs: skip it rather than fail the read with 500.
+                            _logger.error(
+                                "stored revocation %s for record %s does not "
+                                "verify; ignoring it",
+                                decision.grant_id,
+                                record_id,
+                            )
+                            continue
+                        raise ConsentRevokedError(
+                            "A stored patient revocation supersedes this grant"
+                        )
                 plaintext_bytes = read_record_under_consent(
                     record=record,
                     wrapping=wrapping,
@@ -755,15 +862,9 @@ def create_hospital_app(
         repo: RepoDep,
     ) -> ConsentResponse:
         """Submit and verify a patient-signed ConsentGrant."""
-        try:
-            patient_pub = public_key_from_pem(
-                payload.patient_public_key_pem.encode("utf-8")
-            )
-        except KeyFormatError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid patient public key PEM: {exc}",
-            ) from exc
+        patient_pub = patient_key(
+            payload.patient_certificate_pem, payload.grant.patient_id
+        )
 
         try:
             verify_consent_grant(payload.grant, patient_pub)
@@ -994,6 +1095,12 @@ def create_hospital_app(
         the re-wrap (log-before-release), register the expiry session, then
         record the signed event. Any failure after the claim undoes it, so a
         refused or failed unlock leaves the record as it was.
+
+        A record that is already EMERGENCY_OPEN with a live session here is
+        joined, not refused (ADR-0057): a second clinician, or the first one
+        viewing it again, passes the same validation and threshold and the
+        audit entry is still committed before the DEK is delivered, but no
+        transition is signed and the window is not extended.
         """
         corr_id = payload.correlation_id or str(uuid4())
         clinician_id = payload.assertion.clinician_id
@@ -1060,8 +1167,8 @@ def create_hospital_app(
         duration = min(payload.emergency_duration_seconds or configured, configured)
 
         # 2. Validate the assertion against configured trust anchors (F1).
-        ca_cert = trust.issuing_ca(cl_cert)
-        if ca_cert is None:
+        issuer = trust.issuing_ca(cl_cert)
+        if issuer is None:
             reason = "clinician certificate was not issued by a configured facility CA"
             raise deny(
                 DENIED_BY_BREAKGLASS_CHAIN,
@@ -1069,6 +1176,7 @@ def create_hospital_app(
                 status.HTTP_403_FORBIDDEN,
                 f"Emergency assertion refused: {reason}",
             )
+        clinician_facility_id, ca_cert = issuer
         try:
             validate_emergency_assertion(
                 assertion=payload.assertion,
@@ -1127,6 +1235,46 @@ def create_hospital_app(
                 f"Emergency assertion not valid for this record: {reason}",
             )
 
+        # Requirements come from patient-signed labels only; unsigned or
+        # tampered labels get every requirement (ADR-0064).
+        rules = disclosure_rules(record, label_trust)
+        if not rules.labels_verified and record.clinical.signature is not None:
+            _logger.error(
+                "record %s labels do not verify; applying the strictest rules: %s",
+                record_id,
+                rules.reason,
+            )
+        if (
+            rules.clinical_justification
+            or rules.sensitive_justification
+            or payload.assertion.clinical_context_digest
+        ):
+            try:
+                validate_clinical_context(
+                    payload.assertion,
+                    record_id,
+                    payload.justification,
+                    payload.sensitive_justification,
+                )
+            except ValueError as exc:
+                raise deny("clinical_context", str(exc), 403, str(exc)) from exc
+            if rules.clinical_justification and len(payload.justification.strip()) < 20:
+                raise deny(
+                    "clinical_context",
+                    "clinical necessity required",
+                    403,
+                    "Explain the immediate clinical need (at least 20 characters)",
+                )
+        if (
+            rules.sensitive_justification
+            and len(payload.sensitive_justification.strip()) < 20
+        ):
+            raise deny(
+                "restricted_record",
+                "explicit necessity required",
+                403,
+                "Restricted record: explicit clinical necessity is required",
+            )
         wrapping = repo.get_wrapping_for_record(record_id, wrapped_for="emergency")
         if not wrapping:
             wrapping = repo.get_wrapping_for_record(record_id)
@@ -1142,46 +1290,12 @@ def create_hospital_app(
             or wrapping
         )
 
-        # 4. Claim the state (N1, F7): of two concurrent opens exactly one wins.
-        source_state = _current_lifecycle_state(repo, record_id)
-        if source_state is LifecycleState.EMERGENCY_OPEN:
-            reason = (
-                "record is already emergency_open; a second break-glass waits "
-                "for the current session to expire"
-            )
-            raise deny(
-                DENIED_BY_BREAKGLASS_TRANSITION,
-                reason,
-                status.HTTP_409_CONFLICT,
-                reason,
-            )
-        try:
-            repo.transition_lifecycle_state(
-                record_id, expected=source_state, new=LifecycleState.EMERGENCY_OPEN
-            )
-        except StateConflictError as exc:
-            raise deny(
-                DENIED_BY_BREAKGLASS_TRANSITION,
-                str(exc),
-                status.HTTP_409_CONFLICT,
-                f"Break-glass refused: {exc}",
-            ) from exc
-
-        session_registered = False
-        try:
-            # 5. Open emergency access via 2-of-3 threshold gate
+        def gate(
+            call: Callable[[], EmergencyUnlockResult | bytes]
+        ) -> EmergencyUnlockResult | bytes:
+            """Run the threshold gate, turning each refusal into an audited deny."""
             try:
-                unlock_result = open_emergency_access(
-                    shares_presented=shares_list,
-                    dek_wrapping=wrapping,
-                    transition_source_state=source_state,
-                    record_id=record_id,
-                    actor_id=clinician_id,
-                    correlation_id=corr_id,
-                    reason_code=payload.assertion.reason_code,
-                    lifecycle_signing_key=lifecycle_priv,
-                    pre_rewrap_key=payload.pre_rewrap_key,
-                )
+                return call()
             except InsufficientSharesError as exc:
                 raise deny(
                     DENIED_BY_BREAKGLASS_GATE,
@@ -1211,7 +1325,110 @@ def create_hospital_app(
                     f"Emergency unlock rejected: {exc}",
                 ) from exc
 
-            # 6. Log-before-release: an audit outage raises (503) and undoes
+        # 4. Already open: join the live session (ADR-0057).
+        source_state = _current_lifecycle_state(repo, record_id)
+        if source_state is LifecycleState.EMERGENCY_OPEN:
+            try:
+                session_expires_at, opener_facility_id = exp_manager.join_window(
+                    record_id
+                )
+            except (SessionNotFoundError, EmergencySessionExpiredError) as exc:
+                # Sessions live at the record's own facility, and the custodian
+                # and portal route every viewer there (ADR-0061), so this is
+                # reached only by a request sent to the wrong node.
+                reason = (
+                    "record is already emergency_open and this facility holds "
+                    f"no live session to join ({exc})"
+                )
+                raise deny(
+                    DENIED_BY_BREAKGLASS_TRANSITION,
+                    reason,
+                    status.HTTP_409_CONFLICT,
+                    reason,
+                ) from exc
+            # Only the opener's own facility joins: the care team on scene, not
+            # any credentialed clinician in the federation (ADR-0063).
+            if clinician_facility_id != opener_facility_id:
+                reason = (
+                    f"emergency session was opened by {opener_facility_id!r}; a "
+                    f"clinician of {clinician_facility_id!r} cannot join it"
+                )
+                raise deny(
+                    "breakglass_join_facility",
+                    reason,
+                    status.HTTP_403_FORBIDDEN,
+                    f"Break-glass refused: {reason}",
+                )
+            rewrapped = gate(
+                lambda: join_emergency_access(
+                    shares_presented=shares_list,
+                    dek_wrapping=wrapping,
+                    record_id=record_id,
+                    pre_rewrap_key=payload.pre_rewrap_key,
+                )
+            )
+            # Log-before-release: an audit outage raises and nothing is sent.
+            _log_rewrap(
+                audit_url,
+                repo,
+                audit_key,
+                sink=audit_sink,
+                record_id=record_id,
+                source_facility_id=record.facility_id,
+                target_actor_id=clinician_id,
+                actor_id=facility_id,
+                correlation_id=corr_id,
+            )
+            return BreakglassUnlockResponse(
+                record_id=record_id,
+                rewrapped_dek_b64=base64.b64encode(rewrapped).decode("ascii"),
+                transition_event=None,
+                joined=True,
+                correlation_id=corr_id,
+                expires_at=session_expires_at,
+                message="Joined the open emergency session; DEK re-wrapped",
+            )
+
+        if payload.join_only:
+            reason = "no open emergency session to join for this record"
+            raise deny(
+                DENIED_BY_BREAKGLASS_TRANSITION,
+                reason,
+                status.HTTP_409_CONFLICT,
+                reason,
+            )
+
+        # 5. Claim the state (N1, F7): of two concurrent opens exactly one wins.
+        try:
+            repo.transition_lifecycle_state(
+                record_id, expected=source_state, new=LifecycleState.EMERGENCY_OPEN
+            )
+        except StateConflictError as exc:
+            raise deny(
+                DENIED_BY_BREAKGLASS_TRANSITION,
+                str(exc),
+                status.HTTP_409_CONFLICT,
+                f"Break-glass refused: {exc}",
+            ) from exc
+
+        session_registered = False
+        try:
+            # 6. Open emergency access via 2-of-3 threshold gate
+            unlock_result = gate(
+                lambda: open_emergency_access(
+                    shares_presented=shares_list,
+                    dek_wrapping=wrapping,
+                    transition_source_state=source_state,
+                    record_id=record_id,
+                    actor_id=clinician_id,
+                    correlation_id=corr_id,
+                    reason_code=payload.assertion.reason_code,
+                    lifecycle_signing_key=lifecycle_priv,
+                    pre_rewrap_key=payload.pre_rewrap_key,
+                )
+            )
+
+            # 7. Log-before-release: an audit outage raises (503) and undoes
             # the claim below, so nothing is released without a chain entry.
             _log_rewrap(
                 audit_url,
@@ -1225,17 +1442,19 @@ def create_hospital_app(
                 correlation_id=corr_id,
             )
 
-            # 7. Every unlock is time-boxed; there is no path that skips it.
+            # 8. Every unlock is time-boxed; there is no path that skips it.
             try:
                 session = exp_manager.register_session(
                     record_id=record_id,
                     actor_id=clinician_id,
+                    opener_facility_id=clinician_facility_id,
                     correlation_id=corr_id,
                     emergency_key=unlock_result.emergency_key,
                     baseline_wrapping_key=base_wrapping_key,
                     baseline_wrapping=baseline_wrapping,
                     emergency_wrapping=wrapping,
                     current_record=record,
+                    return_state=source_state,
                     duration_seconds=duration,
                 )
             except ValueError as exc:
@@ -1245,7 +1464,7 @@ def create_hospital_app(
                 ) from exc
             session_registered = True
 
-            # 8. Record the signed event against the claimed state.
+            # 9. Record the signed event against the claimed state.
             event = unlock_result.transition_event
             repo.insert_transition_event(event)
             repo.transition_lifecycle_state(
@@ -1444,12 +1663,24 @@ def create_hospital_app(
                 emergency_key=em_key,
                 content_type=payload.content_type,
                 record_id=payload.record_id,
+                clinical=payload.clinical,
             )
         except (ValueError, PolicyCompileError, RecordError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Ingest failed: {exc}",
             ) from exc
+
+        # Signed labels must verify before they are stored; unsigned labels are
+        # stored as they are and get the strictest rules (ADR-0064).
+        if result.record.clinical.signature is not None and label_trust is not None:
+            try:
+                verify_clinical_labels(result.record, label_trust)
+            except LabelVerificationError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Ingest refused: {exc}",
+                ) from exc
 
         try:
             repo.insert_record(result.record)

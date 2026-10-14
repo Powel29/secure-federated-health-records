@@ -44,8 +44,14 @@ POLICY_PRESETS: dict[str, dict[str, Any]] = {
         "tree": _and(PHYSICIAN, _leaf("authority-med", "role", "emergency-physician")),
     },
     "general": {
-        "label": "Any physician — physician AND specialty:general-practice",
-        "tree": _and(PHYSICIAN, _leaf("authority-net", "specialty", "general-practice")),
+        "label": "Treating physician or ED physician — patient-signed consent required",
+        "tree": {
+            "node_type": "or",
+            "children": [
+                PHYSICIAN,
+                _leaf("authority-med", "role", "emergency-physician"),
+            ],
+        },
     },
 }
 

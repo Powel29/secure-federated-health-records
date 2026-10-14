@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Care encounters · {{ product_name }}{% endblock %}
+{% block content %}
+<section class="card"><h1>Care encounters</h1>
+{% if notice %}<p role="status">{{ notice }}</p>{% endif %}
+{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+<p>An unidentified arrival gets a temporary encounter identifier. Historical records remain unavailable until identity is confirmed; a suggested match never binds automatically.</p>
+<form method="post">{% csrf_token %}<button class="btn btn-primary" name="action" value="temporary">Register unidentified arrival</button></form>
+<a href="{% url 'clinician:identify' %}">Find and confirm patient identity</a>
+{% for e in episodes %}<article class="card"><h2>{{ e.label }}</h2><p>{{ e.temporary_identifier }} · {{ e.patient_id|default:"Unidentified" }} · {{ e.created_at }}</p>
+{% if not e.closed_at %}<form method="post">{% csrf_token %}<input type="hidden" name="episode_id" value="{{ e.pk }}">
+{% if not e.patient_id %}<label>Identity confirmation evidence <input class="input" name="evidence" minlength="20" placeholder="Identifier source and corroborating details"></label><button class="btn" name="action" value="resolve">Bind to the patient explicitly selected in directory lookup</button>{% endif %}
+<button class="btn" name="action" value="close">Close encounter</button></form>{% else %}<p>Closed {{ e.closed_at }}</p>{% endif %}</article>{% endfor %}
+</section>{% endblock %}

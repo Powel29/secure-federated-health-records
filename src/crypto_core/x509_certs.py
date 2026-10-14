@@ -37,6 +37,7 @@ def build_certificate(
     issuer_common_name: str,
     valid_days: int,
     is_ca: bool = False,
+    subject_role: str | None = None,
 ) -> x509.Certificate:
     """Build and sign an X.509 certificate for ``subject_public_key``.
 
@@ -51,6 +52,9 @@ def build_certificate(
         issuer_common_name: CN of the issuer.
         valid_days: Validity window length in days, starting now.
         is_ca: Whether the subject may itself sign certificates (BasicConstraints).
+        subject_role: Optional role put in the subject's organizational unit
+            (OU), so one kind of leaf cannot pass for another -- e.g. a
+            patient certificate for a clinician's (ADR-0064).
 
     Returns:
         The signed certificate.
@@ -60,7 +64,12 @@ def build_certificate(
         issuer's signature; ``valid_days`` gives every certificate a bounded
         lifetime (ARCHITECTURE.md §8 credential lifecycle).
     """
-    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, subject_common_name)])
+    subject_attributes = [x509.NameAttribute(NameOID.COMMON_NAME, subject_common_name)]
+    if subject_role is not None:
+        subject_attributes.append(
+            x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, subject_role)
+        )
+    subject = x509.Name(subject_attributes)
     issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, issuer_common_name)])
     now = datetime.datetime.now(datetime.timezone.utc)
 
@@ -79,6 +88,12 @@ def build_certificate(
         )
     )
     return builder.sign(issuer_private_key, hashes.SHA256())
+
+
+def certificate_role(certificate: x509.Certificate) -> str | None:
+    """The subject's role (its OU), or ``None`` if it carries none."""
+    attrs = certificate.subject.get_attributes_for_oid(NameOID.ORGANIZATIONAL_UNIT_NAME)
+    return str(attrs[0].value) if attrs else None
 
 
 def build_self_signed_tls_cert(

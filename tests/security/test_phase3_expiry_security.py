@@ -37,6 +37,7 @@ from crypto_core.symmetric import generate_key
 from lifecycle.exceptions import (
     EmergencySessionExpiredError,
     IllegalTransitionError,
+    SessionNotFoundError,
 )
 from lifecycle.expiry import EmergencyExpiryManager
 from lifecycle.state_machine import create_transition_event, verify_transition_event
@@ -105,6 +106,7 @@ def _register(
     actor_id="dr-alice",
     correlation_id="corr-sec-001",
     duration_seconds=None,
+    return_state=LifecycleState.GRANTED,
 ):
     return manager.register_session(
         record_id=scenario["record"].record_id,
@@ -115,6 +117,7 @@ def _register(
         baseline_wrapping=scenario["baseline_wrapping"],
         emergency_wrapping=scenario["emergency_wrapping"],
         current_record=scenario["record"],
+        return_state=return_state,
         duration_seconds=duration_seconds,
     )
 
@@ -322,3 +325,51 @@ class TestIllegalExpiryTransitionsFailClosed:
                 actor_id="system:hsm-timer",
                 signing_key=signing_key,
             )
+
+
+# ---------------------------------------------------------------------------
+# Expiry restores the pre-emergency state (ADR-0058)
+# ---------------------------------------------------------------------------
+
+
+class TestEmergencyCannotUndoRevocation:
+    """Paper claim: an emergency on a revoked record ends REVOKED, never GRANTED
+    -- break-glass overrides a revocation for its window only (ADR-0058)."""
+
+    def test_positive_control_granted_record_returns_to_granted(
+        self, scenario, signing_keys, clock
+    ) -> None:
+        signing_key, _ = signing_keys
+        manager = EmergencyExpiryManager(signing_key=signing_key, clock=clock)
+        result = _register_and_expire(manager, scenario, clock)
+        assert result.rebaselined_event.to_state == LifecycleState.GRANTED
+
+    def test_revoked_record_returns_to_revoked_after_expiry(
+        self, scenario, signing_keys, clock
+    ) -> None:
+        signing_key, public_key = signing_keys
+        manager = EmergencyExpiryManager(signing_key=signing_key, clock=clock)
+        _register(
+            manager,
+            scenario,
+            return_state=LifecycleState.REVOKED,
+            duration_seconds=5.0,
+        )
+        clock.advance(5)
+        result = manager.expire_session(scenario["record"].record_id)
+
+        assert result.rebaselined_event.from_state == LifecycleState.EXPIRED
+        assert result.rebaselined_event.to_state == LifecycleState.REVOKED
+        verify_transition_event(result.rebaselined_event, public_key)
+
+    def test_session_cannot_return_to_emergency_or_expired(
+        self, scenario, signing_keys, clock
+    ) -> None:
+        """Only GRANTED or REVOKED are pre-emergency states; anything else fails."""
+        signing_key, _ = signing_keys
+        manager = EmergencyExpiryManager(signing_key=signing_key, clock=clock)
+        for bad in (LifecycleState.EMERGENCY_OPEN, LifecycleState.EXPIRED):
+            with pytest.raises(ValueError, match="only return to granted or revoked"):
+                _register(manager, scenario, return_state=bad)
+        with pytest.raises(SessionNotFoundError):
+            manager.get_active_emergency_key(scenario["record"].record_id)

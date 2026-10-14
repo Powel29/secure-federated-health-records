@@ -4,60 +4,64 @@
 {% include "patient/_case_banner.html" %}
 
 <div class="grid-2">
-  <div class="card card-accent">
+  <section class="card card-frame" aria-labelledby="alerts-h">
     <div class="subhead">
-      <h3 class="card-title">Alerts</h3>
-      <span class="tag tag-outline">{{ unread_count }} unread</span>
+      <h2 class="card-title" id="alerts-h">Alerts</h2>
+      {% if unread_count %}<span class="tag tag-warn">{{ unread_count }} new</span>{% else %}<span class="tag tag-quiet">All read</span>{% endif %}
     </div>
     {% if notifications %}
       <div>
       {% for n in notifications %}
-        <div class="note {% if n.is_unread %}unread{% endif %}">
+        <div class="note {% if n.is_unread %}unread{% endif %} {% if n.kind == 'breakglass' %}is-emergency{% endif %}">
+          {% if n.kind == "breakglass" %}{% include "_icon.html" with name="glass" %}{% elif n.kind == "revoked" %}{% include "_icon.html" with name="key" %}{% else %}{% include "_icon.html" with name="bell" %}{% endif %}
           <div class="grow">
             <div class="title">{{ n.title }}</div>
             <div class="body">{{ n.body }}</div>
-            <div class="tiny text-muted mt-2 mono">{{ n.created_at|date:"Y-m-d H:i" }} UTC · {{ n.get_kind_display }}
-              {% if n.correlation_id %} · <a href="{% url 'patient:history' %}?type=all#cid-{{ n.correlation_id }}">{{ n.correlation_id|truncatechars:22 }}</a>{% endif %}
-              {% if n.audit_seq %} · chain seq {{ n.audit_seq }}{% else %} · <span class="tag tag-neutral">not yet in chain</span>{% endif %}</div>
+            <div class="meta">
+              <span class="mono">{{ n.created_at|date:"Y-m-d H:i" }} UTC</span>
+              <span>{{ n.get_kind_display }}</span>
+              {% if n.correlation_id %}<a class="cid" href="{% url 'patient:history' %}?type=all#cid-{{ n.correlation_id }}">{% include "_icon.html" with name="route" %}{{ n.correlation_id|truncatechars:22 }}</a>{% endif %}
+              {% if n.audit_seq %}<span>chain seq {{ n.audit_seq }}</span>{% else %}<span class="tag tag-quiet">Not yet in chain</span>{% endif %}
+            </div>
           </div>
           {% if n.is_unread %}
-          <form method="post" action="{% url 'patient:mark_read' n.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{% url 'patient:home' %}"><button class="btn btn-ghost btn-sm">Dismiss</button></form>
+          <form method="post" action="{% url 'patient:mark_read' n.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{% url 'patient:home' %}"><button class="btn btn-ghost btn-sm">Mark read</button></form>
           {% endif %}
         </div>
       {% endfor %}
       </div>
     {% else %}
-      <div class="empty">No alerts. You will be told here when a record is opened under break-glass, a grant is revoked, or a clinician asks for access.</div>
+      <p class="empty">No alerts. You will be told here when a record is opened under break-glass, a grant is revoked, or a clinician asks for access.</p>
     {% endif %}
-  </div>
+  </section>
 
   <div class="stack gap-6">
-    <div class="card">
-      <h3 class="card-title">At a glance</h3>
-      <div class="grid-stats">
-        <div><div class="kicker">Pending requests</div><div class="stat">{{ pending_count }}</div></div>
-        <div><div class="kicker">Live grants</div><div class="stat">{{ live_count }}</div></div>
-        <div><div class="kicker">Sealed records</div><div class="stat">{{ records|length }}</div></div>
-      </div>
-      <div class="flex mt-3">
+    <section class="card" aria-labelledby="glance-h">
+      <h2 class="card-title" id="glance-h">Your access right now</h2>
+      <ul class="summary-line">
+        <li><span class="n">{{ pending_count }}</span> request{{ pending_count|pluralize }} waiting for you</li>
+        <li><span class="n">{{ live_count }}</span> live grant{{ live_count|pluralize }}</li>
+        <li><span class="n">{{ records|length }}</span> sealed record{{ records|length|pluralize }}</li>
+      </ul>
+      <div class="flex mt-2">
         <a class="btn btn-primary btn-sm" href="{% url 'patient:access' %}">Review access</a>
         <a class="btn btn-secondary btn-sm" href="{% url 'patient:records' %}">Open records</a>
         <a class="btn btn-secondary btn-sm" href="{% url 'patient:history' %}">Access history</a>
       </div>
-    </div>
+    </section>
 
-    <div class="card">
-      <h3 class="card-title">Your enrolment</h3>
-      <div class="grid-stats">
-        <div><div class="kicker">Subject</div><div class="value mono">{{ subject_id }}</div></div>
-        <div><div class="kicker">Owner key</div><div class="value">
-          {% if enrolled %}{% for c in enrolled.credentials %}<span class="tag tag-accent">{{ c.name }}:{{ c.value }}</span> {% empty %}<span class="tag tag-neutral">no credential issued</span>{% endfor %}
-          {% else %}<span class="tag tag-neutral">no key agent enrolled</span>{% endif %}</div></div>
-        <div><div class="kicker">Signing</div><div class="value">{% if enrolled %}ECDSA P-256 · custodian-held{% else %}—{% endif %}</div></div>
-      </div>
-      {% for r in requests %}<div class="tiny text-muted mt-2">Registration: <span class="tag tag-neutral">{{ r.get_status_display }}</span> {{ r.requested_attributes }}</div>{% endfor %}
-      {% if not enrolled %}<div class="notice notice-info mt-2 small">Your login identifies you, but no authority-issued key is held for <span class="mono">{{ subject_id }}</span>. Until one is, nothing decrypts (ADR-0021).</div>{% endif %}
-    </div>
+    <section class="card" aria-labelledby="enrol-h">
+      <h2 class="card-title" id="enrol-h">Your keys</h2>
+      <dl class="facts">
+        <div><dt>Subject</dt><dd class="mono">{{ subject_id }}</dd></div>
+        <div><dt>Owner key</dt><dd>
+          {% if enrolled %}{% for c in enrolled.credentials %}<span class="tag tag-id">{{ c.name }}:{{ c.value }}</span> {% empty %}<span class="tag tag-quiet">No credential issued</span>{% endfor %}
+          {% else %}<span class="tag tag-quiet">No key agent enrolled</span>{% endif %}</dd></div>
+        <div><dt>Signing</dt><dd>{% if enrolled %}ECDSA P-256, held by the key custodian{% else %}None{% endif %}</dd></div>
+      </dl>
+      {% for r in requests %}<p class="tiny text-muted mb-0">Registration: <span class="tag tag-quiet">{{ r.get_status_display }}</span> {{ r.requested_attributes }}</p>{% endfor %}
+      {% if not enrolled %}<div class="notice notice-info small" role="status">{% include "_icon.html" with name="info" %}<div>Your login identifies you, but no authority-issued key is held for <span class="mono">{{ subject_id }}</span>. Until one is, nothing decrypts <span class="mono">(ADR-0021)</span>.</div></div>{% endif %}
+    </section>
   </div>
 </div>
 {% endblock %}

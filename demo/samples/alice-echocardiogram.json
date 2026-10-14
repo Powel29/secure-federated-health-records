@@ -1,12 +1,12 @@
 {
   "patient_id": "pat-101",
   "record_type": "cardiology_report",
-  "title": "Transthoracic echocardiogram — 6-week post-STEMI follow-up",
+  "title": "Transthoracic echocardiogram — 4-week post-STEMI follow-up",
   "encounter": {
-    "encounter_id": "enc-2026-10-22-07",
-    "facility": "St. Jude Hospital (facility-a)",
+    "encounter_id": "enc-2026-10-08-07",
+    "facility": "Northvale General Hospital (facility-a)",
     "department": "Cardiology outpatient",
-    "performed_at": "2026-10-22T09:40:00Z",
+    "performed_at": "2026-10-08T09:40:00Z",
     "ordering_clinician": "doc-301",
     "reason": "Assess LV function after anterolateral STEMI (enc-2026-09-10-01)"
   },
@@ -41,12 +41,12 @@
   "allergies": [
     { "substance": "Penicillin", "reaction": "Anaphylaxis", "severity": "severe" }
   ],
-  "impression": "Moderately reduced LV systolic function (EF 41%, improved from 35%) with residual anterior wall motion abnormality. No apical thrombus. Mild MR.",
+  "impression": "Mildly reduced LV systolic function (EF 41%, HFmrEF range) with residual anterior wall motion abnormality. No apical thrombus. Mild MR.",
   "plan": [
     "Continue guideline-directed medical therapy; titrate ramipril to 10 mg as tolerated",
     "Repeat echocardiogram in 3 months",
     "Cardiac rehabilitation referral",
-    "Strictly avoid beta-lactam antibiotics (documented anaphylaxis)"
+    "Avoid penicillins (documented anaphylaxis); other beta-lactams only after allergy review"
   ],
   "synthetic": true
 }

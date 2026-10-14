@@ -1,27 +1,24 @@
 {% extends "base.html" %}
 {% block title %}Encrypted health records · {{ product_name }}{% endblock %}
 {% block content %}
-<div class="card">
+<section class="card" aria-labelledby="rec-h">
   <div class="subhead">
-    <h3 class="card-title">Your encrypted records</h3>
-    <div class="flex">
-      <span class="tag tag-outline">{{ records|length }} sealed payload{{ records|length|pluralize }}</span>
-      <a class="btn btn-primary btn-sm" href="{% url 'patient:upload' %}">Upload a record</a>
-    </div>
+    <h2 class="card-title" id="rec-h">Your encrypted records</h2>
+    <a class="btn btn-primary btn-sm" href="{% url 'patient:upload' %}">{% include "_icon.html" with name="upload" %}Upload a record</a>
   </div>
-  {% if store_error %}<div class="notice notice-error">The encrypted store is not reachable from the portal: {{ store_error }}</div>{% endif %}
-  <div class="grid-3 mt-3">
+  {% if store_error %}<div class="notice notice-error" role="alert">{% include "_icon.html" with name="x" %}<div>The encrypted store is not reachable from the portal, so no records are listed. Reason: {{ store_error }}</div></div>{% endif %}
+  <div class="grid-3">
     {% for r in records %}
-      <div class="record-card">
-        <div class="flex between baseline"><span class="mono" style="font-size:13px">{{ r.record_id }}</span><span class="tag tag-neutral">{{ r.content_type }}</span></div>
-        <div class="title">{{ r.facility_name|default:r.facility_id }}</div>
-        <div class="meta">Facility <span class="mono">{{ r.facility_id }}</span><br>Created <span class="mono">{{ r.created_at|date:"Y-m-d H:i" }} UTC</span><br>Ciphertext {{ r.ciphertext_bytes }} B · generation {{ r.generation|default:0 }}</div>
-        <div class="seal">AES-256-GCM · {% if r.lifecycle_state == "emergency_open" %}EMERGENCY-OPEN{% elif r.lifecycle_state == "revoked" %}re-keyed after rotation{% else %}owner leaf present{% endif %}</div>
-        <a class="btn btn-primary btn-sm" href="{% url 'patient:record_view' r.record_id %}">Open via owner attribute</a>
-      </div>
+      <article class="record-card">
+        <div class="flex between baseline"><span class="mono small">{{ r.record_id }}</span>{% if r.lifecycle_state == "emergency_open" %}<span class="tag tag-emergency">Emergency open</span>{% elif r.lifecycle_state == "revoked" %}<span class="tag tag-revoked">Re-keyed</span>{% else %}<span class="tag tag-quiet">{{ r.content_type }}</span>{% endif %}</div>
+        <h3 class="title mb-0">{{ r.facility_name|default:r.facility_id }}</h3>
+        <div class="meta">Created <span class="mono">{{ r.created_at|date:"Y-m-d H:i" }} UTC</span><br>{{ r.content_type }} · {{ r.ciphertext_bytes }} bytes of ciphertext · key generation {{ r.generation|default:0 }}</div>
+        <div class="seal">{% include "_icon.html" with name="lock" %}AES-256-GCM · your <span class="mono">owner</span> key can open it</div>
+        <a class="btn btn-secondary btn-sm" href="{% url 'patient:record_view' r.record_id %}">Open record</a>
+      </article>
     {% empty %}
-      {% if not store_error %}<div class="empty">No records yet. Records arrive through a facility's ingest path, sealed under a policy that always carries your <span class="mono">owner:{{ subject_id }}</span> leaf (ADR-0016).</div>{% endif %}
+      {% if not store_error %}<p class="empty">No records yet. Records arrive through a facility's ingest path, sealed under a policy that always includes your <span class="mono">owner:{{ subject_id }}</span> key <span class="mono">(ADR-0016)</span>.</p>{% endif %}
     {% endfor %}
   </div>
-</div>
+</section>
 {% endblock %}

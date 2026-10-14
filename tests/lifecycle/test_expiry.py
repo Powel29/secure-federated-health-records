@@ -19,6 +19,7 @@ import datetime
 import time
 
 import pytest
+from contracts.clinical import ClinicalMetadata
 from contracts.enums import LifecycleState
 from crypto_core import generate_ec_keypair
 from crypto_core.symmetric import generate_key
@@ -90,6 +91,7 @@ def _register(
     actor_id="dr-alice",
     correlation_id="corr-001",
     duration_seconds=None,
+    return_state=LifecycleState.GRANTED,
 ):
     return manager.register_session(
         record_id=scenario["record"].record_id,
@@ -100,6 +102,7 @@ def _register(
         baseline_wrapping=scenario["baseline_wrapping"],
         emergency_wrapping=scenario["emergency_wrapping"],
         current_record=scenario["record"],
+        return_state=return_state,
         duration_seconds=duration_seconds,
     )
 
@@ -177,11 +180,19 @@ def test_custom_and_default_timebox_duration(signing_keys, clock) -> None:
 def test_auto_expiry_full_rotation_cycle(scenario, signing_keys, clock) -> None:
     """expire_session emits both signed transitions and rotates the DEK."""
     signing_key, public_key = signing_keys
+    clinical = ClinicalMetadata(
+        title="Synthetic sensitive report",
+        source="hospital",
+        sensitivity="mental_health",
+        care_team_consent=True,
+    )
+    scenario["record"] = scenario["record"].model_copy(update={"clinical": clinical})
     manager = EmergencyExpiryManager(signing_key=signing_key, clock=clock)
     _register(manager, scenario, duration_seconds=30.0)
     clock.advance(30)  # now == expires_at
 
     result = manager.expire_session(scenario["record"].record_id)
+    assert result.rotated_record.clinical == clinical
 
     assert result.expired_event.from_state == LifecycleState.EMERGENCY_OPEN
     assert result.expired_event.to_state == LifecycleState.EXPIRED
@@ -282,6 +293,7 @@ def test_background_monitor_expires_without_admin_action(
         baseline_wrapping=scenario["baseline_wrapping"],
         emergency_wrapping=scenario["emergency_wrapping"],
         current_record=scenario["record"],
+        return_state=LifecycleState.GRANTED,
         duration_seconds=0.05,
     )
 

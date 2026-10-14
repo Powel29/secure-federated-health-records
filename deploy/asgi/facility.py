@@ -15,7 +15,8 @@ Environment:
         numbers of revoked clinician certificates.
     EMERGENCY_DURATION_SECONDS: Default break-glass time-box length in
         seconds (ARCHITECTURE.md §7 "Configuration": short for demos,
-        realistic for the paper). Defaults to 900 (15 minutes). A caller may
+        realistic for the paper). Defaults to 14400 (4 hours, an emergency
+        encounter; ADR-0056). The demo paths set 120. A caller may
         request a shorter window, never a longer one (review F6).
 
 Break-glass trust anchors come from this configuration, never from the
@@ -37,7 +38,7 @@ from fastapi import FastAPI
 from lifecycle.expiry import EmergencyExpiryManager
 from lifecycle.state_machine import ConsumedEventIds, LifecycleStateMachine
 
-_DEFAULT_EMERGENCY_DURATION_SECONDS = 900.0
+_DEFAULT_EMERGENCY_DURATION_SECONDS = 14400.0
 
 
 def load_trust() -> FacilityTrust:

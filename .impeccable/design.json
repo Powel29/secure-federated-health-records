@@ -1,0 +1,555 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-13T00:00:00Z",
+  "title": "Design System: Custos",
+  "extensions": {
+    "colorMeta": {
+      "enamel": {
+        "role": "neutral",
+        "displayName": "White Enamel",
+        "canonical": "#f6f5f1",
+        "tonalRamp": [
+          "#2f2b1e",
+          "#544e36",
+          "#79704e",
+          "#9d9267",
+          "#b5ad8c",
+          "#cdc8b1",
+          "#e3e0d4",
+          "#f5f4ef"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Plate White",
+        "canonical": "#ffffff",
+        "tonalRamp": [
+          "#262626",
+          "#454545",
+          "#636363",
+          "#828282",
+          "#a1a1a1",
+          "#bfbfbf",
+          "#dbdbdb",
+          "#f2f2f2"
+        ]
+      },
+      "sunk": {
+        "role": "neutral",
+        "displayName": "Sunk Enamel",
+        "canonical": "#ecebe6",
+        "tonalRamp": [
+          "#2b2a21",
+          "#4e4b3b",
+          "#716c56",
+          "#938d71",
+          "#aea994",
+          "#c8c5b7",
+          "#e0dfd6",
+          "#f4f3f1"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#15181b",
+        "tonalRamp": [
+          "#21262b",
+          "#3c454d",
+          "#576370",
+          "#728292",
+          "#95a1ac",
+          "#b7bfc7",
+          "#d7dbe0",
+          "#f1f2f4"
+        ]
+      },
+      "ink-2": {
+        "role": "neutral",
+        "displayName": "Ink Grey",
+        "canonical": "#4a525a",
+        "tonalRamp": [
+          "#23262a",
+          "#3e454c",
+          "#5a636d",
+          "#76828e",
+          "#97a1aa",
+          "#b9bfc5",
+          "#d8dbdf",
+          "#f1f2f3"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#d3d0c8",
+        "tonalRamp": [
+          "#2a2822",
+          "#4c483d",
+          "#6e6858",
+          "#908874",
+          "#aba596",
+          "#c6c2b8",
+          "#dfddd7",
+          "#f4f3f1"
+        ]
+      },
+      "graphite": {
+        "role": "neutral",
+        "displayName": "Graphite",
+        "canonical": "#1e2226",
+        "tonalRamp": [
+          "#22262b",
+          "#3d454d",
+          "#58636f",
+          "#738291",
+          "#96a1ac",
+          "#b8bfc7",
+          "#d7dbe0",
+          "#f1f2f4"
+        ]
+      },
+      "graphite-2": {
+        "role": "neutral",
+        "displayName": "Graphite Hover",
+        "canonical": "#2a2f34",
+        "tonalRamp": [
+          "#22262a",
+          "#3e454c",
+          "#59636e",
+          "#75828f",
+          "#97a1ab",
+          "#b8bfc6",
+          "#d8dbdf",
+          "#f1f2f4"
+        ]
+      },
+      "rail-text": {
+        "role": "neutral",
+        "displayName": "Rail Text",
+        "canonical": "#e6e4df",
+        "tonalRamp": [
+          "#2b2822",
+          "#4d483c",
+          "#706957",
+          "#918973",
+          "#aca695",
+          "#c7c3b7",
+          "#e0ddd7",
+          "#f4f3f1"
+        ]
+      },
+      "rail-muted": {
+        "role": "neutral",
+        "displayName": "Rail Muted",
+        "canonical": "#a8adb3",
+        "tonalRamp": [
+          "#242629",
+          "#404449",
+          "#5d636a",
+          "#7a818a",
+          "#9aa0a7",
+          "#bbbfc4",
+          "#d9dbde",
+          "#f1f2f3"
+        ]
+      },
+      "signal-red": {
+        "role": "primary",
+        "displayName": "Signal Red",
+        "canonical": "#c8102e",
+        "tonalRamp": [
+          "#470610",
+          "#800a1d",
+          "#b80f2a",
+          "#ec183a",
+          "#f1506a",
+          "#f6899b",
+          "#fabdc7",
+          "#fde7eb"
+        ]
+      },
+      "signal-red-deep": {
+        "role": "primary",
+        "displayName": "Signal Red Deep",
+        "canonical": "#9c0c24",
+        "tonalRamp": [
+          "#470510",
+          "#800a1e",
+          "#b90e2b",
+          "#ed173b",
+          "#f2506b",
+          "#f6899b",
+          "#fabdc7",
+          "#fde7eb"
+        ]
+      },
+      "signal-red-wash": {
+        "role": "primary",
+        "displayName": "Signal Red Wash",
+        "canonical": "#fbe8eb",
+        "tonalRamp": [
+          "#410b14",
+          "#751424",
+          "#a91d34",
+          "#da2a46",
+          "#e35e73",
+          "#ec92a1",
+          "#f4c2ca",
+          "#fbe9ec"
+        ]
+      },
+      "safe-green": {
+        "role": "state",
+        "displayName": "Safe Green",
+        "canonical": "#00805a",
+        "tonalRamp": [
+          "#004c36",
+          "#008a61",
+          "#00c78c",
+          "#05ffb5",
+          "#42ffc7",
+          "#80ffd9",
+          "#b8ffea",
+          "#e5fff7"
+        ]
+      },
+      "safe-green-wash": {
+        "role": "state",
+        "displayName": "Safe Green Wash",
+        "canonical": "#e3f2ec",
+        "tonalRamp": [
+          "#183429",
+          "#2c5e4a",
+          "#3f886b",
+          "#54b08b",
+          "#7ec3a8",
+          "#a8d7c4",
+          "#cee8de",
+          "#eef7f3"
+        ]
+      },
+      "warning-amber": {
+        "role": "state",
+        "displayName": "Warning Amber",
+        "canonical": "#f2b705",
+        "tonalRamp": [
+          "#4b3902",
+          "#876603",
+          "#c39304",
+          "#fabe0a",
+          "#fbce46",
+          "#fcde82",
+          "#feecb9",
+          "#fef8e6"
+        ]
+      },
+      "expired-slate": {
+        "role": "state",
+        "displayName": "Expired Slate",
+        "canonical": "#5b6670",
+        "tonalRamp": [
+          "#22262a",
+          "#3e454c",
+          "#59646e",
+          "#75838f",
+          "#97a1aa",
+          "#b9c0c6",
+          "#d8dbdf",
+          "#f1f2f4"
+        ]
+      },
+      "action-blue": {
+        "role": "secondary",
+        "displayName": "Action Blue",
+        "canonical": "#0057a8",
+        "tonalRamp": [
+          "#00284c",
+          "#00478a",
+          "#0067c7",
+          "#0587ff",
+          "#42a4ff",
+          "#80c2ff",
+          "#b8ddff",
+          "#e5f3ff"
+        ]
+      },
+      "action-blue-deep": {
+        "role": "secondary",
+        "displayName": "Action Blue Deep",
+        "canonical": "#00447f",
+        "tonalRamp": [
+          "#00294c",
+          "#004a8a",
+          "#006ac7",
+          "#058bff",
+          "#42a7ff",
+          "#80c4ff",
+          "#b8deff",
+          "#e5f3ff"
+        ]
+      },
+      "trace-violet": {
+        "role": "tertiary",
+        "displayName": "Trace Violet",
+        "canonical": "#6b3fa0",
+        "tonalRamp": [
+          "#251637",
+          "#422763",
+          "#5f388f",
+          "#7d4cb8",
+          "#9d78ca",
+          "#bda4db",
+          "#dacceb",
+          "#f2edf8"
+        ]
+      },
+      "trace-violet-wash": {
+        "role": "tertiary",
+        "displayName": "Trace Violet Wash",
+        "canonical": "#f1ebf8",
+        "tonalRamp": [
+          "#251439",
+          "#422466",
+          "#603493",
+          "#7d46be",
+          "#9d73ce",
+          "#bda1de",
+          "#dacaec",
+          "#f2ecf8"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Screen name in the topbar."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Section and card titles."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Sub-sections."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Running text, 64ch max."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Uppercase condensed fact labels, table and chain heads, step numbers."
+      },
+      "plate": {
+        "displayName": "Plate",
+        "purpose": "State plate lettering."
+      },
+      "clock": {
+        "displayName": "Clock",
+        "purpose": "Break-glass countdown; 44px outside the call point."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Hashes, ids, correlation ids."
+      }
+    },
+    "shadows": [
+      {
+        "name": "wall",
+        "value": "0 2px 6px rgba(21, 24, 27, 0.08)",
+        "purpose": "Quiet cards and record cards off the enamel wall."
+      },
+      {
+        "name": "box-lip",
+        "value": "inset 0 -6px 0 rgba(0, 0, 0, 0.18)",
+        "purpose": "Call point frame only."
+      },
+      {
+        "name": "auth-float",
+        "value": "0 16px 40px rgba(0, 0, 0, 0.35)",
+        "purpose": "Auth card over graphite."
+      }
+    ],
+    "motion": [
+      {
+        "name": "press",
+        "value": "120ms ease-out",
+        "purpose": "Button background change and 1px press shift."
+      },
+      {
+        "name": "clock-warn",
+        "value": "1s steps(2, jump-none) infinite",
+        "purpose": "Countdown final-seconds blink to 0.55 opacity."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "none",
+        "purpose": "All animation and transition off under prefers-reduced-motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "callpoint-stack",
+        "value": "1100px"
+      },
+      {
+        "name": "rail-to-menu",
+        "value": "860px"
+      },
+      {
+        "name": "stack-tables",
+        "value": "600px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Action blue; any ordinary pressable action.",
+      "html": "<button class=\"ds-btn-primary\">Request consent</button>",
+      "css": ".ds-btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:8px 18px;border:2px solid transparent;border-radius:0;font-family:'Barlow Condensed',Bahnschrift,'Arial Narrow',sans-serif;font-weight:700;font-size:18px;line-height:1.1;letter-spacing:0.03em;cursor:pointer;transition:background-color 120ms ease-out,transform 120ms ease-out;background:#0057a8;border-color:#0057a8;color:#fff}.ds-btn-primary:hover{background:#00447f;border-color:#00447f}.ds-btn-primary:active{transform:translateY(1px)}.ds-btn-primary:focus-visible{outline:3px solid #0057a8;outline-offset:2px;}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "White with a 2px ink frame; the quiet alternative.",
+      "html": "<button class=\"ds-btn-secondary\">Identify patient</button>",
+      "css": ".ds-btn-secondary{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:8px 18px;border:2px solid transparent;border-radius:0;font-family:'Barlow Condensed',Bahnschrift,'Arial Narrow',sans-serif;font-weight:700;font-size:18px;line-height:1.1;letter-spacing:0.03em;cursor:pointer;transition:background-color 120ms ease-out,transform 120ms ease-out;background:#fff;border-color:#15181b;color:#15181b}.ds-btn-secondary:hover{background:#ecebe6}.ds-btn-secondary:active{transform:translateY(1px)}.ds-btn-secondary:focus-visible{outline:3px solid #0057a8;outline-offset:2px;}"
+    },
+    {
+      "name": "Strong Button",
+      "kind": "button",
+      "refersTo": "button-strong",
+      "description": "Solid ink; decisive non-emergency actions.",
+      "html": "<button class=\"ds-btn-strong\">Verify chain</button>",
+      "css": ".ds-btn-strong{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:8px 18px;border:2px solid transparent;border-radius:0;font-family:'Barlow Condensed',Bahnschrift,'Arial Narrow',sans-serif;font-weight:700;font-size:18px;line-height:1.1;letter-spacing:0.03em;cursor:pointer;transition:background-color 120ms ease-out,transform 120ms ease-out;background:#15181b;border-color:#15181b;color:#fff}.ds-btn-strong:hover{background:#333a40}.ds-btn-strong:active{transform:translateY(1px)}.ds-btn-strong:focus-visible{outline:3px solid #0057a8;outline-offset:2px;}"
+    },
+    {
+      "name": "Emergency Button",
+      "kind": "button",
+      "refersTo": "button-emergency",
+      "description": "Signal red; break-glass declaration only.",
+      "html": "<button class=\"ds-btn-emergency\">Declare emergency</button>",
+      "css": ".ds-btn-emergency{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:8px 18px;border:2px solid transparent;border-radius:0;font-family:'Barlow Condensed',Bahnschrift,'Arial Narrow',sans-serif;font-weight:700;font-size:18px;line-height:1.1;letter-spacing:0.03em;cursor:pointer;transition:background-color 120ms ease-out,transform 120ms ease-out;background:#c8102e;border-color:#c8102e;color:#fff;letter-spacing:0.06em;font-size:22px;min-height:56px}.ds-btn-emergency:hover{background:#9c0c24;border-color:#9c0c24}.ds-btn-emergency:active{transform:translateY(1px)}.ds-btn-emergency:focus-visible{outline:3px solid #0057a8;outline-offset:2px;}"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Square, 2px grey border, blue on focus.",
+      "html": "<label class=\"ds-field\"><span>Justification</span><input class=\"ds-input\" placeholder=\"What makes this an emergency\"></label>",
+      "css": ".ds-field{display:block;font-family:Barlow,Bahnschrift,'Segoe UI',system-ui,sans-serif;color:#15181b}.ds-field>span{display:block;font-weight:600;font-size:16px;margin-bottom:6px}.ds-input{width:100%;min-height:44px;padding:8px 12px;font:inherit;font-size:17px;color:#15181b;caret-color:#0057a8;background:#fff;border:2px solid #6b7279;border-radius:0}.ds-input:hover{border-color:#15181b}.ds-input:focus-visible{border-color:#0057a8;outline:3px solid rgba(0,87,168,0.35);outline-offset:0}"
+    },
+    {
+      "name": "State Plates",
+      "kind": "chip",
+      "refersTo": "tag",
+      "description": "Bordered condensed plates; the only place state colour lives.",
+      "html": "<span class=\"ds-tag ds-ok\">Granted</span><span class=\"ds-tag ds-warn\">Pending</span><span class=\"ds-tag ds-expired\">Expired</span><span class=\"ds-tag ds-revoked\">Revoked</span><span class=\"ds-tag ds-fail\">Failed</span><span class=\"ds-tag ds-emergency\">Emergency open</span><span class=\"ds-tag ds-trace\">Trace</span>",
+      "css": ".ds-tag{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border:2px solid currentColor;background:#fff;font-family:'Barlow Condensed',Bahnschrift,'Arial Narrow',sans-serif;font-weight:700;font-size:14px;line-height:1.35;letter-spacing:0.04em;text-transform:uppercase;white-space:nowrap;margin-right:6px;color:#4a525a}.ds-ok{color:#00805a}.ds-warn{color:#15181b;background:#f2b705;border-color:#f2b705}.ds-expired{color:#5b6670}.ds-revoked{color:#15181b;text-decoration:line-through;text-decoration-thickness:2px}.ds-fail{color:#fff;background:#15181b;border-color:#15181b}.ds-emergency{color:#fff;background:#c8102e;border-color:#c8102e}.ds-trace{color:#6b3fa0}"
+    },
+    {
+      "name": "Rail Navigation",
+      "kind": "nav",
+      "refersTo": "rail",
+      "description": "Graphite rail; current page inverts to white; break-glass link pale red; amber count plates.",
+      "html": "<nav class=\"ds-rail\"><div class=\"ds-sec\">Clinician portal</div><a href=\"#\" aria-current=\"page\">Overview</a><a href=\"#\">Identify patient</a><a href=\"#\" class=\"ds-em\">Emergency break-glass</a><a href=\"#\">Requests <span class=\"ds-count\">2</span></a></nav>",
+      "css": ".ds-rail{width:264px;background:#1e2226;color:#e6e4df;padding:12px;display:flex;flex-direction:column;font-family:Barlow,Bahnschrift,'Segoe UI',system-ui,sans-serif}.ds-sec{padding:8px 12px;font-family:'Barlow Condensed',Bahnschrift,'Arial Narrow',sans-serif;font-weight:600;font-size:15px;letter-spacing:0.06em;text-transform:uppercase;color:#a8adb3}.ds-rail a{display:flex;align-items:center;padding:10px 12px;color:#e6e4df;text-decoration:none;font-size:16px}.ds-rail a:hover{background:#2a2f34;color:#fff}.ds-rail a[aria-current=page]{background:#fff;color:#15181b;font-weight:600}.ds-rail a.ds-em{color:#ffb3bf}.ds-rail a:focus-visible{outline:3px solid #fff;outline-offset:2px}.ds-count{margin-left:auto;min-width:24px;padding:0 6px;background:#f2b705;color:#15181b;font-family:'Barlow Condensed',Bahnschrift,'Arial Narrow',sans-serif;font-weight:700;font-size:14px;line-height:22px;text-align:center}"
+    },
+    {
+      "name": "Call Point",
+      "kind": "custom",
+      "refersTo": "callpoint",
+      "description": "The break-glass control: red mounted box, white pane, DECLARE button. Slate when reset, ink when failed.",
+      "html": "<section class=\"ds-cp\"><div class=\"ds-cp-label\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.25\" stroke-linecap=\"square\" stroke-linejoin=\"miter\" aria-hidden=\"true\"><rect x=\"3\" y=\"3\" width=\"18\" height=\"18\"/><path d=\"M13 3l-3 6 4 3-3 9\"/></svg>Break glass</div><div class=\"ds-cp-pane\"><p>Declaring signs an emergency assertion and commits an audit entry before the third share is released.</p><button class=\"ds-cp-btn\">Declare emergency</button></div></section>",
+      "css": ".ds-cp{width:340px;background:#c8102e;padding:16px;display:flex;flex-direction:column;gap:12px;box-shadow:inset 0 -6px 0 rgba(0,0,0,0.18),0 2px 6px rgba(21,24,27,0.08)}.ds-cp-label{display:flex;align-items:center;justify-content:center;gap:8px;color:#fff;font-family:'Barlow Condensed',Bahnschrift,'Arial Narrow',sans-serif;font-weight:700;font-size:22px;letter-spacing:0.14em;text-transform:uppercase}.ds-cp-pane{background:#fcfcfa;border:3px solid #fff;outline:2px solid rgba(0,0,0,0.25);padding:16px;display:flex;flex-direction:column;gap:12px;font-family:Barlow,Bahnschrift,'Segoe UI',system-ui,sans-serif;color:#15181b}.ds-cp-pane p{margin:0;font-size:16px}.ds-cp-btn{min-height:56px;border:2px solid #c8102e;background:#c8102e;color:#fff;font-family:'Barlow Condensed',Bahnschrift,'Arial Narrow',sans-serif;font-weight:700;font-size:22px;letter-spacing:0.06em;cursor:pointer;transition:background-color 120ms ease-out,transform 120ms ease-out}.ds-cp-btn:hover{background:#9c0c24;border-color:#9c0c24}.ds-cp-btn:active{transform:translateY(1px)}.ds-cp-btn:focus-visible{outline:3px solid #0057a8;outline-offset:2px}"
+    },
+    {
+      "name": "Share Sockets",
+      "kind": "custom",
+      "refersTo": "share",
+      "description": "The 2-of-3 threshold as one framed strip; held sockets fill green.",
+      "html": "<div class=\"ds-shares\"><div class=\"ds-share ds-held\"><span class=\"ds-p\">Presented</span><b>Attending clinician</b><small>Share 1 of 3</small></div><div class=\"ds-share\"><span class=\"ds-p ds-n\">Not requested</span><b>Home authority</b><small>Share 2 of 3</small></div><div class=\"ds-share ds-held\"><span class=\"ds-p\">Released after seq 4</span><b>Audit service</b><small>Share 3 of 3</small></div></div>",
+      "css": ".ds-shares{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border:2px solid #15181b;background:#fff;font-family:Barlow,Bahnschrift,'Segoe UI',system-ui,sans-serif;color:#15181b}.ds-share{padding:16px;display:flex;flex-direction:column;gap:4px;border-right:2px solid #15181b}.ds-share:last-child{border-right:0}.ds-share::before{content:'';width:24px;height:24px;border:3px solid #15181b;margin-bottom:8px}.ds-held::before{background:#00805a;border-color:#00805a}.ds-p{align-self:flex-start;padding:1px 8px;border:2px solid #00805a;color:#00805a;font-family:'Barlow Condensed',Bahnschrift,'Arial Narrow',sans-serif;font-weight:700;font-size:14px;letter-spacing:0.04em;text-transform:uppercase}.ds-n{color:#4a525a;border-width:1px;border-color:#4a525a}.ds-share b{font-family:'Barlow Condensed',Bahnschrift,'Arial Narrow',sans-serif;font-size:22px;margin-top:8px}.ds-share small{font-size:14px;color:#4a525a}"
+    },
+    {
+      "name": "Chain Table",
+      "kind": "custom",
+      "refersTo": "chain",
+      "description": "Fixed columns; the break-glass commit row takes the red wash and a plate, never a new grid.",
+      "html": "<div class=\"ds-chain\"><div class=\"ds-ch ds-h\"><span>Seq</span><span>Head</span><span>Event</span></div><div class=\"ds-ch\" tabindex=\"0\"><span class=\"ds-m\">3</span><span class=\"ds-m\">5ad134</span><span>patient-lookup &mdash; 2 candidates</span></div><div class=\"ds-ch ds-hl\" tabindex=\"0\"><span class=\"ds-m\">4</span><span class=\"ds-m\">9e02c1</span><span><i>Break-glass</i>emergency-commit &mdash; share 3 released</span></div></div>",
+      "css": ".ds-chain{border:2px solid #15181b;background:#fff;font-family:Barlow,Bahnschrift,'Segoe UI',system-ui,sans-serif;font-size:15px;color:#15181b;font-variant-numeric:tabular-nums}.ds-ch{display:grid;grid-template-columns:52px 72px minmax(0,1fr);column-gap:12px;padding:8px 12px;align-items:baseline;border-bottom:1px solid #d3d0c8}.ds-ch:last-child{border-bottom:0}.ds-h{font-family:'Barlow Condensed',Bahnschrift,'Arial Narrow',sans-serif;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#4a525a;border-bottom:2px solid #15181b}.ds-m{font-family:ui-monospace,Consolas,monospace;font-size:14px;color:#4a525a}.ds-hl{background:#fbe8eb}.ds-hl i{font-style:normal;display:inline-block;margin-right:8px;padding:0 6px;border:2px solid #c8102e;color:#c8102e;font-family:'Barlow Condensed',Bahnschrift,'Arial Narrow',sans-serif;font-weight:700;font-size:13px;letter-spacing:0.04em;text-transform:uppercase}.ds-ch:focus-visible{outline:3px solid #0057a8;outline-offset:-3px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Call Point",
+    "overview": "The three portals (patient, clinician, auditor) are built like an EN 54-11 manual call point mounted on a white enamel wall. Everything routine (consent, reads, audit rows) stays quiet, grey-framed and lettered like safety signage. One control is red: the break-glass call point, with its framed label, its white pane, and the DECLARE button behind it. The whole system stays calm around that one control, so when it is pressed the change cannot be missed from the back of a projected classroom.\n\nThe material is enamel ground, a graphite back-box rail, ink lettering and 2px ink frames. Colour does not decorate. It appears only where it carries state (a bordered plate), where it can be pressed (action blue), or where it marks the flow being followed (trace violet). Type is sign lettering: Barlow Condensed for headings, labels and plates, Barlow for running text, system mono for hashes and identifiers. Numerals are lining and, in clocks, tables and chains, tabular.\n\nDensity is medium and built for projection: 17px body, 44px minimum control height, generous 24px gaps between panels. Motion is almost absent: a 120ms ease-out on button press and background change, a stepped blink on the countdown's last seconds, and none at all under reduced motion.",
+    "keyCharacteristics": [
+      "One red control per screen; signal red means break-glass and nothing else.",
+      "Colour lives inside bordered state plates, on pressable controls, or on the followed flow.",
+      "Square corners everywhere; 2px ink frames on plates and primary panels, hairlines elsewhere.",
+      "Condensed sign lettering in uppercase for labels and plates, never for running text.",
+      "Fixed-column rows: state restyles a row, never the grid."
+    ],
+    "rules": [
+      {
+        "name": "The One Red Rule",
+        "body": "Signal red belongs to break-glass. If an element is red and pressing it, reading it or seeing it does not concern an emergency, it is wrong.",
+        "section": "colors"
+      },
+      {
+        "name": "The Plate Rule",
+        "body": "Colour lives only inside a bordered state plate, on a pressable control, or on the followed correlation flow. Coloured text loose on a page, tinted card backgrounds and coloured section headings are not part of this system.",
+        "section": "colors"
+      },
+      {
+        "name": "The Press Rule",
+        "body": "Action blue appears only on things that respond to a click or tap.",
+        "section": "colors"
+      },
+      {
+        "name": "The Sign Lettering Rule",
+        "body": "Uppercase belongs to condensed labels, plates and the call point label. Running text and headings stay sentence case.",
+        "section": "typography"
+      },
+      {
+        "name": "The Lining Numerals Rule",
+        "body": "All numerals are lining; clocks, tables, chains and counts are tabular so digits never shift.",
+        "section": "typography"
+      },
+      {
+        "name": "The Fixed Column Rule",
+        "body": "Chain rows and case rows keep their column grid in every state. A highlight, a hover or a target changes the row's background or adds a plate; it never moves a column.",
+        "section": "layout"
+      },
+      {
+        "name": "The Frame Over Shadow Rule",
+        "body": "Importance is shown by a 2px ink frame, not a deeper shadow. Framed plates (steps, shares, chain, verify, notices, plaintext) carry no shadow at all.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** keep signal red (#c8102e) to break-glass: the call point, the emergency button, the open-emergency band, the countdown, emergency plates and the committed chain row.",
+      "**Do** put state colour inside a bordered plate with an uppercase condensed label, and fill amber plates with ink text.",
+      "**Do** use action blue (#0057a8) only on links, buttons and focus.",
+      "**Do** carry the followed correlation flow in trace violet (#6b3fa0) on every page that shows it.",
+      "**Do** keep corners square and frame plates and primary panels with a 2px ink border; use hairlines (#d3d0c8) elsewhere.",
+      "**Do** show the short hash in the row and open the full hash on the focused row.",
+      "**Do** keep controls at least 44px tall and body text at 17px for projection.",
+      "**Do** honour reduced motion: no animation, no transition."
+    ],
+    "donts": [
+      "**Don't** use red for errors, destructive non-emergency actions or decoration; failure is ink.",
+      "**Don't** set coloured text loose on the page or tint whole cards to show state.",
+      "**Don't** colour anything blue that cannot be pressed.",
+      "**Don't** put a kicker or eyebrow label above a heading; the heading names the section on its own.",
+      "**Don't** round corners or add hard offset shadows.",
+      "**Don't** let a row's state change its column widths.",
+      "**Don't** use old-style numerals; numerals are lining, and tabular in clocks, tables and chains."
+    ]
+  }
+}

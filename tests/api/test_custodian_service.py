@@ -35,6 +35,7 @@ from api.hospital import FacilityTrust, create_hospital_app
 from api.repository import InMemoryStorageRepository
 from audit.chain import build_entry, create_genesis_entry
 from breakglass.emergency_key import generate_emergency_key, split_emergency_key
+from contracts.clinical import ClinicalMetadata
 from contracts.enums import LifecycleState, PolicyNodeType
 from contracts.policy import Attribute, PolicyTree
 from crypto_core import (
@@ -48,11 +49,13 @@ from fastapi.testclient import TestClient
 from identity.certificates import (
     issue_clinician_certificate,
     issue_facility_ca_certificate,
+    issue_patient_certificate,
 )
 from identity.root_anchor import generate_root_anchor
 from lifecycle.expiry import EmergencyExpiryManager
 from pre.elgamal import generate_keypair as generate_pre_keypair
 from records.ingest import ingest_record
+from records.labels import sign_clinical_labels
 
 from tests.api.conftest import FromHost, RecordingAuditSink
 
@@ -227,6 +230,13 @@ def federation():
         ),
     )
 
+    # The patient, certified by their home facility (ADR-0064), signs the
+    # record's labels as the custodian does at upload.
+    pat_priv, pat_pub = generate_ec_keypair()
+    pat_cert_pem = certificate_to_pem(
+        issue_patient_certificate(fa_priv, fa_cert, PATIENT, pat_pub)
+    ).decode("ascii")
+
     em_key = generate_emergency_key()
     share1, share2, share3 = split_emergency_key(em_key)
     ingest = ingest_record(
@@ -239,6 +249,13 @@ def federation():
         search_terms=["cardiac"],
         emergency_key=em_key,
         record_id=RECORD,
+        clinical=sign_clinical_labels(
+            ClinicalMetadata(),
+            record_id=RECORD,
+            patient_id=PATIENT,
+            signing_key=pat_priv,
+            certificate_pem=pat_cert_pem,
+        ),
     )
     repo = InMemoryStorageRepository()
     repo.insert_record(ingest.record)
@@ -256,7 +273,13 @@ def federation():
     )
     audit_sink = RecordingAuditSink()
     app_fa = create_hospital_app(
-        "facility-a", repository=repo, trust=trust, audit_sink=audit_sink
+        "facility-a",
+        repository=repo,
+        trust=trust,
+        audit_sink=audit_sink,
+        expiry_manager=EmergencyExpiryManager(
+            signing_key=life_priv, default_duration_seconds=60
+        ),
     )
     app_fb = create_hospital_app(
         "facility-b",
@@ -272,7 +295,6 @@ def federation():
     er_priv, er_pub = generate_ec_keypair()
     er_cert = issue_clinician_certificate(fb_priv, fb_cert, DOC_ER, er_pub)
     er_pre_priv, er_pre_pub = generate_pre_keypair()
-    pat_priv, _ = generate_ec_keypair()
 
     return {
         "apps": {
@@ -308,6 +330,7 @@ def federation():
             PATIENT: {
                 "kind": "patient",
                 "signing_key_pem": private_key_to_pem(pat_priv).decode("ascii"),
+                "certificate_pem": pat_cert_pem,
                 "credentials": creds[PATIENT],
             },
         },
@@ -491,12 +514,15 @@ def test_consent_round_trip_signs_request_grant_and_revocation(federation):
     )
     assert r.status_code == 200, r.text
     grant = r.json()["grant"]
-    pub = r.json()["patient_public_key_pem"]
+    cert_pem = r.json()["patient_certificate_pem"]
     assert grant["status"] == "granted"
 
     # The facility verifies the patient signature and stores the grant.
     fa = TestClient(federation["apps"]["facility-a"])
-    r = fa.post("/consent/grants", json={"grant": grant, "patient_public_key_pem": pub})
+    r = fa.post(
+        "/consent/grants",
+        json={"grant": grant, "patient_certificate_pem": cert_pem},
+    )
     assert r.status_code == 200, r.text
 
     # Reading under the grant works for a clinician who also satisfies policy.
@@ -560,7 +586,7 @@ def test_breakglass_unlocks_with_clinician_and_audit_shares(federation):
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["facility_id"] == "facility-b"
+    assert body["facility_id"] == "facility-a"  # Home node owns the shared timer.
     assert body["transition_event"]["to_state"] == "emergency_open"
     assert [s["holder"] for s in body["shares_presented"]] == [
         "clinician",
@@ -578,6 +604,27 @@ def test_breakglass_unlocks_with_clinician_and_audit_shares(federation):
     assert entry["event_type"] == "breakglass_share_released"
     assert entry["event_data"]["assertion_id"] == body["assertion_id"]
     assert "share" not in json.dumps(entry["event_data"]).lower()
+
+
+def test_second_viewer_naming_another_facility_joins_at_the_record_node(federation):
+    """ADR-0061: a clinician elsewhere is routed to the node holding the session."""
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    body = {
+        "patient_id": PATIENT,
+        "record_id": RECORD,
+        "reason_code": "sepsis",
+        "emergency_duration_seconds": 30,
+    }
+    first = client.post(f"/subjects/{DOC_ER}/breakglass", json=body)
+    assert first.status_code == 200, first.text
+    second = client.post(
+        f"/subjects/{DOC_ER}/breakglass", json={**body, "facility_id": "facility-b"}
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["facility_id"] == "facility-a"
+    assert second.json()["joined"] is True
+    assert second.json()["expires_at"] == first.json()["expires_at"]
 
 
 def test_breakglass_fails_closed_when_audit_cannot_commit(federation):
@@ -736,13 +783,14 @@ def test_patient_upload_is_sealed_with_owner_leaf_and_readable_by_owner(federati
         base64.b64decode(r.json()["plaintext_b64"]) == b"Echocardiogram report: EF 35%"
     )
     assert r.json()["content_type"] == "text/plain"
-    # ... a cardiologist through the clinical branch ...
+    # ... specialty alone is not a treating relationship for a new upload ...
     r = client.post(
         f"/subjects/{DOC_CARDIO}/read",
         json={"record_id": rid, "facility_id": "facility-a"},
     )
-    assert r.status_code == 200, r.text
-    # ... and an ER physician is refused by policy.
+    assert r.status_code == 403, r.text
+    assert "care-episode grant" in r.json()["detail"]
+    # ... and an ER physician without consent is also refused.
     r = client.post(
         f"/subjects/{DOC_ER}/read", json={"record_id": rid, "facility_id": "facility-b"}
     )
@@ -758,7 +806,12 @@ def test_uploaded_record_can_be_opened_by_break_glass(federation):
     rid = r.json()["record_id"]
     r = client.post(
         f"/subjects/{DOC_ER}/breakglass",
-        json={"patient_id": PATIENT, "record_id": rid, "reason_code": "stroke"},
+        json={
+            "patient_id": PATIENT,
+            "record_id": rid,
+            "reason_code": "stroke",
+            "justification": "Urgent stroke treatment needs medication history.",
+        },
     )
     assert r.status_code == 200, r.text
     assert base64.b64decode(r.json()["plaintext_b64"]) == b"Uploaded by the patient"
@@ -785,6 +838,7 @@ def test_ingest_with_existing_record_id_leaves_shares_intact(federation):
             "patient_id": PATIENT,
             "record_id": "rec-dup-001",
             "reason_code": "stroke",
+            "justification": "Urgent stroke treatment needs medication history.",
         },
     )
     assert r.status_code == 200, r.text

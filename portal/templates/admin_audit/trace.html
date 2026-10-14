@@ -1,76 +1,82 @@
 {% extends "base.html" %}
 {% block title %}Audit trail · {{ product_name }}{% endblock %}
+{% block flow_marker %}{% if cid %}<div class="flow-marker">{% include "_icon.html" with name="route" %}<span>Following flow <span class="cid" title="{{ cid }}">{{ cid|truncatechars:28 }}</span></span></div>{% endif %}{% endblock %}
 {% block content %}
-<div class="card">
-  <div class="flex between gap-4" style="align-items:flex-end">
-    <div class="grow" style="min-width:min(100%,300px)">
-      <h3 class="card-title">Trace by correlation ID</h3>
-      <form method="get" class="flex mt-2">
-        <input class="input mono grow" type="text" name="cid" value="{{ cid }}" placeholder="CID" style="min-width:200px">
+<section class="card card-frame" aria-labelledby="trace-h">
+  <div class="grid-2" style="align-items:end">
+    <div>
+      <h2 class="card-title" id="trace-h">Trace by correlation ID</h2>
+      <form method="get" class="flex mt-3" style="align-items:flex-end">
+        <div class="field grow"><label for="cid-in">Correlation id</label><input class="input mono" id="cid-in" type="text" name="cid" value="{{ cid }}" placeholder="e.g. lookup-… / consent-… / owner-read-…" required></div>
         <button class="btn btn-primary nowrap">Trace flow</button>
       </form>
     </div>
     {% include "admin_audit/_chain_stats.html" %}
   </div>
-  {% if store_error %}<div class="notice notice-error small">Store not readable: {{ store_error }}</div>{% endif %}
+  {% if store_error %}<div class="notice notice-error small" role="alert">{% include "_icon.html" with name="x" %}<div>Store not readable: {{ store_error }}</div></div>{% endif %}
   {% if flows %}
-    <div class="tiny text-muted mt-2">Recent break-glass flows:
-      {% for f in flows %}<a class="mono" href="?cid={{ f.correlation_id|urlencode }}">{{ f.correlation_id|truncatechars:26 }}</a>{% if not forloop.last %} · {% endif %}{% endfor %}</div>
+    <div>
+      <h3 class="mb-2">Recent break-glass flows</h3>
+      <ul class="stack" style="list-style:none;margin:0;padding:0;gap:var(--s-1)">
+        {% for f in flows %}<li><a class="cid" href="?cid={{ f.correlation_id|urlencode }}">{% include "_icon.html" with name="route" %}{{ f.correlation_id }}</a></li>{% endfor %}
+      </ul>
+    </div>
   {% endif %}
-</div>
+</section>
 
 {% if cid %}
 <div class="grid-2">
-  <div class="card">
+  <section class="card" aria-labelledby="seg-h">
     <div class="subhead">
-      <h3 class="card-title">Chain segment · <span class="mono" style="font-size:15px">{{ cid|truncatechars:30 }}</span></h3>
-      {% if entries %}<span class="tag {% if links_intact == False %}tag-danger{% else %}tag-outline{% endif %}">{{ entries|length }} entries · {% if links_intact == False %}LINK BROKEN{% elif links_intact %}links intact{% else %}single entry{% endif %}</span>{% endif %}
+      <h2 class="card-title" id="seg-h">Chain segment</h2>
+      {% if entries %}<span class="tag {% if links_intact == False %}tag-fail{% else %}tag-ok{% endif %}">{{ entries|length }} entries · {% if links_intact == False %}LINK BROKEN{% elif links_intact %}links intact{% else %}single entry{% endif %}</span>{% endif %}
     </div>
+    <div class="cid">{% include "_icon.html" with name="route" %}{{ cid }}</div>
     <div class="chain">
       <div class="chain-head"><span class="seq">Seq</span><span class="head">Head</span><span class="ev">Event</span></div>
       {% for e in entries %}
-        <div class="chain-row {% if e.is_commit %}hl{% endif %}"><span class="seq">{{ e.seq }}</span><span class="head">{{ e.entry_hash_hex|slice:":6" }}</span><span class="ev">{{ e.event_type }} — {{ e.summary }} <span class="sub">{{ e.actor_id }} · {{ e.recorded_at|date:"H:i:s" }}</span></span></div>
+        <div class="chain-row {% if e.is_commit %}hl{% endif %}" tabindex="0"><span class="seq">{{ e.seq }}</span><span class="head">{{ e.entry_hash_hex|slice:":6" }}</span><span class="ev">{{ e.event_type }} — {{ e.summary }} <span class="sub">{{ e.actor_id }} · {{ e.recorded_at|date:"H:i:s" }}</span></span><span class="full">entry hash {{ e.entry_hash_hex }}</span></div>
       {% empty %}<div class="chain-row"><span class="ev">No entries for this correlation id.</span></div>{% endfor %}
     </div>
-    <div class="tiny text-muted">★ = the audit service's commit that precedes share 3. Each row's <span class="mono">prev_hash</span> must equal the previous entry's hash; full-chain verification runs at the audit service (PASS/FAIL above).</div>
-  </div>
+    <p class="basis">Rows marked "Break-glass" belong to the emergency flow: the audit service commits its entry before it releases share 3, then the re-wrap and lifecycle transitions follow. Seq numbers skip entries that belong to other flows; integrity is checked link by link (<span class="mono">prev_hash</span> equals the previous entry's hash), and full-chain verification runs at the audit service. Focus a row for its full hash.</p>
+  </section>
 
   <div class="stack gap-6">
     {% if case %}
-    <div class="card card-strong">
-      <div class="subhead"><h3 class="card-title">Break-glass case {{ case.case_number }}</h3>
-        {% if case.status == "open" %}<span class="tag tag-accent">open · <span data-countdown="{{ case.expires_at|date:'c' }}">--:--</span></span>{% elif case.status == "expired" %}<span class="tag tag-outline">expired · rotated</span>{% else %}<span class="tag tag-neutral">failed closed</span>{% endif %}</div>
-      <div class="grid-stats">
-        <div><div class="kicker">Record</div><div class="value mono">{{ case.record_id }}</div></div>
-        <div><div class="kicker">Patient</div><div class="value mono">{{ case.patient_id }}</div></div>
-        <div><div class="kicker">Clinician</div><div class="value mono">{{ case.clinician_id }} @ {{ case.facility_id }}</div></div>
-        <div><div class="kicker">Reason</div><div class="value mono">{{ case.reason_code }}</div></div>
-        <div><div class="kicker">Shares</div><div class="value">{% for s in case.shares %}{{ s.holder }}{% if s.audit_entry_seq %} (after seq {{ s.audit_entry_seq }}){% endif %}{% if not forloop.last %} + {% endif %}{% empty %}—{% endfor %}</div></div>
-        <div><div class="kicker">Window</div><div class="value mono">{{ case.opened_at|date:"H:i:s"|default:"—" }} → {{ case.expires_at|date:"H:i:s"|default:"—" }}</div></div>
-      </div>
-      {% if case.justification %}<div class="quote">“{{ case.justification }}”</div>{% endif %}
-      {% if case.failure_reason %}<div class="notice notice-error small">{{ case.failure_reason }}</div>{% endif %}
-    </div>
+    <section class="card card-frame" aria-labelledby="case-h">
+      <div class="subhead"><h2 class="card-title" id="case-h">Break-glass case {{ case.case_number }}</h2>
+        {% if case.status == "open" %}<span class="tag tag-emergency">open · <span role="timer" data-countdown="{{ case.expires_at|date:'c' }}">--:--</span></span>{% elif case.status == "expired" %}<span class="tag tag-expired">expired · key rotated</span>{% else %}<span class="tag tag-fail">failed closed</span>{% endif %}</div>
+      <dl class="facts">
+        <div><dt>Record</dt><dd class="mono">{{ case.record_id }}</dd></div>
+        <div><dt>Patient</dt><dd class="mono">{{ case.patient_id }}</dd></div>
+        <div><dt>Clinician</dt><dd class="mono">{{ case.clinician_id }} @ {{ case.facility_id }}</dd></div>
+        <div><dt>Reason</dt><dd>{{ case.reason_code|humanize_code }}</dd></div>
+        <div><dt>Shares</dt><dd>{% for s in case.shares %}{{ s.holder }}{% if s.audit_entry_seq %} (after seq {{ s.audit_entry_seq }}){% endif %}{% if not forloop.last %} + {% endif %}{% empty %}None{% endfor %}</dd></div>
+        <div><dt>Window (UTC)</dt><dd class="mono">{{ case.opened_at|date:"H:i:s"|default:"—" }} → {{ case.expires_at|date:"H:i:s"|default:"—" }}</dd></div>
+      </dl>
+      {% if case.justification %}<p class="quote mb-0">“{{ case.justification }}”</p>{% endif %}
+      {% if case.failure_reason %}<div class="notice notice-error small" role="alert">{% include "_icon.html" with name="x" %}<div>{{ case.failure_reason }}</div></div>{% endif %}
+    </section>
     {% endif %}
     {% if consent %}
-    <div class="card">
-      <h3 class="card-title">Consent record</h3>
-      <div class="grid-stats">
-        <div><div class="kicker">Patient</div><div class="value mono">{{ consent.patient_id }}</div></div>
-        <div><div class="kicker">Requester</div><div class="value mono">{{ consent.requester_id }}</div></div>
-        <div><div class="kicker">Scope</div><div class="value mono">{{ consent.scope|join:", " }}</div></div>
-        <div><div class="kicker">State</div><div class="value">{{ consent.get_status_display }}</div></div>
-      </div>
-      <div class="quote">“{{ consent.purpose }}”</div>
-    </div>
+    <section class="card" aria-labelledby="con-h">
+      <h2 class="card-title" id="con-h">Consent record</h2>
+      <dl class="facts">
+        <div><dt>Patient</dt><dd class="mono">{{ consent.patient_id }}</dd></div>
+        <div><dt>Requester</dt><dd class="mono">{{ consent.requester_id }}</dd></div>
+        <div><dt>Scope</dt><dd class="mono">{{ consent.scope|join:", " }}</dd></div>
+        <div><dt>State</dt><dd>{{ consent.get_status_display }}</dd></div>
+      </dl>
+      <p class="quote mb-0">“{{ consent.purpose }}”</p>
+    </section>
     {% endif %}
     {% if notes %}
-    <div class="card">
-      <h3 class="card-title">Patient notifications</h3>
-      {% for n in notes %}<div class="note"><div><div class="title">{{ n.title }}</div><div class="tiny text-muted mono">{{ n.patient_id }} · {{ n.created_at|date:"Y-m-d H:i:s" }} · {% if n.audit_seq %}chain seq {{ n.audit_seq }}{% else %}not in chain{% endif %}{% if n.read_at %} · read{% endif %}</div></div></div>{% endfor %}
-    </div>
+    <section class="card" aria-labelledby="notes-h">
+      <h2 class="card-title" id="notes-h">Patient notifications</h2>
+      {% for n in notes %}<div class="note">{% include "_icon.html" with name="bell" %}<div><div class="title">{{ n.title }}</div><div class="meta"><span class="mono">{{ n.patient_id }}</span><span class="mono">{{ n.created_at|date:"Y-m-d H:i:s" }}</span><span>{% if n.audit_seq %}chain seq {{ n.audit_seq }}{% else %}not in chain{% endif %}</span>{% if n.read_at %}<span>read</span>{% endif %}</div></div></div>{% endfor %}
+    </section>
     {% endif %}
-    {% if not case and not consent and not notes %}<div class="card"><div class="empty">No portal-side case, consent, or notification carries this id — chain entries only.</div></div>{% endif %}
+    {% if not case and not consent and not notes %}<section class="card"><p class="empty mb-0">No portal-side case, consent, or notification carries this id. Chain entries only.</p></section>{% endif %}
   </div>
 </div>
 {% endif %}

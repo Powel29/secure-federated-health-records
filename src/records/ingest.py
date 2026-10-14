@@ -24,10 +24,12 @@ mixing C8/C7 responsibilities with C4/C10 (ARCHITECTURE.md §2).
 from __future__ import annotations
 
 import datetime
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from contracts.clinical import ClinicalMetadata, latest_local_date
 from contracts.enums import LifecycleState
 from contracts.policy import PolicyTree
 from contracts.records import DEKWrapping, Record
@@ -77,6 +79,7 @@ def ingest_record(
     record_id: str | None = None,
     policy_id: str | None = None,
     created_at: datetime.datetime | None = None,
+    clinical: ClinicalMetadata | None = None,
 ) -> IngestResult:
     """Ingest a health record: encrypt, compile policy, wrap DEK, index.
 
@@ -132,6 +135,28 @@ def ingest_record(
     if created_at is None:
         created_at = datetime.datetime.now(datetime.timezone.utc)
 
+    # Validate the supported structured report dates, not future follow-up plans.
+    # Arbitrary PDFs/images remain opaque and require uploader-supplied metadata.
+    if content_type == "application/json":
+        try:
+            document = json.loads(plaintext)
+        except (ValueError, UnicodeDecodeError):
+            document = None
+        if isinstance(document, dict):
+            encounter = document.get("encounter")
+            dates = [document.get("clinical_date"), document.get("performed_at")]
+            if isinstance(encounter, dict):
+                dates.append(encounter.get("performed_at"))
+            for value in dates:
+                if value is None:
+                    continue
+                try:
+                    event_date = datetime.date.fromisoformat(str(value)[:10])
+                except ValueError:
+                    continue  # not an ISO date: opaque content, like a PDF
+                if event_date > latest_local_date():
+                    raise ValueError("A clinical event date cannot be in the future")
+
     # Generate a policy_id if not provided.
     if policy_id is None:
         import uuid
@@ -148,6 +173,7 @@ def ingest_record(
         aad=aad,
         record_id=record_id,
         created_at=created_at,
+        clinical=clinical,
     )
 
     # --- Step 2: Author the policy tree with owner leaf (ADR-0016) ---

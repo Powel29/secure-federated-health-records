@@ -1,25 +1,22 @@
 {% for case in cases %}{% if case.status == "open" %}
-<div class="card card-emergency">
-  <div class="flex between gap-6" style="align-items:flex-start">
-    <div class="grow" style="min-width:min(100%,420px)">
-      <div class="flex baseline">
-        <span class="card-title card-title-lg">Break-glass invocation on your record</span>
-        <span class="tag tag-accent">Active session</span>
+<section class="callpoint" aria-labelledby="bg-case-{{ case.pk }}">
+  <div class="callpoint-label">{% include "_icon.html" with name="glass" %}Break glass · open on your record</div>
+  <div class="callpoint-pane">
+    <div class="flex between start gap-6">
+      <div class="grow" style="min-width:min(100%,420px)">
+        <h2 class="card-title" id="bg-case-{{ case.pk }}">{{ case.clinician_id }} at {{ case.facility_id }} opened record <span class="mono">{{ case.record_id }}</span></h2>
+        <p class="mt-2">Reason: <strong>{{ case.reason_code|humanize_code }}</strong>. Opened {{ case.opened_at|date:"Y-m-d H:i" }} UTC with shares from {% for s in case.shares %}{{ s.holder }}{% if not forloop.last %} and {% endif %}{% empty %}no holder yet{% endfor %}.</p>
+        <p class="quote mb-0">{% if case.justification %}“{{ case.justification }}”{% else %}No free-text justification was recorded; the signed assertion carries the reason code only.{% endif %}</p>
       </div>
-      <div class="card-sub mt-2">Record <span class="mono">{{ case.record_id }}</span> · {{ case.clinician_id }} · {{ case.facility_id }} · <span class="mono">{{ case.opened_at|date:"Y-m-d H:i" }} UTC</span> · shares: {% for s in case.shares %}{{ s.holder }}{% if not forloop.last %} + {% endif %}{% endfor %}</div>
-      <div class="panel-inset mt-3">
-        <div class="kicker mb-2">Declared reason code · {{ case.reason_code|upper }}</div>
-        <div class="italic" style="font-size:14px;line-height:1.6">{% if case.justification %}“{{ case.justification }}”{% else %}No free-text justification was recorded; the signed assertion carries the constrained reason code only.{% endif %}</div>
+      <div class="stack" style="min-width:200px">
+        <div>
+          <div class="clock" role="timer" aria-label="Emergency window remaining" data-countdown="{{ case.expires_at|date:'c' }}">--:--</div>
+          <div class="tiny text-muted">left in the emergency window</div>
+        </div>
+        <p class="tiny text-muted mb-0">When the window closes the key is rotated automatically. You do not need to do anything.</p>
+        <a class="btn btn-secondary btn-sm" href="{% url 'patient:history' %}?type=breakglass">See it in your access history</a>
       </div>
-    </div>
-    <div class="stack" style="min-width:190px">
-      <div class="right">
-        <div class="kicker">Window closes in</div>
-        <div class="clock" data-countdown="{{ case.expires_at|date:'c' }}">--:--</div>
-      </div>
-      <a class="btn btn-secondary btn-sm" href="{% url 'patient:history' %}?type=breakglass">Open audit trail</a>
-      <span class="tiny text-muted right">Auto-expiry rotates the key; no action needed.</span>
     </div>
   </div>
-</div>
+</section>
 {% endif %}{% endfor %}

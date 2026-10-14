@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime
 import uuid
 
+from contracts.clinical import ClinicalMetadata
 from contracts.records import DEKWrapping, Record
 from crypto_core.exceptions import InvalidTagError
 from crypto_core.symmetric import aes_gcm_decrypt, aes_gcm_encrypt, generate_key
@@ -25,6 +26,7 @@ def encrypt_record(
     aad: bytes | None = None,
     record_id: str | None = None,
     created_at: datetime.datetime | None = None,
+    clinical: ClinicalMetadata | None = None,
 ) -> tuple[Record, bytes]:
     """Encrypt a health record and generate a fresh DEK.
 
@@ -67,6 +69,7 @@ def encrypt_record(
         nonce=nonce,
         aad=aad,
         created_at=created_at,
+        clinical=clinical or ClinicalMetadata(),
     )
 
     return record, dek

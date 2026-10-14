@@ -19,12 +19,14 @@ import datetime
 from typing import Any, Literal
 
 from contracts import AttributeCredential, TransitionEvent
+from contracts.clinical import ClinicalMetadata
 from contracts.consent import ConsentGrant, ConsentRequest
 from contracts.enums import ReasonCode
 from contracts.policy import PolicyTree
 from pydantic import BaseModel, Field
 
 _THREE_DAYS_SECONDS = 3 * 24 * 60 * 60
+_FIFTEEN_MINUTES_SECONDS = 15 * 60
 
 SubjectKind = Literal["patient", "clinician"]
 
@@ -161,7 +163,9 @@ class RevokeConsentPayload(BaseModel):
 
 class SignedGrantResponse(BaseModel):
     grant: ConsentGrant
-    patient_public_key_pem: str
+    # The facility verifies the grant against this certificate's key, never a
+    # bare key a caller could swap for its own (ADR-0064).
+    patient_certificate_pem: str
 
 
 # --- Key-bearing federation calls performed on the subject's behalf ----------
@@ -203,18 +207,24 @@ class BreakglassPayload(BaseModel):
 
     patient_id: str
     record_id: str
+    justification: str = Field(default="", max_length=2000)
+    sensitive_justification: str = Field(default="", max_length=2000)
     reason_code: ReasonCode
     facility_id: str | None = Field(
         default=None,
         description="Where the emergency is declared; defaults to the clinician's",
     )
     correlation_id: str | None = None
-    # Both bounded at 3 days (F6): the facility rejects a longer assertion and
-    # caps the window at its configured duration anyway.
-    assertion_ttl_seconds: int = Field(default=120, gt=0, le=_THREE_DAYS_SECONDS)
+    # The assertion is a one-time token and lives minutes (ADR-0056); the
+    # window is bounded at 3 days and the facility caps it at its configured
+    # duration anyway (F6).
+    assertion_ttl_seconds: int = Field(default=120, gt=0, le=_FIFTEEN_MINUTES_SECONDS)
     emergency_duration_seconds: float | None = Field(
         default=None, gt=0, le=_THREE_DAYS_SECONDS
     )
+    # Only join a session that is already open; never open one (used to
+    # authorize writing a note under an emergency).
+    join_only: bool = False
 
 
 class SharePresented(BaseModel):
@@ -232,7 +242,9 @@ class BreakglassResult(BaseModel):
     assertion_id: str
     assertion_expires_at: datetime.datetime
     shares_presented: list[SharePresented]
-    transition_event: TransitionEvent
+    # None when this joined a session already open (ADR-0057).
+    transition_event: TransitionEvent | None
+    joined: bool = False
     opened_at: datetime.datetime
     expires_at: datetime.datetime | None
     content_type: str | None
@@ -259,6 +271,10 @@ class IngestPayload(BaseModel):
     clinical_policy: PolicyTree
     search_terms: list[str] = Field(default_factory=list)
     record_id: str | None = None
+    clinical: ClinicalMetadata = Field(default_factory=ClinicalMetadata)
+    patient_id: str | None = None
+    grant: ConsentGrant | None = None
+    emergency: BreakglassPayload | None = None
 
 
 class IngestResult(BaseModel):

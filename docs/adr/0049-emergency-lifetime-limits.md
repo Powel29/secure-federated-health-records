@@ -1,6 +1,6 @@
 # ADR-0049: Three-day ceiling on emergency assertions and windows; the facility's time-box is a maximum
 
-- **Status:** Proposed
+- **Status:** Proposed — assertion ceiling superseded by ADR-0056
 - **Date:** 2026-10-11
 - **Deciders:** Avaneeth (chose 3 days) → Powel (assertion), Ojas (custodian schemas) → all four
 - **Task / source:** Review F6; ARCHITECTURE.md §7 ("Configuration": the time-box is configuration), §8 ("nothing issues forever")

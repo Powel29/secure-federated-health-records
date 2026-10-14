@@ -18,9 +18,6 @@ import datetime
 from api.hospital import create_hospital_app
 from consent.service import create_consent_grant, create_consent_request
 from contracts.enums import ConsentStatus
-from crypto_core import (
-    public_key_to_pem,
-)
 from fastapi.testclient import TestClient
 
 
@@ -89,7 +86,7 @@ class TestHospitalReadEndpoint:
             ],
         }
 
-        pat_pub_pem = public_key_to_pem(pki["pat_pub"]).decode("ascii")
+        pat_cert_pem = pki["pat_cert_pem"]
 
         response = client.post(
             "/records/rec-001/read",
@@ -97,7 +94,7 @@ class TestHospitalReadEndpoint:
                 "requester_id": "dr-alice",
                 "holder_keyring": clinical_keyring,
                 "grant": grant.model_dump(mode="json"),
-                "patient_public_key_pem": pat_pub_pem,
+                "patient_certificate_pem": pat_cert_pem,
                 "correlation_id": "corr-read-consent-001",
             },
         )
@@ -134,7 +131,7 @@ class TestHospitalReadEndpoint:
             patient_signing_key=pki["pat_priv"],
             scope=("rec-001",),
         )
-        pat_pub_pem = public_key_to_pem(pki["pat_pub"]).decode("ascii")
+        pat_cert_pem = pki["pat_cert_pem"]
 
         response = client.post(
             "/records/rec-001/read",
@@ -142,7 +139,7 @@ class TestHospitalReadEndpoint:
                 "requester_id": "dr-alice",
                 "holder_keyring": incomplete_keyring,
                 "grant": grant.model_dump(mode="json"),
-                "patient_public_key_pem": pat_pub_pem,
+                "patient_certificate_pem": pat_cert_pem,
             },
         )
 
@@ -175,7 +172,7 @@ class TestHospitalReadEndpoint:
             decided_at=past,
             ttl=datetime.timedelta(days=2),
         )
-        pat_pub_pem = public_key_to_pem(pki["pat_pub"]).decode("ascii")
+        pat_cert_pem = pki["pat_cert_pem"]
 
         response = client.post(
             "/records/rec-001/read",
@@ -183,7 +180,7 @@ class TestHospitalReadEndpoint:
                 "requester_id": "dr-alice",
                 "holder_keyring": attrs["b64_keyring"],
                 "grant": grant.model_dump(mode="json"),
-                "patient_public_key_pem": pat_pub_pem,
+                "patient_certificate_pem": pat_cert_pem,
             },
         )
 
@@ -209,7 +206,7 @@ class TestHospitalReadEndpoint:
             grantee_id="dr-alice",
             patient_signing_key=pki["pat_priv"],
         )
-        pat_pub_pem = public_key_to_pem(pki["pat_pub"]).decode("ascii")
+        pat_cert_pem = pki["pat_cert_pem"]
 
         response = client.post(
             "/records/rec-001/read",
@@ -217,7 +214,7 @@ class TestHospitalReadEndpoint:
                 "requester_id": "dr-alice",
                 "holder_keyring": attrs["b64_keyring"],
                 "grant": grant.model_dump(mode="json"),
-                "patient_public_key_pem": pat_pub_pem,
+                "patient_certificate_pem": pat_cert_pem,
             },
         )
 
@@ -243,7 +240,7 @@ class TestHospitalReadEndpoint:
             grantee_id="dr-alice",
             patient_signing_key=pki["pat_priv"],
         )
-        pat_pub_pem = public_key_to_pem(pki["pat_pub"]).decode("ascii")
+        pat_cert_pem = pki["pat_cert_pem"]
 
         response = client.post(
             "/records/rec-001/read",
@@ -251,7 +248,7 @@ class TestHospitalReadEndpoint:
                 "requester_id": "dr-alice",
                 "holder_keyring": attrs["b64_keyring"],
                 "grant": grant.model_dump(mode="json"),
-                "patient_public_key_pem": pat_pub_pem,
+                "patient_certificate_pem": pat_cert_pem,
             },
         )
 

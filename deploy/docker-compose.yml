@@ -300,7 +300,7 @@ services:
       AUTHORITY_URLS: authority-med=http://authority-med:8010,authority-net=http://authority-net:8011
       FACILITY_URLS: facility-a=http://facility-a:8001,facility-b=http://facility-b:8002
       TLS_ENABLED: "${TLS_ENABLED:-false}"
-      EMERGENCY_DURATION_SECONDS: "${EMERGENCY_DURATION_SECONDS:-120}"
+      EMERGENCY_DURATION_SECONDS: "${EMERGENCY_DURATION_SECONDS:-14400}"
       DJANGO_DEBUG: "0"
       DJANGO_ALLOWED_HOSTS: "127.0.0.1,localhost"
     ports:

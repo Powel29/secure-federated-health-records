@@ -176,6 +176,69 @@ def open_emergency_access(
         ``EmergencyAssertion`` that authorized the caller to collect shares
         in the first place; see the module precondition.
     """
+    emergency_key, rewrapped_dek = _reconstruct_and_deliver(
+        shares_presented, dek_wrapping, record_id, pre_rewrap_key
+    )
+
+    # --- Step 5: Emit the signed EMERGENCY_OPEN transition ---
+    transition_event = create_transition_event(
+        record_id=record_id,
+        from_state=transition_source_state,
+        to_state=LifecycleState.EMERGENCY_OPEN,
+        actor_id=actor_id,
+        signing_key=lifecycle_signing_key,
+        reason_code=reason_code,
+    )
+
+    # correlation_id is not consumed here -- see Args docstring above.
+
+    # --- Step 6: Return all artefacts ---
+    return EmergencyUnlockResult(
+        emergency_key=emergency_key,
+        rewrapped_dek=rewrapped_dek,
+        transition_event=transition_event,
+    )
+
+
+def join_emergency_access(
+    *,
+    shares_presented: list[Share],
+    dek_wrapping: DEKWrapping,
+    record_id: str,
+    pre_rewrap_key: int,
+) -> bytes:
+    """Deliver the DEK of an already EMERGENCY_OPEN record to one more clinician.
+
+    Steps 1-4 of :func:`open_emergency_access` -- the same threshold, the same
+    reconstruction, the same PRE delivery -- with no transition, because the
+    record is already open (ADR-0057). A second clinician, or the first one
+    viewing the record again, still needs ``THRESHOLD`` shares, so the audit
+    service still commits before its share is released for every viewer.
+
+    Returns:
+        The DEK packed for the clinician, framed as in
+        :class:`EmergencyUnlockResult`.``rewrapped_dek``.
+
+    Raises:
+        Same as :func:`open_emergency_access`, minus the transition errors.
+    """
+    _, rewrapped_dek = _reconstruct_and_deliver(
+        shares_presented, dek_wrapping, record_id, pre_rewrap_key
+    )
+    return rewrapped_dek
+
+
+def _reconstruct_and_deliver(
+    shares_presented: list[Share],
+    dek_wrapping: DEKWrapping,
+    record_id: str,
+    pre_rewrap_key: int,
+) -> tuple[bytes, bytes]:
+    """Steps 1-4: threshold check, reconstruct, unwrap, PRE re-wrap.
+
+    Returns ``(emergency_key, rewrapped_dek)``. Fails closed before any
+    re-wrap if the shares are too few or do not open ``dek_wrapping``.
+    """
     unique_by_x: dict[int, bytes] = {}
     for x, share_bytes in shares_presented:
         # Range-check before counting: x and x + P would otherwise count as
@@ -209,22 +272,4 @@ def open_emergency_access(
         + wrap_nonce
         + wrapped_dek
     )
-
-    # --- Step 5: Emit the signed EMERGENCY_OPEN transition ---
-    transition_event = create_transition_event(
-        record_id=record_id,
-        from_state=transition_source_state,
-        to_state=LifecycleState.EMERGENCY_OPEN,
-        actor_id=actor_id,
-        signing_key=lifecycle_signing_key,
-        reason_code=reason_code,
-    )
-
-    # correlation_id is not consumed here -- see Args docstring above.
-
-    # --- Step 6: Return all artefacts ---
-    return EmergencyUnlockResult(
-        emergency_key=emergency_key,
-        rewrapped_dek=rewrapped_dek,
-        transition_event=transition_event,
-    )
+    return emergency_key, rewrapped_dek

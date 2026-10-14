@@ -1,18 +1,18 @@
 {% extends "base.html" %}
 {% block title %}Emergency sessions · {{ product_name }}{% endblock %}
 {% block content %}
-<div class="card">
-  <div class="subhead"><h3 class="card-title">Your emergency sessions</h3><a class="btn btn-primary btn-sm" href="{% url 'clinician:identify' %}">Declare new</a></div>
-  <div class="table-wrap"><table class="table">
+<section class="card" aria-labelledby="cases-h">
+  <div class="subhead"><h2 class="card-title" id="cases-h">Your emergency sessions</h2><a class="btn btn-emergency btn-sm" href="{% url 'clinician:identify' %}">{% include "_icon.html" with name="glass" %}Start emergency access</a></div>
+  <div class="table-wrap"><table class="table stack-sm">
     <thead><tr><th>Case</th><th>Record</th><th>Patient</th><th>Reason</th><th>Shares</th><th>Opened (UTC)</th><th>Outcome</th></tr></thead>
     <tbody>{% for c in cases %}
       <tr>
-        <td><a class="mono" href="{% url 'clinician:case_detail' c.pk %}">{{ c.case_number }}</a></td>
-        <td class="mono">{{ c.record_id }}</td><td class="mono">{{ c.patient_id }}</td><td class="small">{{ c.reason_code }}</td>
-        <td class="small">{% for s in c.shares %}{{ s.holder }}{% if not forloop.last %} + {% endif %}{% empty %}—{% endfor %}</td>
-        <td class="mono small">{{ c.opened_at|date:"Y-m-d H:i:s"|default:"—" }}</td>
-        <td>{% if c.status == "open" %}<span class="tag tag-accent">open · <span data-countdown="{{ c.expires_at|date:'c' }}">--:--</span></span>{% elif c.status == "expired" %}<span class="tag tag-outline">expired · rotated</span>{% else %}<span class="tag tag-neutral">failed closed</span>{% endif %}</td>
+        <td data-label="Case"><a class="mono" href="{% url 'clinician:case_detail' c.pk %}">{{ c.case_number }}</a></td>
+        <td data-label="Record" class="mono">{{ c.record_id }}</td><td data-label="Patient" class="mono">{{ c.patient_id }}</td><td data-label="Reason" class="small">{{ c.reason_code|humanize_code }}</td>
+        <td data-label="Shares" class="small">{% for s in c.shares %}{{ s.holder }}{% if not forloop.last %} + {% endif %}{% empty %}None{% endfor %}</td>
+        <td data-label="Opened" class="mono small">{{ c.opened_at|date:"Y-m-d H:i:s"|default:"—" }}</td>
+        <td data-label="Outcome">{% if c.status == "open" %}<span class="tag tag-emergency">Open · <span role="timer" data-countdown="{{ c.expires_at|date:'c' }}">--:--</span></span>{% elif c.status == "expired" %}<span class="tag tag-expired">Expired · key rotated</span>{% else %}<span class="tag tag-fail">Failed closed</span>{% endif %}</td>
       </tr>
     {% empty %}<tr><td colspan="7" class="empty">No break-glass declared yet.</td></tr>{% endfor %}</tbody></table></div>
-</div>
+</section>
 {% endblock %}
