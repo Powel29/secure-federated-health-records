@@ -15,8 +15,8 @@ from contracts.clinical import ClinicalMetadata
 from contracts.enums import LifecycleState, ReasonCode
 from crypto_core import generate_ec_keypair
 from fastapi.testclient import TestClient
-from pydantic import ValidationError
 from pre.elgamal import generate_keypair
+from pydantic import ValidationError
 
 from tests.api.test_custodian_service import (
     DOC_CARDIO,
@@ -112,7 +112,9 @@ def test_sensitive_necessity_is_required_before_any_audit_share_release(federati
         "patient_id": PATIENT,
         "record_id": RECORD,
         "reason_code": "overdose",
-        "justification": "Unconscious patient with suspected overdose requires history.",
+        "justification": (
+            "Unconscious patient with suspected overdose requires history."
+        ),
     }
     before = len(client.app_audit.state.log["entries"])
     response = client.post(f"/subjects/{DOC_ER}/breakglass", json=body)
@@ -180,19 +182,35 @@ def test_future_structured_report_date_is_rejected_before_storage(federation):
 def test_clinician_of_another_facility_cannot_join_the_open_window(federation):
     """ADR-0063: a window opened by facility-b staff is not joinable from facility-a."""
     private, public = generate_keypair()
-    federation["material"][DOC_CARDIO].update(pre_private_key=private, pre_public_key=public)
+    federation["material"][DOC_CARDIO].update(
+        pre_private_key=private, pre_public_key=public
+    )
     client = _custodian(federation)
     _deposit_all(client, federation)
-    payload = {"patient_id": PATIENT, "record_id": RECORD, "reason_code": "sepsis", "emergency_duration_seconds": 30}
-    first = client.post(f"/subjects/{DOC_ER}/breakglass", json={**payload, "facility_id": "facility-b"})
+    payload = {
+        "patient_id": PATIENT,
+        "record_id": RECORD,
+        "reason_code": "sepsis",
+        "emergency_duration_seconds": 30,
+    }
+    first = client.post(
+        f"/subjects/{DOC_ER}/breakglass", json={**payload, "facility_id": "facility-b"}
+    )
     assert first.status_code == 200, first.text
-    second = client.post(f"/subjects/{DOC_CARDIO}/breakglass", json={**payload, "facility_id": "facility-a"})
+    second = client.post(
+        f"/subjects/{DOC_CARDIO}/breakglass",
+        json={**payload, "facility_id": "facility-a"},
+    )
     assert second.status_code == 403, second.text
     assert "cannot join" in second.text
     assert "plaintext_b64" not in second.text
-    assert federation["repo"].get_lifecycle_state(RECORD) is LifecycleState.EMERGENCY_OPEN
+    assert (
+        federation["repo"].get_lifecycle_state(RECORD) is LifecycleState.EMERGENCY_OPEN
+    )
     # The opener's facility still joins: only the facility check refused above.
-    again = client.post(f"/subjects/{DOC_ER}/breakglass", json={**payload, "facility_id": "facility-b"})
+    again = client.post(
+        f"/subjects/{DOC_ER}/breakglass", json={**payload, "facility_id": "facility-b"}
+    )
     assert again.status_code == 200, again.text
     assert again.json()["joined"] is True
 
@@ -202,9 +220,22 @@ def test_clinical_note_author_is_bound_to_authenticated_subject(federation):
     client = _custodian(federation)
     _deposit_all(client, federation)
     signed = _grant(client, DOC_CARDIO, RECORD)
-    from tests.api.test_custodian_service import CARDIO_POLICY
     import base64
-    body = {"patient_id": PATIENT, "facility_id": "facility-a", "grant": signed["grant"], "content_b64": base64.b64encode(b"Synthetic care note").decode(), "clinical_policy": CARDIO_POLICY, "clinical": {"author_id": "impersonated-author", "source": "hospital", "title": "Care note"}}
+
+    from tests.api.test_custodian_service import CARDIO_POLICY
+
+    body = {
+        "patient_id": PATIENT,
+        "facility_id": "facility-a",
+        "grant": signed["grant"],
+        "content_b64": base64.b64encode(b"Synthetic care note").decode(),
+        "clinical_policy": CARDIO_POLICY,
+        "clinical": {
+            "author_id": "impersonated-author",
+            "source": "hospital",
+            "title": "Care note",
+        },
+    }
     response = client.post(f"/subjects/{DOC_CARDIO}/records", json=body)
     assert response.status_code == 201, response.text
     record = federation["repo"].get_record(response.json()["record_id"])

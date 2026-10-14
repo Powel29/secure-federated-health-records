@@ -74,7 +74,9 @@ def store(federation_pki, attribute_materials):  # noqa: F811
         ),
     )
     insert_patient(admin, PATIENT, "authority-net")
-    seeded = _seed(PostgresStorageRepository(admin), attribute_materials)
+    seeded = _seed(
+        PostgresStorageRepository(admin), attribute_materials, federation_pki
+    )
     opened: list[psycopg.Connection] = [admin]
 
     def facility_process(duration: float = 60.0) -> TestClient:
