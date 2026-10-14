@@ -198,11 +198,15 @@ class FacilityTrust:
     facility_cas: Mapping[str, Certificate]
     revoked_serials: frozenset[int] = field(default_factory=frozenset)
 
-    def issuing_ca(self, leaf: Certificate) -> Certificate | None:
-        """The configured facility CA whose subject issued ``leaf``, if any."""
-        for ca in self.facility_cas.values():
+    def issuing_ca(self, leaf: Certificate) -> tuple[str, Certificate] | None:
+        """``(facility_id, CA)`` of the configured CA that issued ``leaf``, if any.
+
+        The facility id is the clinician's home facility once the chain
+        verifies against that CA (ADR-0063).
+        """
+        for fid, ca in self.facility_cas.items():
             if ca.subject == leaf.issuer:
-                return ca
+                return fid, ca
         return None
 
 
@@ -1093,8 +1097,8 @@ def create_hospital_app(
         duration = min(payload.emergency_duration_seconds or configured, configured)
 
         # 2. Validate the assertion against configured trust anchors (F1).
-        ca_cert = trust.issuing_ca(cl_cert)
-        if ca_cert is None:
+        issuer = trust.issuing_ca(cl_cert)
+        if issuer is None:
             reason = "clinician certificate was not issued by a configured facility CA"
             raise deny(
                 DENIED_BY_BREAKGLASS_CHAIN,
@@ -1102,6 +1106,7 @@ def create_hospital_app(
                 status.HTTP_403_FORBIDDEN,
                 f"Emergency assertion refused: {reason}",
             )
+        clinician_facility_id, ca_cert = issuer
         try:
             validate_emergency_assertion(
                 assertion=payload.assertion,
@@ -1248,7 +1253,9 @@ def create_hospital_app(
         source_state = _current_lifecycle_state(repo, record_id)
         if source_state is LifecycleState.EMERGENCY_OPEN:
             try:
-                session_expires_at = exp_manager.active_session_expires_at(record_id)
+                session_expires_at, opener_facility_id = exp_manager.join_window(
+                    record_id
+                )
             except (SessionNotFoundError, EmergencySessionExpiredError) as exc:
                 # Sessions live at the record's own facility, and the custodian
                 # and portal route every viewer there (ADR-0061), so this is
@@ -1263,6 +1270,19 @@ def create_hospital_app(
                     status.HTTP_409_CONFLICT,
                     reason,
                 ) from exc
+            # Only the opener's own facility joins: the care team on scene, not
+            # any credentialed clinician in the federation (ADR-0063).
+            if clinician_facility_id != opener_facility_id:
+                reason = (
+                    f"emergency session was opened by {opener_facility_id!r}; a "
+                    f"clinician of {clinician_facility_id!r} cannot join it"
+                )
+                raise deny(
+                    "breakglass_join_facility",
+                    reason,
+                    status.HTTP_403_FORBIDDEN,
+                    f"Break-glass refused: {reason}",
+                )
             rewrapped = gate(
                 lambda: join_emergency_access(
                     shares_presented=shares_list,
@@ -1342,6 +1362,7 @@ def create_hospital_app(
                 session = exp_manager.register_session(
                     record_id=record_id,
                     actor_id=clinician_id,
+                    opener_facility_id=clinician_facility_id,
                     correlation_id=corr_id,
                     emergency_key=unlock_result.emergency_key,
                     baseline_wrapping_key=base_wrapping_key,

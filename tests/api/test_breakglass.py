@@ -10,7 +10,8 @@ Verifies:
 - A failed unlock leaves no side effects; concurrent opens cannot both win
   (F7, N1).
 - A second unlock on an open record joins it: same threshold, logged before
-  release, no transition, no extension (ADR-0057).
+  release, no transition, no extension (ADR-0057) -- but only for clinicians
+  of the opener's facility (ADR-0063).
 - Every refusal is audited exactly once (F8).
 """
 
@@ -68,6 +69,7 @@ def _payload(
     *,
     patient_id: str = "patient-001",
     facility_id: str = "facility-a",
+    clinician_id: str = "dr-alice",
     signing_key=None,
     certificate=None,
     shares=None,
@@ -78,7 +80,7 @@ def _payload(
     em_shares = test_setup["em_shares"]
     assertion = create_emergency_assertion(
         patient_id=patient_id,
-        clinician_id="dr-alice",
+        clinician_id=clinician_id,
         facility_id=facility_id,
         reason_code=ReasonCode.UNCONSCIOUS_PATIENT,
         signing_key=signing_key or pki["alice_priv"],
@@ -542,6 +544,70 @@ class TestJoinOpenSession:
         assert "no live session to join" in response.json()["detail"]
         assert "rewrapped_dek_b64" not in response.text
         assert len(sink.of_type(EVENT_FEDERATION_REWRAP)) == 1
+
+    def _bob(self, test_setup) -> dict:
+        """Dr. Bob (facility-b CA) asking facility-a, as the custodian routes him."""
+        pki = test_setup["pki"]
+        return _payload(
+            test_setup,
+            clinician_id="dr-bob",
+            signing_key=pki["bob_priv"],
+            certificate=pki["bob_cert"],
+            pre_rewrap_key=pki["bob_pre_pub"],
+        )
+
+    def test_clinician_of_same_facility_joins(self, test_setup):
+        """A second facility-a clinician (the care team on scene) joins."""
+        pki = test_setup["pki"]
+        first = self._open(test_setup)
+        carol_priv, carol_pub = generate_ec_keypair()
+        carol_cert = issue_clinician_certificate(
+            pki["fa_priv"], pki["fa_cert"], "dr-carol", carol_pub
+        )
+
+        response = test_setup["client"].post(
+            "/records/rec-001/breakglass",
+            json=_payload(
+                test_setup,
+                clinician_id="dr-carol",
+                signing_key=carol_priv,
+                certificate=carol_cert,
+            ),
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["joined"] is True
+        assert response.json()["expires_at"] == first["expires_at"]
+
+    def test_clinician_of_another_facility_cannot_join_open_session(self, test_setup):
+        """Paper claim: an open emergency session is joinable only by the
+        opener's facility; a credentialed clinician elsewhere gets nothing."""
+        repo = test_setup["repo"]
+        sink = test_setup["audit_sink"]
+        self._open(test_setup)
+
+        response = test_setup["client"].post(
+            "/records/rec-001/breakglass", json=self._bob(test_setup)
+        )
+
+        assert response.status_code == 403, response.text
+        assert "cannot join" in response.json()["detail"]
+        assert "rewrapped_dek_b64" not in response.text
+        assert len(sink.of_type(EVENT_FEDERATION_REWRAP)) == 1
+        assert [
+            d["event_data"]["denied_by"] for d in sink.of_type(EVENT_ACCESS_DENIED)
+        ] == ["breakglass_join_facility"]
+        assert len(repo.transition_events) == 1
+        assert repo.get_lifecycle_state("rec-001") == LifecycleState.EMERGENCY_OPEN
+
+        # Setup was valid: the same request opens the record once the session
+        # has ended, so only the facility check refused it above.
+        test_setup["expiry_manager"].expire_session("rec-001", force=True)
+        reopened = test_setup["client"].post(
+            "/records/rec-001/breakglass", json=self._bob(test_setup)
+        )
+        assert reopened.status_code == 200, reopened.text
+        assert reopened.json()["joined"] is False
 
     def test_join_with_audit_outage_releases_nothing(self, test_setup):
         """Log-before-release holds for every viewer, not only the opener."""

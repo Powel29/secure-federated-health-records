@@ -75,6 +75,7 @@ Each row links to a one-file ADR with the full context.
 | [0060](0060-clinical-workflow-remediation.md) | Clinical workflow for the demo: record provenance and sensitivity metadata, care-episode consent, justification digest in the release audit entry, sensitive-record necessity, temporary encounters, guardians/next of kin, downtime capture, 4-hour default window | Proposed (contract changes need team review) | 2026-10-13 | Avaneeth → all four | Clinical review |
 | [0061](0061-multi-record-declaration-and-open-record-search.md) | One declaration covers several records (each still its own assertion, threshold, audit entry); cross-record search covers only records already open, at any facility, with portal-side spelling/synonym expansion; break-glass routed to the record's facility; guardians/parents decide consent for minors | Proposed | 2026-10-14 | Avaneeth → Nandini, Powel → all four | Clinical review, ADR-0057/0060 |
 | [0062](0062-record-shown-whenever-open-case-is-viewed.md) | An open case shows its record on every page view through the ADR-0057 join (audited, threshold, no extension); "View record again" button removed; nothing stored | Proposed | 2026-10-14 | Avaneeth → Nandini → all four | Clinician usability, ADR-0057 |
+| [0063](0063-join-limited-to-opener-facility.md) | Only clinicians of the opener's facility (from the verified issuing CA) may join an open emergency session; others get an audited 403 before the threshold gate | Proposed | 2026-10-14 | Avaneeth → Powel → all four | ADR-0057/0061 follow-up |
 
 ## Owed, not yet written
 

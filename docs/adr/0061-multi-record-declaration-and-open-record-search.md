@@ -27,6 +27,7 @@ After ADR-0060 the clinical review still had partial gaps:
 1. **Routing.** The portal sends each break-glass to the discovered record's
    facility. The custodian already routes to the record's node when it can
    read the store, so a viewer anywhere joins the open session (ADR-0057).
+   *Amended by ADR-0063: only clinicians of the opener's facility may join.*
 2. **One declaration, several records.** The break-glass form takes several
    records (none pre-selected) under one reason and justification. Each
    record still gets its own assertion, threshold, audit entry before

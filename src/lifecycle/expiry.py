@@ -122,6 +122,9 @@ class EmergencySession:
     # The state the record was in before break-glass; expiry returns it there
     # so an emergency never undoes a patient's revocation (ADR-0058).
     return_state: LifecycleState = LifecycleState.GRANTED
+    # The opener's home facility; only its clinicians may join (ADR-0063).
+    # Empty means nobody can join.
+    opener_facility_id: str = ""
     # Expiry progress, so a failed attempt can be retried without repeating
     # what already happened (review F20, N2).
     expiring: bool = False
@@ -285,6 +288,7 @@ class EmergencyExpiryManager:
         current_record: Record,
         return_state: LifecycleState,
         duration_seconds: float | None = None,
+        opener_facility_id: str = "",
     ) -> EmergencySession:
         """Register a session on break-glass unlock, starting its time-box now.
 
@@ -312,6 +316,10 @@ class EmergencyExpiryManager:
                 (ADR-0058).
             duration_seconds: Time-box length; defaults to
                 ``default_duration_seconds``.
+            opener_facility_id: The opening clinician's home facility, taken
+                from the CA that issued their certificate. Only clinicians of
+                this facility may join the session (ADR-0063); empty means
+                nobody can.
 
         Returns:
             The registered :class:`EmergencySession`.
@@ -345,6 +353,7 @@ class EmergencyExpiryManager:
             emergency_wrapping=emergency_wrapping,
             current_record=current_record,
             return_state=return_state,
+            opener_facility_id=opener_facility_id,
         )
         with self._lock:
             if record_id in self._sessions:
@@ -355,10 +364,12 @@ class EmergencyExpiryManager:
             self._sessions[record_id] = session
         return session
 
-    def active_session_expires_at(self, record_id: str) -> datetime.datetime:
-        """When the record's live session ends; raises exactly as
-        :meth:`get_active_emergency_key` does if there is none (ADR-0057)."""
-        return self._active_session(record_id).expires_at
+    def join_window(self, record_id: str) -> tuple[datetime.datetime, str]:
+        """``(expires_at, opener_facility_id)`` of the record's live session;
+        raises exactly as :meth:`get_active_emergency_key` does if there is
+        none (ADR-0057, ADR-0063)."""
+        session = self._active_session(record_id)
+        return session.expires_at, session.opener_facility_id
 
     def get_active_emergency_key(self, record_id: str) -> bytes:
         """Return the emergency key IFF a session exists and is not expired.

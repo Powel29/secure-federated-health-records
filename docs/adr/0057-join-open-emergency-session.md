@@ -37,6 +37,7 @@ clinician goes through identify → declare as usual and gets their own case.
 
 - One lifecycle state per record is kept; extra viewers add audited accesses,
   not transitions.
+- Since ADR-0063, only clinicians of the opener's facility may join.
 - Sessions live at the record's own facility. The custodian routes every
   break-glass there, and the portal passes the discovered record's facility
   (ADR-0061), so a clinician at another facility joins too; 409 remains only

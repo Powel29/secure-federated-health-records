@@ -12,7 +12,7 @@ from breakglass.assertion import (
     validate_clinical_context,
 )
 from contracts.clinical import ClinicalMetadata
-from contracts.enums import ReasonCode
+from contracts.enums import LifecycleState, ReasonCode
 from crypto_core import generate_ec_keypair
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -177,21 +177,24 @@ def test_future_structured_report_date_is_rejected_before_storage(federation):
     assert federation["repo"].get_record("future-report") is None
 
 
-def test_clinicians_from_two_facilities_share_one_home_node_window(federation):
-    """Different treating clinicians independently pass the same threshold gate."""
+def test_clinician_of_another_facility_cannot_join_the_open_window(federation):
+    """ADR-0063: a window opened by facility-b staff is not joinable from facility-a."""
     private, public = generate_keypair()
     federation["material"][DOC_CARDIO].update(pre_private_key=private, pre_public_key=public)
     client = _custodian(federation)
     _deposit_all(client, federation)
     payload = {"patient_id": PATIENT, "record_id": RECORD, "reason_code": "sepsis", "emergency_duration_seconds": 30}
     first = client.post(f"/subjects/{DOC_ER}/breakglass", json={**payload, "facility_id": "facility-b"})
-    second = client.post(f"/subjects/{DOC_CARDIO}/breakglass", json={**payload, "facility_id": "facility-a"})
     assert first.status_code == 200, first.text
-    assert second.status_code == 200, second.text
-    assert second.json()["joined"] is True
-    assert second.json()["expires_at"] == first.json()["expires_at"]
-    assert second.json()["transition_event"] is None
-    assert len(client.app_audit.state.log["entries"]) == 2
+    second = client.post(f"/subjects/{DOC_CARDIO}/breakglass", json={**payload, "facility_id": "facility-a"})
+    assert second.status_code == 403, second.text
+    assert "cannot join" in second.text
+    assert "plaintext_b64" not in second.text
+    assert federation["repo"].get_lifecycle_state(RECORD) is LifecycleState.EMERGENCY_OPEN
+    # The opener's facility still joins: only the facility check refused above.
+    again = client.post(f"/subjects/{DOC_ER}/breakglass", json={**payload, "facility_id": "facility-b"})
+    assert again.status_code == 200, again.text
+    assert again.json()["joined"] is True
 
 
 def test_clinical_note_author_is_bound_to_authenticated_subject(federation):
