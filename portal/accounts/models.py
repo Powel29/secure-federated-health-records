@@ -80,9 +80,12 @@ class PatientDirectory(models.Model):
     """
 
     subject_id = models.CharField(max_length=128, unique=True)
-    given_name = models.CharField(max_length=128)
-    family_name = models.CharField(max_length=128)
-    date_of_birth = models.DateField()
+    given_name = models.CharField(max_length=128, blank=True)
+    family_name = models.CharField(max_length=128, blank=True)
+    date_of_birth = models.DateField(null=True, blank=True)
+    locality = models.CharField(max_length=200, blank=True)
+    identifier_hint = models.CharField(max_length=128, blank=True)
+    aliases = models.JSONField(default=list, blank=True)
     home_facility_id = models.CharField(max_length=128, blank=True)
     home_authority_id = models.CharField(max_length=128, blank=True)
 
@@ -95,4 +98,71 @@ class PatientDirectory(models.Model):
 
     @property
     def full_name(self) -> str:
-        return f"{self.given_name} {self.family_name}"
+        return f"{self.given_name} {self.family_name}".strip()
+
+    @property
+    def is_minor(self) -> bool | None:
+        from django.utils import timezone
+
+        if self.date_of_birth is None:
+            return None
+        today = timezone.now().date()
+        age = (
+            today.year
+            - self.date_of_birth.year
+            - (
+                (today.month, today.day)
+                < (self.date_of_birth.month, self.date_of_birth.day)
+            )
+        )
+        return age < 18
+
+
+class PatientRepresentative(models.Model):
+    """Verified relationship and contact preferences; never a decryption grant."""
+
+    patient = models.ForeignKey(
+        PatientDirectory, on_delete=models.PROTECT, related_name="representatives"
+    )
+    representative_id = models.CharField(max_length=128)
+    display_name = models.CharField(max_length=200)
+    relationship = models.CharField(
+        max_length=32,
+        choices=[
+            ("guardian", "Legal guardian"),
+            ("next_of_kin", "Next of kin"),
+            ("parent", "Parent"),
+        ],
+    )
+    verification_reference = models.CharField(max_length=200)
+    verified_by = models.CharField(max_length=128)
+    verified_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    receive_notifications = models.BooleanField(default=False)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["patient", "representative_id"],
+                name="unique_patient_representative",
+            )
+        ]
+
+
+def minors_represented_by(representative_id: str) -> list[PatientDirectory]:
+    """Minors whose consent this subject may decide (ADR-0061).
+
+    Only a live, verified guardian or parent link counts, and only while the
+    patient's recorded date of birth makes them a minor. Next of kin, an
+    unknown date of birth, a revoked or an expired link: no authority.
+    """
+    from django.utils import timezone
+
+    links = PatientRepresentative.objects.filter(
+        representative_id=representative_id,
+        relationship__in=("guardian", "parent"),
+        revoked_at__isnull=True,
+        expires_at__gt=timezone.now(),
+    ).select_related("patient")
+    return [link.patient for link in links if link.patient.is_minor]

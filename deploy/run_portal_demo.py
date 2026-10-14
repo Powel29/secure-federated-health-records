@@ -106,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--duration",
         type=float,
-        default=float(os.environ.get("EMERGENCY_DURATION_SECONDS", "120")),
+        default=float(os.environ.get("EMERGENCY_DURATION_SECONDS", "14400")),
         help="break-glass time-box in seconds (ARCHITECTURE §7: adjustable)",
     )
     parser.add_argument(

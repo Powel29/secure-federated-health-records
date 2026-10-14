@@ -6,7 +6,8 @@ forward-secret from what came before. :class:`EmergencyExpiryManager`
 implements both: it is a simulated HSM/KMS timer (ADR-0003) that, once a
 session's ``expires_at`` passes, emits two *signed* ``TransitionEvent``\\ s
 through the shared :class:`~lifecycle.state_machine.LifecycleStateMachine` --
-``EMERGENCY_OPEN -> EXPIRED`` and then ``EXPIRED -> GRANTED`` -- and, between
+``EMERGENCY_OPEN -> EXPIRED`` and then ``EXPIRED`` back to the state the
+record was in before break-glass (``GRANTED`` or ``REVOKED``, ADR-0058) -- and, between
 the two, forces a fresh DEK and re-encrypts the record's payload so nothing
 wrapped under the (retired) emergency key can decrypt the record's ciphertext
 going forward.
@@ -118,6 +119,12 @@ class EmergencySession:
     baseline_wrapping: DEKWrapping
     emergency_wrapping: DEKWrapping
     current_record: Record
+    # The state the record was in before break-glass; expiry returns it there
+    # so an emergency never undoes a patient's revocation (ADR-0058).
+    return_state: LifecycleState = LifecycleState.GRANTED
+    # The opener's home facility; only its clinicians may join (ADR-0063).
+    # Empty means nobody can join.
+    opener_facility_id: str = ""
     # Expiry progress, so a failed attempt can be retried without repeating
     # what already happened (review F20, N2).
     expiring: bool = False
@@ -143,8 +150,8 @@ class ExpiryResult:
     Attributes:
         record_id: The record whose session just expired.
         expired_event: Signed ``EMERGENCY_OPEN -> EXPIRED`` transition.
-        rebaselined_event: Signed ``EXPIRED -> GRANTED`` transition, emitted
-            after the forced key rotation below.
+        rebaselined_event: Signed ``EXPIRED -> return_state`` transition
+            (``GRANTED`` or ``REVOKED``), emitted after the forced key rotation.
         rotated_record: Fresh ciphertext under a freshly generated DEK.
         rotated_wrapping: The new DEK wrapped under the session's
             ``baseline_wrapping_key``, ``generation = old_generation + 1``.
@@ -166,7 +173,8 @@ class EmergencyExpiryManager:
 
     Uses a ``timer_actor_id``-owned signing key to emit two signed
     ``TransitionEvent``\\ s at expiry: ``EMERGENCY_OPEN -> EXPIRED``, then
-    ``EXPIRED -> GRANTED`` after a forced key rotation. No admin action is
+    ``EXPIRED -> GRANTED|REVOKED`` (the pre-emergency state, ADR-0058) after a
+    forced key rotation. No admin action is
     required -- expiry fires either from an explicit :meth:`expire_session`
     call, a :meth:`check_and_expire_due` sweep, or the background thread
     started by :meth:`start_monitor`.
@@ -278,7 +286,9 @@ class EmergencyExpiryManager:
         baseline_wrapping: DEKWrapping,
         emergency_wrapping: DEKWrapping,
         current_record: Record,
+        return_state: LifecycleState,
         duration_seconds: float | None = None,
+        opener_facility_id: str = "",
     ) -> EmergencySession:
         """Register a session on break-glass unlock, starting its time-box now.
 
@@ -301,16 +311,29 @@ class EmergencyExpiryManager:
             current_record: The record as it stands during the emergency
                 session (its ciphertext decrypts under the DEK
                 ``emergency_wrapping`` unwraps to).
+            return_state: The record's state before break-glass --
+                ``GRANTED`` or ``REVOKED`` -- which expiry restores
+                (ADR-0058).
             duration_seconds: Time-box length; defaults to
                 ``default_duration_seconds``.
+            opener_facility_id: The opening clinician's home facility, taken
+                from the CA that issued their certificate. Only clinicians of
+                this facility may join the session (ADR-0063); empty means
+                nobody can.
 
         Returns:
             The registered :class:`EmergencySession`.
 
         Raises:
+            ValueError: ``return_state`` is not GRANTED or REVOKED.
             ValueError: A session is already registered for ``record_id`` --
                 one active emergency session per record at a time.
         """
+        if return_state not in (LifecycleState.GRANTED, LifecycleState.REVOKED):
+            raise ValueError(
+                f"an emergency session can only return to granted or revoked, "
+                f"not {return_state.value!r}"
+            )
         duration = (
             duration_seconds
             if duration_seconds is not None
@@ -329,6 +352,8 @@ class EmergencyExpiryManager:
             baseline_wrapping=baseline_wrapping,
             emergency_wrapping=emergency_wrapping,
             current_record=current_record,
+            return_state=return_state,
+            opener_facility_id=opener_facility_id,
         )
         with self._lock:
             if record_id in self._sessions:
@@ -338,6 +363,13 @@ class EmergencyExpiryManager:
                 )
             self._sessions[record_id] = session
         return session
+
+    def join_window(self, record_id: str) -> tuple[datetime.datetime, str]:
+        """``(expires_at, opener_facility_id)`` of the record's live session;
+        raises exactly as :meth:`get_active_emergency_key` does if there is
+        none (ADR-0057, ADR-0063)."""
+        session = self._active_session(record_id)
+        return session.expires_at, session.opener_facility_id
 
     def get_active_emergency_key(self, record_id: str) -> bytes:
         """Return the emergency key IFF a session exists and is not expired.
@@ -356,6 +388,9 @@ class EmergencyExpiryManager:
                 :meth:`expire_session` has not yet swept it -- or the session
                 is being expired.
         """
+        return self._active_session(record_id).emergency_key
+
+    def _active_session(self, record_id: str) -> EmergencySession:
         with self._lock:
             session = self._sessions.get(record_id)
         if session is None:
@@ -368,7 +403,7 @@ class EmergencyExpiryManager:
                 f"emergency session for record {record_id!r} expired at "
                 f"{session.expires_at.isoformat()}"
             )
-        return session.emergency_key
+        return session
 
     def expire_session(self, record_id: str, *, force: bool = False) -> ExpiryResult:
         """Expire one session: sign, rotate, sign again, zeroize.
@@ -388,7 +423,7 @@ class EmergencyExpiryManager:
                decrypt the current payload, mint a fresh DEK, re-encrypt,
                and wrap the fresh DEK under ``baseline_wrapping_key`` at
                ``generation = old_generation + 1``.
-            6. Emit a signed ``EXPIRED -> GRANTED`` transition.
+            6. Emit a signed ``EXPIRED -> return_state`` transition.
             7. Invoke ``audit_logger`` (if configured) for each transition.
             8. Best-effort zeroize: overwrite the session's ``emergency_key``
                reference with 32 zero bytes (Python cannot guarantee true
@@ -494,6 +529,7 @@ class EmergencyExpiryManager:
             aad=session.current_record.aad,
             record_id=session.current_record.record_id,
             created_at=session.current_record.created_at,
+            clinical=session.current_record.clinical,
         )
         rotated_wrapping = wrap_dek(
             dek=fresh_dek,
@@ -503,12 +539,12 @@ class EmergencyExpiryManager:
             generation=session.baseline_wrapping.generation + 1,
         )
 
-        # --- Step 6: EXPIRED -> GRANTED (signed once per session) -------------
+        # --- Step 6: EXPIRED -> pre-emergency state (signed once) -------------
         if session.rebaselined_event is None:
             rebaselined_event = create_transition_event(
                 record_id=record_id,
                 from_state=LifecycleState.EXPIRED,
-                to_state=LifecycleState.GRANTED,
+                to_state=session.return_state,
                 actor_id=self._timer_actor_id,
                 signing_key=self._signing_key,
                 issued_at=now,

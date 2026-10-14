@@ -33,6 +33,7 @@ from breakglass.exceptions import (
 )
 from breakglass.gate import (
     EmergencyUnlockResult,
+    join_emergency_access,
     open_emergency_access,
 )
 from breakglass.replay import (
@@ -51,6 +52,7 @@ __all__ = [
     "TOTAL_SHARES",
     "EmergencyUnlockResult",
     "generate_emergency_key",
+    "join_emergency_access",
     "open_emergency_access",
     "split_emergency_key",
     # Envelope (P3-11)

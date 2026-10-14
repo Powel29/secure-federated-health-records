@@ -111,6 +111,9 @@ def deposit_custodian(
                 "display_name": patient.name,
                 "facility_id": patient.home_facility,
                 "signing_key_pem": meta["private_key_pem"],
+                # Facilities verify the patient's signatures against this
+                # certificate, never a bare key (ADR-0064).
+                "certificate_pem": meta["certificate_pem"],
                 "credentials": meta["credentials"],
             },
         ).raise_for_status()

@@ -8,6 +8,7 @@ payloads.
 
 from __future__ import annotations
 
+from contracts.clinical import ClinicalMetadata
 from contracts.consent import ConsentGrant, ConsentRequest
 from contracts.enums import LifecycleState, ReasonCode
 from contracts.lifecycle import TransitionEvent
@@ -43,9 +44,12 @@ class ReadRecordRequest(BaseModel):
         default=None,
         description="Optional patient-signed ConsentGrant for consent gate",
     )
-    patient_public_key_pem: str | None = Field(
+    patient_certificate_pem: str | None = Field(
         default=None,
-        description="PEM-encoded EC public key of patient to verify grant",
+        description=(
+            "Patient certificate (PEM) from a configured facility CA; the grant "
+            "is verified against its key, never a caller-supplied one (ADR-0064)"
+        ),
     )
     correlation_id: str | None = Field(
         default=None,
@@ -85,9 +89,9 @@ class SubmitConsentGrantPayload(BaseModel):
     """Request body submitting a patient-signed ConsentGrant."""
 
     grant: ConsentGrant
-    patient_public_key_pem: str = Field(
+    patient_certificate_pem: str = Field(
         ...,
-        description="PEM-encoded ECDSA public key of the patient",
+        description="Patient certificate (PEM) from a configured facility CA",
     )
 
 
@@ -167,6 +171,8 @@ class BreakglassUnlockRequest(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
+    sensitive_justification: str = Field(default="", max_length=2000)
+    justification: str = Field(default="", max_length=2000)
 
     assertion: EmergencyAssertion = Field(
         ...,
@@ -205,6 +211,10 @@ class BreakglassUnlockRequest(BaseModel):
             "facility's configured duration (F6)"
         ),
     )
+    join_only: bool = Field(
+        default=False,
+        description="Refuse (409) unless the record is already emergency_open",
+    )
 
 
 class BreakglassUnlockResponse(BaseModel):
@@ -215,7 +225,14 @@ class BreakglassUnlockResponse(BaseModel):
         ...,
         description="Base64-encoded PRE-rewrapped DEK for emergency clinician",
     )
-    transition_event: TransitionEvent
+    transition_event: TransitionEvent | None = Field(
+        default=None,
+        description="The signed transition into EMERGENCY_OPEN; None when joined",
+    )
+    joined: bool = Field(
+        default=False,
+        description="True when this joined an already open session (ADR-0057)",
+    )
     correlation_id: str | None = None
     expires_at: AwareDatetime = Field(
         ...,
@@ -286,6 +303,7 @@ class IngestRecordRequest(BaseModel):
     emergency_key_b64: str | None = None
     content_type: str = "application/json"
     record_id: str | None = None
+    clinical: ClinicalMetadata = Field(default_factory=ClinicalMetadata)
 
 
 class IngestRecordResponse(BaseModel):

@@ -16,7 +16,6 @@ from contracts.enums import ConsentStatus
 from crypto_core import (
     generate_ec_keypair,
     private_key_to_pem,
-    public_key_to_pem,
 )
 
 
@@ -96,13 +95,13 @@ class TestHospitalConsentEndpoints:
             grantee_id="dr-alice",
             patient_signing_key=pki["pat_priv"],
         )
-        pat_pub_pem = public_key_to_pem(pki["pat_pub"]).decode("ascii")
+        pat_cert_pem = pki["pat_cert_pem"]
 
         response = client.post(
             "/consent/grants",
             json={
                 "grant": grant.model_dump(mode="json"),
-                "patient_public_key_pem": pat_pub_pem,
+                "patient_certificate_pem": pat_cert_pem,
             },
         )
 
@@ -131,13 +130,13 @@ class TestHospitalConsentEndpoints:
             grantee_id="dr-alice",
             patient_signing_key=foreign_priv,  # forged/wrong signer
         )
-        pat_pub_pem = public_key_to_pem(pki["pat_pub"]).decode("ascii")
+        pat_cert_pem = pki["pat_cert_pem"]
 
         response = client.post(
             "/consent/grants",
             json={
                 "grant": grant.model_dump(mode="json"),
-                "patient_public_key_pem": pat_pub_pem,
+                "patient_certificate_pem": pat_cert_pem,
             },
         )
 

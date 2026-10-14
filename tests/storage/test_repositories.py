@@ -8,6 +8,7 @@ from uuid import uuid4
 import psycopg
 import pytest
 from contracts import AuditEntry, DEKWrapping, Facility, Record, TransitionEvent
+from contracts.clinical import ClinicalMetadata
 from contracts.enums import FacilityStatus, LifecycleState, ReasonCode
 from federation import find_record_ids_by_patient
 from storage import repositories as repo
@@ -37,6 +38,12 @@ def test_record_and_wrapping_round_trip(conn):
     _seed_refs(conn)
     rec = Record(
         record_id="rec-501",
+        clinical=ClinicalMetadata(
+            title="Synthetic report",
+            source="hospital",
+            sensitivity="restricted",
+            care_team_consent=True,
+        ),
         patient_id="pat-101",
         facility_id="facility-a",
         policy_id="pol-77",
@@ -65,7 +72,7 @@ def test_record_and_wrapping_round_trip(conn):
 def test_facility_round_trip(conn):
     fac = Facility(
         facility_id="facility-b",
-        display_name="St. Jude Trauma",
+        display_name="Northvale Trauma",
         endpoint="http://facility-b:8002",
         public_key=b"\x04",
         status=FacilityStatus.ACTIVE,

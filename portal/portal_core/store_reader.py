@@ -11,6 +11,7 @@ signatures, ``coded_term``. Sizes and hashes only.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from django.db import connections
@@ -40,7 +41,12 @@ def _rows(
     with connections["store"].cursor() as cur:
         cur.execute(query, params)
         cols = [c[0] for c in cur.description]
-        return [dict(zip(cols, row, strict=True)) for row in cur.fetchall()]
+        rows = [dict(zip(cols, row, strict=True)) for row in cur.fetchall()]
+    # Django's psycopg backend hands jsonb back as text; callers expect a dict.
+    for row in rows:
+        if isinstance(row.get("clinical"), str):
+            row["clinical"] = json.loads(row["clinical"])
+    return rows
 
 
 def _one(
@@ -140,7 +146,7 @@ def record_summaries(limit: int = 50) -> list[dict[str, Any]]:
     """Records as metadata + ciphertext size -- the plaintext is never here."""
     return _rows(
         "SELECT r.record_id, r.patient_id, r.facility_id, r.content_type,"
-        " octet_length(r.ciphertext) AS ciphertext_bytes, r.created_at,"
+        " octet_length(r.ciphertext) AS ciphertext_bytes, r.created_at, r.clinical,"
         " f.display_name AS facility_name, l.state AS lifecycle_state"
         " FROM records r"
         " LEFT JOIN facilities f ON f.facility_id = r.facility_id"
@@ -154,7 +160,7 @@ def records_for_patient(patient_id: str) -> list[dict[str, Any]]:
     """The patient's own records (metadata); the ADR-0016 self-access surface."""
     return _rows(
         "SELECT r.record_id, r.patient_id, r.facility_id, r.content_type,"
-        " octet_length(r.ciphertext) AS ciphertext_bytes, r.created_at,"
+        " octet_length(r.ciphertext) AS ciphertext_bytes, r.created_at, r.clinical,"
         " f.display_name AS facility_name, l.state AS lifecycle_state,"
         " (SELECT max(generation) FROM dek_wrappings w WHERE w.record_id = r.record_id)"
         "   AS generation"
@@ -169,7 +175,7 @@ def records_for_patient(patient_id: str) -> list[dict[str, Any]]:
 def record_meta(record_id: str) -> dict[str, Any] | None:
     return _one(
         "SELECT r.record_id, r.patient_id, r.facility_id, r.content_type,"
-        " octet_length(r.ciphertext) AS ciphertext_bytes, r.created_at,"
+        " octet_length(r.ciphertext) AS ciphertext_bytes, r.created_at, r.clinical,"
         " f.display_name AS facility_name, l.state AS lifecycle_state"
         " FROM records r"
         " LEFT JOIN facilities f ON f.facility_id = r.facility_id"

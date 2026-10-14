@@ -15,6 +15,7 @@ import httpx
 import pytest
 from api.audit_client import AuditServiceError
 from api.hospital import create_hospital_app
+from contracts.enums import LifecycleState
 from fastapi.testclient import TestClient
 from search.service import derive_search_token
 
@@ -101,6 +102,7 @@ class TestHospitalSearchEndpoints:
             baseline_wrapping=test_setup["wrapping"],
             emergency_wrapping=test_setup["em_wrapping"],
             current_record=test_setup["record"],
+            return_state=LifecycleState.GRANTED,
             duration_seconds=300.0,
         )
 
@@ -134,6 +136,7 @@ class TestHospitalSearchEndpoints:
             baseline_wrapping=test_setup["wrapping"],
             emergency_wrapping=test_setup["em_wrapping"],
             current_record=test_setup["record"],
+            return_state=LifecycleState.GRANTED,
             duration_seconds=-1.0,
         )
 

@@ -28,6 +28,7 @@ from typing import Any
 
 import httpx
 from breakglass import create_emergency_assertion
+from breakglass.assertion import clinical_context_digest
 from contracts.enums import ReasonCode
 from crypto_core import (
     generate_ec_keypair,
@@ -225,7 +226,7 @@ def standalone_federation(
         conn,
         Facility(
             facility_id="facility-a",
-            display_name="St. Jude Hospital",
+            display_name="Northvale General Hospital",
             endpoint="http://127.0.0.1:8001",
             public_key=b"\x03",
             status=FacilityStatus.ACTIVE,
@@ -235,7 +236,7 @@ def standalone_federation(
         conn,
         Facility(
             facility_id="facility-b",
-            display_name="Mercy Hospital",
+            display_name="Eastbrook Hospital",
             endpoint="http://127.0.0.1:8002",
             public_key=b"\x04",
             status=FacilityStatus.ACTIVE,
@@ -406,8 +407,8 @@ def run_demo_scenario(
         ("authority-med", "Medical Board Authority", endpoints.authority_med),
         ("authority-net", "Regional Network Authority", endpoints.authority_net),
         ("audit", "Standalone Audit Service", endpoints.audit),
-        ("facility-a", "St. Jude Hospital (Home Node)", endpoints.facility_a),
-        ("facility-b", "Mercy Hospital (Emergency Node)", endpoints.facility_b),
+        ("facility-a", "Northvale General Hospital (Home Node)", endpoints.facility_a),
+        ("facility-b", "Eastbrook Hospital (Emergency Node)", endpoints.facility_b),
     ]
 
     for node_id, display, url in nodes:
@@ -473,15 +474,16 @@ def run_demo_scenario(
     # =========================================================================
     _print_box_header(
         "ACT 3: BLIND CROSS-HOSPITAL RECORD DISCOVERY",
-        "Patient Alice Vance (pat-101) arrives unconscious at Mercy Hospital ER",
+        "Unconscious patient carrying an ID card arrives at Eastbrook Hospital ER",
         s,
     )
     print(
         f"  {s.YELLOW}EMERGENCY ARRIVAL:{s.RESET} Alice Vance (pat-101) admitted to "
-        f"Mercy Hospital (facility-b).\n"
-        f"  Attending Physician: {s.BOLD}Dr. Gregory House (doc-201){s.RESET} "
+        f"Eastbrook Hospital (facility-b).\n"
+        f"  Attending Physician: {s.BOLD}Dr. Arjun Rao (doc-201){s.RESET} "
         f"(Emergency Medicine).\n"
-        f"  Patient is comatose; no local medical chart exists at Mercy Hospital."
+        f"  Patient is comatose; identified from the ID card in their wallet\n"
+        f"  (name + date of birth). No local chart exists at Eastbrook Hospital."
     )
     print("\n  Initiating federated patient discovery across hospital network...")
     discovery_res = client.get(f"{endpoints.facility_b}/patients/pat-101/records")
@@ -491,7 +493,7 @@ def run_demo_scenario(
 
     print(
         f"   {s.GREEN}[✓] MATCH LOCATED:{s.RESET} Record {s.BOLD}rec-001{s.RESET} "
-        f"discovered at remote Node (facility-a / St. Jude Hospital).\n"
+        f"discovered at remote Node (facility-a / Northvale General Hospital).\n"
         f"   {s.DIM}Discovery Method: Patient-indexed blind pointer lookup "
         f"(Zero plaintext leakage){s.RESET}"
     )
@@ -506,7 +508,7 @@ def run_demo_scenario(
         s,
     )
     print(
-        "  Dr. House attempts a routine read using Mercy ER credentials:\n"
+        "  Dr. Rao attempts a routine read using Eastbrook ER credentials:\n"
         "   Requester: doc-201 (role: emergency-physician)\n"
         "   Target Policy: role:physician AND specialty:cardiology\n"
         "   Action: POST /records/rec-001/read"
@@ -535,7 +537,7 @@ def run_demo_scenario(
         f"\n   {s.RED}[✗] HTTP 403 FORBIDDEN:{s.RESET} Access strictly refused by "
         f"policy engine.\n"
         f"   {s.DIM}Engine Reason:{s.RESET} Policy tree requires specialty:cardiology "
-        f"(Dr. House holds emergency-physician).\n"
+        f"(Dr. Rao holds emergency-physician).\n"
         f"   {s.DIM}Audit Event:{s.RESET} Access refusal logged to Standalone "
         f"Audit Service with actor doc-201."
     )
@@ -557,7 +559,10 @@ def run_demo_scenario(
     alice_rec_info = seeded_data["records"]["rec-001"]
 
     # 1. Sign EmergencyAssertion
-    print("  1. Dr. House generates and signs an EmergencyAssertion:")
+    print("  1. Dr. Rao generates and signs an EmergencyAssertion:")
+    justification = (
+        "Unconscious patient requires urgent allergy and medication history review."
+    )
     assertion = create_emergency_assertion(
         patient_id="pat-101",
         clinician_id="doc-201",
@@ -565,6 +570,7 @@ def run_demo_scenario(
         reason_code=ReasonCode.UNCONSCIOUS_PATIENT,
         signing_key=house_info["private_key"],
         ttl=datetime.timedelta(seconds=300),
+        clinical_context_digest=clinical_context_digest("rec-001", justification, ""),
     )
     print(
         f"     • Subject: {assertion.patient_id}  |  "
@@ -635,6 +641,7 @@ def run_demo_scenario(
             "correlation_id": corr_id,
             "baseline_wrapping_key_b64": base64.b64encode(k_physician).decode("ascii"),
             "emergency_duration_seconds": emergency_duration_seconds,
+            "justification": justification,
         },
     )
     unlock_res.raise_for_status()
@@ -692,7 +699,7 @@ def run_demo_scenario(
         f"({allergies[0]['reaction']}){s.RESET}"
     )
     print(
-        f"  {s.RED}║{s.RESET} Action: Strictly avoid Penicillin/beta-lactams; "
+        f"  {s.RED}║{s.RESET} Action: Avoid penicillins; review other beta-lactams; "
         f"Cath Lab activated."
     )
     print("  " + s.RED + "╚" + "═" * 72 + "╝" + s.RESET)

@@ -458,7 +458,7 @@ def section_f(s: dict[str, Portal], expiry_wait: float) -> str | None:
     house, aud = s["house"], s["auditor"]
     before = lifecycle_states(aud)
 
-    sel = identify_select(house, "Watson", "Emma", "1994-07-03", "pat-103")
+    sel = identify_select(house, "Hartwell", "Emma", "1994-07-03", "pat-103")
     R.check(
         "F",
         "identify + select carries pat-103 forward",

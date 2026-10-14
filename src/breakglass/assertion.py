@@ -20,12 +20,13 @@ artifact in the project shares one construction.
 from __future__ import annotations
 
 import datetime
+import json
 import secrets
 from uuid import UUID, uuid4
 
 from contracts import EmergencyAssertion
 from contracts.enums import ReasonCode
-from crypto_core import certificate_public_key, sign, verify
+from crypto_core import certificate_public_key, sha256_digest, sign, verify
 from crypto_core.exceptions import InvalidSignatureError
 from crypto_core.types import ECPrivateKey, ECPublicKey
 from cryptography.x509 import Certificate
@@ -48,8 +49,10 @@ _FIELD_SEPARATOR = b"\x1f"
 
 # Longest an assertion may live (expires_at - issued_at), and how far in the
 # future issued_at may be to tolerate clock drift between custodian and
-# facility (F6). Three days is the team's chosen ceiling.
-MAX_ASSERTION_TTL = datetime.timedelta(days=3)
+# facility (F6). An unused assertion is a one-time token, so it lives minutes,
+# not days (ADR-0056 replaces ADR-0049's 3 days); the session window it opens
+# is configured separately.
+MAX_ASSERTION_TTL = datetime.timedelta(minutes=15)
 ASSERTION_CLOCK_SKEW = datetime.timedelta(seconds=30)
 
 # Matches ``contracts.base.MIN_ANTIREPLAY_NONCE_BYTES``.
@@ -71,6 +74,7 @@ def _canonical_assertion_payload(
     issued_at: datetime.datetime,
     expires_at: datetime.datetime,
     nonce: bytes,
+    clinical_context_digest: str = "",
 ) -> bytes:
     """Build the canonical byte payload the assertion signature covers.
 
@@ -89,6 +93,8 @@ def _canonical_assertion_payload(
         expires_at.astimezone(datetime.timezone.utc).isoformat().encode("utf-8"),
         nonce,
     ]
+    if clinical_context_digest:
+        fields.append(clinical_context_digest.encode("ascii"))
     return _FIELD_SEPARATOR.join(fields)
 
 
@@ -107,6 +113,7 @@ def create_emergency_assertion(
     issued_at: datetime.datetime | None = None,
     expires_at: datetime.datetime | None = None,
     ttl: datetime.timedelta | None = None,
+    clinical_context_digest: str = "",
 ) -> EmergencyAssertion:
     """Build and sign an ``EmergencyAssertion``.
 
@@ -145,6 +152,7 @@ def create_emergency_assertion(
         issued_at=when,
         expires_at=expires_at,
         nonce=nonce,
+        clinical_context_digest=clinical_context_digest,
     )
     signature = sign(signing_key, payload)
 
@@ -157,6 +165,7 @@ def create_emergency_assertion(
         issued_at=when,
         expires_at=expires_at,
         nonce=nonce,
+        clinical_context_digest=clinical_context_digest,
         signature=signature,
     )
 
@@ -190,8 +199,29 @@ def verify_emergency_assertion_signature(
         issued_at=assertion.issued_at,
         expires_at=assertion.expires_at,
         nonce=assertion.nonce,
+        clinical_context_digest=assertion.clinical_context_digest,
     )
     verify(clinician_public_key, payload, assertion.signature)
+
+
+def clinical_context_digest(record_id: str, justification: str, sensitive: str) -> str:
+    """Bind the declared necessity and exact record to the existing signature."""
+    payload = json.dumps(
+        [record_id, justification.strip(), sensitive.strip()],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return sha256_digest(payload).hex()
+
+
+def validate_clinical_context(
+    assertion: EmergencyAssertion, record_id: str, justification: str, sensitive: str
+) -> None:
+    """Reject substitution of a record or clinical justification after signing."""
+    if assertion.clinical_context_digest != clinical_context_digest(
+        record_id, justification, sensitive
+    ):
+        raise ValueError("Clinical justification does not match the signed assertion")
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +271,7 @@ def validate_emergency_assertion(
             Required; pass ``frozenset()`` when none are revoked (F1).
         at: The instant to check expiry and cert validity against; defaults
             to now (UTC).
-        max_ttl: Longest allowed ``expires_at - issued_at`` (default 3 days).
+        max_ttl: Longest allowed ``expires_at - issued_at`` (default 15 min).
         clock_skew: How far ``issued_at`` may lie in the future (default 30s).
 
     Raises:

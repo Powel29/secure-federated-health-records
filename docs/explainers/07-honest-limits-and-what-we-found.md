@@ -27,6 +27,16 @@ and the work we did on 2026-10-02.
    wipes the synthetic data). Ports bind to loopback only; the custodian
    trusts local callers; the browser portal is plain HTTP on loopback. There is
    no persistent key custody and no internet-facing authentication.
+10. **Unidentified patients cannot be opened** (ADR-0059). Identification is a
+   name + date-of-birth lookup, so the demo patient carries an ID card. A
+   patient with no ID is a common emergency case we do not handle; the "John
+   Doe" flow is deferred (ADR-0033).
+11. **Record labels are readable in the store** (ADR-0064). A record's title,
+   type, author and sensitivity label ("HIV", "mental health") sit beside the
+   ciphertext in plain text and are shown to clinicians at discovery. The
+   patient signs them, so a store write cannot loosen the rules they set, but
+   anyone who can read the store learns the category of a record without
+   decrypting it.
 
 ## What the automated stress test found
 

@@ -2,91 +2,94 @@
 {% block title %}Access control & consent · {{ product_name }}{% endblock %}
 {% block content %}
 {% include "patient/_case_banner.html" %}
+{% if represented %}
+<nav class="card" aria-label="Whose consent">
+  <p class="mb-0">{% if acting_for %}Deciding as the verified guardian of <strong>{{ acting_for.full_name }}</strong> (minor). Each decision is signed with their key and logged with you as the decider.{% else %}You are viewing your own consent.{% endif %}</p>
+  <p class="mb-0"><a href="{% url 'patient:access' %}">Your own consent</a>{% for p in represented %} · <a href="{% url 'patient:access' %}?for={{ p.subject_id|urlencode }}">{{ p.full_name }}</a>{% endfor %}</p>
+</nav>
+{% endif %}
 
 <div class="grid-2">
-  <div class="card card-accent">
+  <section class="card card-frame" aria-labelledby="req-h">
     <div class="subhead">
-      <h3 class="card-title">Incoming access requests</h3>
-      <span class="tag tag-outline">{{ pending|length }} awaiting signature</span>
+      <h2 class="card-title" id="req-h">Requests waiting for you</h2>
+      {% if pending %}<span class="tag tag-warn">{{ pending|length }} to decide</span>{% else %}<span class="tag tag-quiet">None</span>{% endif %}
     </div>
     {% for row in pending %}
       <div class="panel">
         <div class="flex between baseline">
-          <div>
-            <span style="font-family:var(--font-heading);font-size:18px;font-weight:600">{{ row.requester_id }}</span>
-            {% if row.requester %}{% for c in row.requester.credentials %}<span class="tag tag-neutral" style="margin-left:6px">{{ c.name }}:{{ c.value }}</span>{% endfor %}{% endif %}
+          <div class="flex">
+            <h3 class="mb-0">{{ row.requester_id }}</h3>
+            {% if row.requester %}{% for c in row.requester.credentials %}<span class="tag tag-id">{{ c.name }}:{{ c.value }}</span>{% endfor %}{% endif %}
           </div>
-          {% if row.requester and row.requester.certificate_pem %}<span class="tag tag-accent">cert chains to root</span>{% else %}<span class="tag tag-neutral">no certificate held</span>{% endif %}
+          {% if row.requester and row.requester.certificate_pem %}<span class="tag tag-ok">{% include "_icon.html" with name="check" %}Certificate chains to root</span>{% else %}<span class="tag tag-quiet">No certificate held</span>{% endif %}
         </div>
-        <div class="mono tiny text-muted mt-2">{{ row.requester_facility_id|default:"facility unknown"|upper }} · request {{ row.request_id|stringformat:"s"|truncatechars:14 }}</div>
-        <div class="grid-stats mt-4" style="padding-top:var(--space-3);border-top:1px solid var(--color-divider)">
-          <div><div class="kicker">Target records</div><div class="value mono">{{ row.scope|join:", " }}</div></div>
-          <div><div class="kicker">Permitted scope</div><div class="value">Read only</div></div>
-          <div><div class="kicker">Request lapses</div><div class="value mono">{{ row.request_expires_at|date:"m-d H:i" }}</div></div>
-          <div><div class="kicker">Key path</div><div class="value">Policy-tree unwrap, consent-gated</div></div>
-        </div>
-        <div class="quote mt-3">“{{ row.purpose }}”</div>
-        <form method="post" action="{% url 'patient:decide' row.request_id %}" class="flex mt-4">
-          {% csrf_token %}
-          <button class="btn btn-primary grow" name="decision" value="granted">Sign grant</button>
+        <p class="tiny text-muted mt-2 mb-0"><span class="mono">{{ row.requester_facility_id|default:"facility unknown" }}</span> · request <span class="mono">{{ row.request_id|stringformat:"s"|truncatechars:14 }}</span></p>
+        <dl class="facts mt-3">
+          <div><dt>Care episode</dt><dd>{{ row.episode_label|default:"Legacy request" }}</dd></div>
+          <div><dt>Records</dt><dd>{% for label in row.record_labels %}<p>{{ label }}</p>{% empty %}{{ row.scope|join:", " }} (legacy metadata unavailable){% endfor %}</dd></div>
+          <div><dt>Access</dt><dd>Read only</dd></div>
+          <div><dt>Request lapses</dt><dd class="mono">{{ row.request_expires_at|date:"Y-m-d H:i" }}</dd></div>
+        </dl>
+        <p class="quote mt-3">“{{ row.purpose }}”</p>
+        <form method="post" action="{% url 'patient:decide' row.request_id %}" class="flex">
+          {% csrf_token %}{% if acting_for %}<input type="hidden" name="for" value="{{ acting_for.subject_id }}">{% endif %}
+          <button class="btn btn-primary grow" name="decision" value="granted" onclick="return confirm('Sign a grant giving {{ row.requester_id|escapejs }} read access to {{ row.scope|join:", "|escapejs }}?')">Sign grant</button>
           <button class="btn btn-secondary grow" name="decision" value="denied">Deny</button>
         </form>
       </div>
     {% empty %}
-      <div class="empty">No pending requests. A clinician's signed request will appear here for your decision.</div>
+      <p class="empty">No requests are waiting. A clinician's signed request appears here for your decision.</p>
     {% endfor %}
-    <div class="flex between tiny text-muted mt-3">
-      <span>Signed with your custodian-held key · ECDSA P-256</span>
-      <span>Consent is a gate on top of the policy tree — it never replaces it (ADR-0031)</span>
-    </div>
-  </div>
+    <p class="basis">Your decision is signed with your custodian-held key (ECDSA P-256). Consent is a gate on top of the policy tree; it never replaces it <span class="ref">ADR-0031</span>.</p>
+  </section>
 
-  <div class="card">
+  <section class="card" aria-labelledby="grants-h">
     <div class="subhead">
-      <h3 class="card-title">Grants and decisions</h3>
-      <span class="tag tag-outline">{{ live_count|default:"" }}{% with grants|length as n %}{{ n }} recorded{% endwith %}</span>
+      <h2 class="card-title" id="grants-h">Grants and decisions</h2>
+      <span class="tag tag-quiet">{{ grants|length }} recorded</span>
     </div>
     <div class="table-wrap">
-    <table class="table">
-      <thead><tr><th>Holder</th><th>Records</th><th>State</th><th class="right">Action</th></tr></thead>
+    <table class="table stack-sm">
+      <thead><tr><th>Holder</th><th>Records</th><th>State</th><th class="right"><span class="sr-only">Action</span></th></tr></thead>
       <tbody>
       {% for row in grants %}
         <tr>
-          <td>{{ row.requester_id }}<span class="sub mono">{{ row.requester_facility_id|upper }}</span></td>
-          <td class="mono small">{{ row.scope|join:", " }}</td>
-          <td>
-            {% if row.status == "granted" %}<span class="tag tag-accent">granted{% if row.grant_expires_at %} · exp {{ row.grant_expires_at|date:"m-d" }}{% endif %}</span>
-            {% elif row.status == "revoked" %}<span class="tag tag-outline">revoked</span>
-            {% elif row.status == "denied" %}<span class="tag tag-neutral">denied</span>
-            {% else %}<span class="tag tag-neutral">{{ row.status }}</span>{% endif %}
-            <span class="sub mono">{{ row.correlation_id|truncatechars:26 }}</span>
+          <td data-label="Holder">{{ row.requester_id }}<span class="sub mono">{{ row.requester_facility_id }}</span></td>
+          <td data-label="Records" class="mono small">{{ row.scope|join:", " }}</td>
+          <td data-label="State">
+            {% if row.status == "granted" %}<span class="tag tag-ok">Granted{% if row.grant_expires_at %} · until {{ row.grant_expires_at|date:"m-d" }}{% endif %}</span>
+            {% elif row.status == "revoked" %}<span class="tag tag-revoked">Revoked</span>
+            {% elif row.status == "denied" %}<span class="tag tag-quiet">Denied</span>
+            {% else %}<span class="tag tag-quiet">{{ row.status|humanize_code }}</span>{% endif %}
+            {% if row.correlation_id %}<span class="sub"><a class="cid" href="{% url 'patient:history' %}?type=all#cid-{{ row.correlation_id }}">{{ row.correlation_id|truncatechars:26 }}</a></span>{% endif %}
           </td>
-          <td class="right">
+          <td data-label="Action" class="right">
             {% if row.status == "granted" %}
-              <form method="post" action="{% url 'patient:revoke' row.request_id %}">{% csrf_token %}<button class="btn btn-danger btn-sm">Revoke</button></form>
-            {% else %}<button class="btn btn-ghost btn-sm" disabled>{{ row.get_status_display }}</button>{% endif %}
+              <form method="post" action="{% url 'patient:revoke' row.request_id %}">{% csrf_token %}{% if acting_for %}<input type="hidden" name="for" value="{{ acting_for.subject_id }}">{% endif %}<button class="btn btn-strong btn-sm" onclick="return confirm('Revoke {{ row.requester_id|escapejs }}\'s access? The facility will refuse their grant from now on.')">Revoke</button></form>
+            {% endif %}
           </td>
         </tr>
       {% empty %}
-        <tr><td colspan="4" class="empty">No one currently has consent-based access.</td></tr>
+        <tr><td colspan="4" class="empty">No one has consent-based access to your records.</td></tr>
       {% endfor %}
       </tbody>
     </table>
     </div>
-    <div class="tiny text-muted">Revocation is a fresh grant you sign with status <span class="mono">revoked</span>; the facility refuses the old one at read time. Cryptographic key rotation on revoke is the facility's separate path (P3-7).</div>
-  </div>
+    <p class="basis">Revoking signs a fresh grant with status <span class="mono">revoked</span>; the facility refuses the old one at read time. Rotating the record key on revoke is the facility's separate path <span class="ref">P3-7</span>.</p>
+  </section>
 </div>
 
 {% if cases %}
-<div class="card">
-  <div class="subhead"><h3 class="card-title">Emergency sessions on your records</h3></div>
-  <div class="table-wrap"><table class="table">
+<section class="card" aria-labelledby="cases-h">
+  <div class="subhead"><h2 class="card-title" id="cases-h">Emergency access to your records</h2></div>
+  <div class="table-wrap"><table class="table stack-sm">
     <thead><tr><th>Case</th><th>Record</th><th>Clinician</th><th>Shares</th><th>Outcome</th></tr></thead>
     <tbody>{% for c in cases %}
-      <tr><td class="mono">{{ c.case_number }}</td><td class="mono">{{ c.record_id }}</td><td>{{ c.clinician_id }}<span class="sub mono">{{ c.facility_id }}</span></td>
-        <td class="small">{% for s in c.shares %}{{ s.holder }}{% if not forloop.last %} + {% endif %}{% empty %}—{% endfor %}</td>
-        <td>{% if c.status == "open" %}<span class="tag tag-accent">open · <span data-countdown="{{ c.expires_at|date:'c' }}">--:--</span></span>{% elif c.status == "expired" %}<span class="tag tag-outline">expired · rotated</span>{% else %}<span class="tag tag-neutral">failed closed</span>{% endif %}</td></tr>
+      <tr><td data-label="Case" class="mono">{{ c.case_number }}</td><td data-label="Record" class="mono">{{ c.record_id }}</td><td data-label="Clinician">{{ c.clinician_id }}<span class="sub mono">{{ c.facility_id }}</span></td>
+        <td data-label="Shares" class="small">{% for s in c.shares %}{{ s.holder }}{% if not forloop.last %} + {% endif %}{% empty %}None{% endfor %}</td>
+        <td data-label="Outcome">{% if c.status == "open" %}<span class="tag tag-emergency">Open · <span role="timer" data-countdown="{{ c.expires_at|date:'c' }}">--:--</span></span>{% elif c.status == "expired" %}<span class="tag tag-expired">Expired · key rotated</span>{% else %}<span class="tag tag-fail">Failed closed</span>{% endif %}</td></tr>
     {% endfor %}</tbody></table></div>
-</div>
+</section>
 {% endif %}
 {% endblock %}

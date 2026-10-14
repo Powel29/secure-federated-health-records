@@ -9,13 +9,16 @@ is already written in a tamper-evident log. The access then expires on its own.
 
 ## The problem, as a story
 
-Alice is brought unconscious to Mercy Hospital. Her records are at St. Jude.
-Dr. House at Mercy has never treated her and nobody can ask her for consent.
+Alice is brought unconscious to Eastbrook Hospital. Her records are at Northvale.
+Dr. Rao at Eastbrook has never treated her and nobody can ask her for consent.
+The ID card in her wallet gives her name and date of birth; that is how he
+finds out who she is. (A patient with no ID cannot be looked up: a stated
+limitation, ADR-0059.)
 
 Three things go wrong in a normal system:
 
-1. **Trust.** Mercy and St. Jude are different organisations. How does one know
-   House is really a doctor?
+1. **Trust.** Eastbrook and Northvale are different organisations. How does one know
+   Rao is really a doctor?
 2. **The emergency override.** The usual answer is a break-glass button.
    But then "we log it afterwards" is only a policy. Someone with admin rights
    can open records and delete the log line.
@@ -52,7 +55,7 @@ The two claims that are new (`PROJECT.md` §4):
 | **Facilities** (A and B) | Hospital servers: validate doctors, serve reads, run the break-glass endpoint | Hospital front desks |
 | **Authorities** (medical council, hospital network) | Issue attribute credentials ("role: physician", "specialty: cardiology") | Licensing bodies |
 | **Audit service** | Writes the hash-chained log; holds share 3 | A notary who stamps before handing over the paper |
-| **Identity / PKI** | Root anchor + facility CAs + cross-certification | A chain of ID cards that lets Mercy trust a St. Jude badge |
+| **Identity / PKI** | Root anchor + facility CAs + cross-certification | A chain of ID cards that lets Eastbrook trust a Northvale badge |
 | **Key Custodian** | One process that holds every demo persona's keys and signs for them after portal login | A bank-vault concierge. Signs for you, decides nothing |
 | **Three portals** (patient, clinician, admin) | Websites that show data and identify users | Windows, never doors |
 

@@ -356,7 +356,7 @@ class TestAssertionExpiry:
 class TestAssertionLifetime:
     """Paper claim (F6): an assertion is short-lived, never a standing permission.
 
-    The maximum lifetime is 3 days (team choice); the issue time may be at
+    The maximum lifetime is 15 minutes (ADR-0056); the issue time may be at
     most 30 seconds in the future to tolerate clock drift.
     """
 
@@ -371,7 +371,7 @@ class TestAssertionLifetime:
             expires_at=expires_at,
         )
 
-    def test_assertion_at_the_three_day_limit_accepted(self, federation):
+    def test_assertion_at_the_maximum_lifetime_accepted(self, federation):
         """Setup is valid: exactly the maximum lifetime passes."""
         now = datetime.datetime.now(datetime.timezone.utc)
         _validate(
@@ -387,7 +387,7 @@ class TestAssertionLifetime:
         with pytest.raises(AssertionLifetimeError, match="exceeds the maximum"):
             _validate(federation, assertion)
 
-    def test_assertion_one_second_over_three_days_rejected(self, federation):
+    def test_assertion_one_second_over_the_maximum_rejected(self, federation):
         now = datetime.datetime.now(datetime.timezone.utc)
         assertion = self._assertion(
             federation,
@@ -395,6 +395,13 @@ class TestAssertionLifetime:
             now + MAX_ASSERTION_TTL + datetime.timedelta(seconds=1),
         )
         with pytest.raises(AssertionLifetimeError):
+            _validate(federation, assertion)
+
+    def test_three_day_assertion_rejected(self, federation):
+        """The old ADR-0049 ceiling is now a standing permission and refused."""
+        now = datetime.datetime.now(datetime.timezone.utc)
+        assertion = self._assertion(federation, now, now + datetime.timedelta(days=3))
+        with pytest.raises(AssertionLifetimeError, match="exceeds the maximum"):
             _validate(federation, assertion)
 
     def test_future_dated_assertion_rejected(self, federation):

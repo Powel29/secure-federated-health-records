@@ -1,8 +1,7 @@
-<div class="grid-stats right">
-  <div><div class="kicker">Chain length</div><div class="stat">{{ stats.length }}</div></div>
-  <div><div class="kicker">Verified from genesis</div>
-    {% if verify.ok and verify.verified %}<div class="stat stat-ok">PASS</div><div class="tiny text-muted">head seq {{ verify.head_seq }}</div>
-    {% elif verify.ok %}<div class="stat stat-bad">FAIL</div>
-    {% else %}<div class="stat stat-bad">UNREACHABLE</div><div class="tiny text-muted">{{ verify.detail|truncatechars:60 }}</div>{% endif %}</div>
-  <div><div class="kicker">Break-glass cases</div><div class="stat">{{ cases_total }}</div></div>
+<div class="verify {% if verify.ok and verify.verified %}ok{% else %}bad{% endif %}">
+  {% if verify.ok and verify.verified %}<span class="verdict-word">PASS</span>
+  {% elif verify.ok %}<span class="verdict-word">FAIL</span>
+  {% else %}<span class="verdict-word">UNREACHABLE</span>{% endif %}
+  <span class="what">Hash chain verified from genesis{% if verify.ok and verify.verified %} to head seq {{ verify.head_seq }}{% endif %}</span>
+  <span class="detail">{{ stats.length }} entries · {{ cases_total }} break-glass case{{ cases_total|pluralize }}{% if not verify.ok %} · {{ verify.detail|truncatechars:80 }}{% endif %}</span>
 </div>

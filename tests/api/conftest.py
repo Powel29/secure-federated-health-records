@@ -17,20 +17,24 @@ import pytest
 from api.hospital import FacilityTrust, create_hospital_app
 from api.repository import InMemoryStorageRepository
 from breakglass.emergency_key import generate_emergency_key, split_emergency_key
+from contracts.clinical import ClinicalMetadata
 from contracts.enums import LifecycleState, PolicyNodeType
 from contracts.policy import Attribute, PolicyTree
 from crypto_core import (
+    certificate_to_pem,
     generate_ec_keypair,
 )
 from fastapi.testclient import TestClient
 from identity.certificates import (
     issue_clinician_certificate,
     issue_facility_ca_certificate,
+    issue_patient_certificate,
 )
 from identity.root_anchor import generate_root_anchor
 from lifecycle.expiry import EmergencyExpiryManager
 from pre.elgamal import generate_keypair as generate_pre_keypair
 from records.ingest import ingest_record
+from records.labels import sign_clinical_labels
 
 
 @pytest.fixture()
@@ -54,8 +58,9 @@ def federation_pki():
     bob_priv, bob_pub = generate_ec_keypair()
     bob_cert = issue_clinician_certificate(fb_priv, fb_cert, "dr-bob", bob_pub)
 
-    # Patient 001
+    # Patient 001, certified by their home facility (ADR-0064)
     pat_priv, pat_pub = generate_ec_keypair()
+    pat_cert = issue_patient_certificate(fa_priv, fa_cert, "patient-001", pat_pub)
 
     # Facility lifecycle signing key
     life_priv, life_pub = generate_ec_keypair()
@@ -84,6 +89,8 @@ def federation_pki():
         "bob_pre_pub": bob_pre_pub,
         "pat_priv": pat_priv,
         "pat_pub": pat_pub,
+        "pat_cert": pat_cert,
+        "pat_cert_pem": certificate_to_pem(pat_cert).decode("ascii"),
         "life_priv": life_priv,
         "life_pub": life_pub,
     }
@@ -127,6 +134,19 @@ class RecordingAuditSink:
 
     def of_type(self, event_type: str) -> list[dict]:
         return [e for e in self.events if e["event_type"] == event_type]
+
+
+def signed_labels(
+    pki, record_id: str, patient_id: str = "patient-001", **labels
+) -> ClinicalMetadata:
+    """Clinical labels signed by the patient, as the custodian signs them."""
+    return sign_clinical_labels(
+        ClinicalMetadata(**labels),
+        record_id=record_id,
+        patient_id=patient_id,
+        signing_key=pki["pat_priv"],
+        certificate_pem=pki["pat_cert_pem"],
+    )
 
 
 def make_trust(pki, revoked_serials=frozenset()) -> FacilityTrust:
@@ -209,6 +229,8 @@ def test_setup(federation_pki, attribute_materials):
         emergency_key=em_key,
         content_type="application/json",
         record_id="rec-001",
+        # Verified default labels: the record keeps the pre-label rules.
+        clinical=signed_labels(federation_pki, "rec-001"),
     )
 
     repo.insert_record(ingest_res.record)

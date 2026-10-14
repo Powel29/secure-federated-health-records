@@ -44,6 +44,7 @@ class EmergencyAssertion(ContractModel):
     issued_at: AwareDatetime
     expires_at: AwareDatetime  # short-lived; not a standing permission
     nonce: B64Bytes
+    clinical_context_digest: str = ""
     signature: B64Bytes  # ECDSA by the clinician's certificate key
 
     @model_validator(mode="after")

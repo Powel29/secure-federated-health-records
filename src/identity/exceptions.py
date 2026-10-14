@@ -17,3 +17,12 @@ class ChainValidationError(CryptoError):
 
 class UnknownFacilityError(CryptoError):
     """Raised when a facility id has no registered certificate to validate against."""
+
+
+class PatientCertificateError(CryptoError):
+    """Raised when a certificate is not a valid certificate for the named patient.
+
+    Covers a certificate that is not marked as a patient's, names another
+    patient, or is revoked (ADR-0064). Chain failures raise
+    :class:`ChainValidationError`.
+    """

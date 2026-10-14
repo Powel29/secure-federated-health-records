@@ -47,6 +47,7 @@ from tests.api.conftest import (  # noqa: F401
     attribute_materials,
     federation_pki,
     make_trust,
+    signed_labels,
 )
 from tests.security.conftest import skip_or_fail_without_postgres
 
@@ -61,7 +62,7 @@ _DB_URL = os.environ.get("DATABASE_URL")
 # ---------------------------------------------------------------------------
 
 
-def _seed(repo: InMemoryStorageRepository, attrs: dict) -> dict:
+def _seed(repo: InMemoryStorageRepository, attrs: dict, pki: dict) -> dict:
     em_key = generate_emergency_key()
     ingested = ingest_record(
         plaintext=PLAINTEXT,
@@ -74,6 +75,7 @@ def _seed(repo: InMemoryStorageRepository, attrs: dict) -> dict:
         emergency_key=em_key,
         content_type="application/json",
         record_id=RECORD,
+        clinical=signed_labels(pki, RECORD, PATIENT),
     )
     repo.insert_record(ingested.record)
     repo.insert_dek_wrapping(ingested.dek_wrapping)
@@ -106,7 +108,7 @@ def _hospital_app(repo: InMemoryStorageRepository, pki) -> TestClient:
 @pytest.fixture()
 def hospital(federation_pki, attribute_materials):  # noqa: F811
     repo = InMemoryStorageRepository()
-    seeded = _seed(repo, attribute_materials)
+    seeded = _seed(repo, attribute_materials, federation_pki)
     return {
         "repo": repo,
         "client": _hospital_app(repo, federation_pki),
