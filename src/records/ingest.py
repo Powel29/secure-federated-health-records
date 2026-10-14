@@ -29,7 +29,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from contracts.clinical import ClinicalMetadata
+from contracts.clinical import ClinicalMetadata, latest_local_date
 from contracts.enums import LifecycleState
 from contracts.policy import PolicyTree
 from contracts.records import DEKWrapping, Record
@@ -148,12 +148,14 @@ def ingest_record(
             if isinstance(encounter, dict):
                 dates.append(encounter.get("performed_at"))
             for value in dates:
-                if value is not None:
+                if value is None:
+                    continue
+                try:
                     event_date = datetime.date.fromisoformat(str(value)[:10])
-                    if event_date > datetime.datetime.now(datetime.timezone.utc).date():
-                        raise ValueError(
-                            "A clinical event date cannot be in the future"
-                        )
+                except ValueError:
+                    continue  # not an ISO date: opaque content, like a PDF
+                if event_date > latest_local_date():
+                    raise ValueError("A clinical event date cannot be in the future")
 
     # Generate a policy_id if not provided.
     if policy_id is None:

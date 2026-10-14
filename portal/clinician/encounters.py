@@ -15,7 +15,12 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 from portal_core import notify, services
 from portal_core.access import role_required
-from portal_core.clinical import digest, expand_search_terms, record_label
+from portal_core.clinical import (
+    digest,
+    expand_search_terms,
+    latest_local_date,
+    record_label,
+)
 from portal_core.services import ServiceError
 
 from accounts.models import Role
@@ -67,7 +72,11 @@ def federated_search(request: Any, pk: int) -> HttpResponse:
                 for term in terms
                 if rid
                 in services.facility_emergency_search(
-                    other.facility_id, rid, term, case.clinician_id
+                    other.facility_id,
+                    rid,
+                    term,
+                    case.clinician_id,
+                    other.correlation_id,
                 )
             ]
         except ServiceError as exc:
@@ -200,13 +209,13 @@ def note(request: Any, pk: int) -> HttpResponse:
         BreakglassCase, pk=pk, clinician_id=request.user.profile.subject_id
     )
     context = views._base_ctx(request, "Clinical note")
-    context |= {"case": case, "today": timezone.now().date().isoformat()}
+    context |= {"case": case, "today": latest_local_date().isoformat()}
     if request.method == "POST":
         title = request.POST.get("title", "").strip()
         content = request.POST.get("content", "").strip()
         try:
             clinical_date = date.fromisoformat(request.POST.get("clinical_date", ""))
-            if not title or not content or clinical_date > timezone.now().date():
+            if not title or not content or clinical_date > latest_local_date():
                 raise ValueError(
                     "A title, note and non-future clinical date are required"
                 )

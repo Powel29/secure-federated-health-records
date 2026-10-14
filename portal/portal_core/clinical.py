@@ -2,10 +2,21 @@
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import unicodedata
 from difflib import SequenceMatcher, get_close_matches
 from typing import Any
+
+
+def latest_local_date() -> datetime.date:
+    """The latest date that is today somewhere (UTC+14), as the store checks it.
+
+    The portal runs in UTC; comparing with the UTC date would reject a clinic's
+    own today before its local midnight catches up (e.g. 00:00-05:30 in IST).
+    """
+    now = datetime.datetime.now(datetime.timezone.utc)
+    return (now + datetime.timedelta(hours=14)).date()
 
 
 def digest(text: str) -> str:

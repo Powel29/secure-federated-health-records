@@ -34,6 +34,7 @@ from api.hospital import FacilityTrust, create_hospital_app
 from api.repository import InMemoryStorageRepository
 from audit.chain import build_entry, create_genesis_entry
 from breakglass.emergency_key import generate_emergency_key, split_emergency_key
+from contracts.clinical import ClinicalMetadata
 from contracts.enums import LifecycleState, PolicyNodeType
 from contracts.policy import Attribute, PolicyTree
 from crypto_core import (
@@ -47,11 +48,13 @@ from fastapi.testclient import TestClient
 from identity.certificates import (
     issue_clinician_certificate,
     issue_facility_ca_certificate,
+    issue_patient_certificate,
 )
 from identity.root_anchor import generate_root_anchor
 from lifecycle.expiry import EmergencyExpiryManager
 from pre.elgamal import generate_keypair as generate_pre_keypair
 from records.ingest import ingest_record
+from records.labels import sign_clinical_labels
 
 from tests.api.conftest import FromHost, RecordingAuditSink
 
@@ -217,6 +220,13 @@ def federation():
         ),
     )
 
+    # The patient, certified by their home facility (ADR-0064), signs the
+    # record's labels as the custodian does at upload.
+    pat_priv, pat_pub = generate_ec_keypair()
+    pat_cert_pem = certificate_to_pem(
+        issue_patient_certificate(fa_priv, fa_cert, PATIENT, pat_pub)
+    ).decode("ascii")
+
     em_key = generate_emergency_key()
     share1, share2, share3 = split_emergency_key(em_key)
     ingest = ingest_record(
@@ -229,6 +239,13 @@ def federation():
         search_terms=["cardiac"],
         emergency_key=em_key,
         record_id=RECORD,
+        clinical=sign_clinical_labels(
+            ClinicalMetadata(),
+            record_id=RECORD,
+            patient_id=PATIENT,
+            signing_key=pat_priv,
+            certificate_pem=pat_cert_pem,
+        ),
     )
     repo = InMemoryStorageRepository()
     repo.insert_record(ingest.record)
@@ -268,7 +285,6 @@ def federation():
     er_priv, er_pub = generate_ec_keypair()
     er_cert = issue_clinician_certificate(fb_priv, fb_cert, DOC_ER, er_pub)
     er_pre_priv, er_pre_pub = generate_pre_keypair()
-    pat_priv, _ = generate_ec_keypair()
 
     return {
         "apps": {
@@ -304,6 +320,7 @@ def federation():
             PATIENT: {
                 "kind": "patient",
                 "signing_key_pem": private_key_to_pem(pat_priv).decode("ascii"),
+                "certificate_pem": pat_cert_pem,
                 "credentials": creds[PATIENT],
             },
         },
@@ -482,12 +499,15 @@ def test_consent_round_trip_signs_request_grant_and_revocation(federation):
     )
     assert r.status_code == 200, r.text
     grant = r.json()["grant"]
-    pub = r.json()["patient_public_key_pem"]
+    cert_pem = r.json()["patient_certificate_pem"]
     assert grant["status"] == "granted"
 
     # The facility verifies the patient signature and stores the grant.
     fa = TestClient(federation["apps"]["facility-a"])
-    r = fa.post("/consent/grants", json={"grant": grant, "patient_public_key_pem": pub})
+    r = fa.post(
+        "/consent/grants",
+        json={"grant": grant, "patient_certificate_pem": cert_pem},
+    )
     assert r.status_code == 200, r.text
 
     # Reading under the grant works for a clinician who also satisfies policy.

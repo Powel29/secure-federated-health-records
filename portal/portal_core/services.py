@@ -112,7 +112,7 @@ def custodian_sign_consent_request(
 def custodian_decide_consent(
     patient_id: str, *, request: dict[str, Any], status: str, ttl_days: int
 ) -> dict[str, Any]:
-    """Returns ``{"grant": ..., "patient_public_key_pem": ...}``."""
+    """Returns ``{"grant": ..., "patient_certificate_pem": ...}``."""
     return _request(
         "custodian",
         "POST",
@@ -228,14 +228,14 @@ def _facility_url(facility_id: str) -> str:
 
 
 def facility_submit_grant(
-    facility_id: str, *, grant: dict[str, Any], patient_public_key_pem: str
+    facility_id: str, *, grant: dict[str, Any], patient_certificate_pem: str
 ) -> dict[str, Any]:
     """Hand a patient-signed grant to the facility, which verifies and stores it."""
     return _request(
         "facility",
         "POST",
         f"{_facility_url(facility_id)}/consent/grants",
-        json={"grant": grant, "patient_public_key_pem": patient_public_key_pem},
+        json={"grant": grant, "patient_certificate_pem": patient_certificate_pem},
     )
 
 
@@ -250,14 +250,23 @@ def facility_discover(facility_id: str, patient_id: str) -> list[str]:
 
 
 def facility_emergency_search(
-    facility_id: str, record_id: str, search_term: str, requester_id: str
+    facility_id: str,
+    record_id: str,
+    search_term: str,
+    requester_id: str,
+    correlation_id: str,
 ) -> list[str]:
     data = _request(
         "facility",
         "POST",
         f"{_facility_url(facility_id)}/records/{record_id}/emergency-search",
-        # The facility audits every emergency search with its requester (F8).
-        json={"search_term": search_term, "requester_id": requester_id},
+        # The facility audits every emergency search with its requester (F8),
+        # under the break-glass case's correlation id so it joins that flow.
+        json={
+            "search_term": search_term,
+            "requester_id": requester_id,
+            "correlation_id": correlation_id,
+        },
     )
     return list(data["record_ids"])
 
