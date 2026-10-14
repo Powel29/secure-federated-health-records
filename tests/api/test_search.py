@@ -106,12 +106,18 @@ class TestHospitalSearchEndpoints:
 
         response = client.post(
             "/records/rec-001/emergency-search",
-            json={"search_term": "cardiac"},
+            json={"search_term": "cardiac", "requester_id": "dr-alice"},
         )
 
         assert response.status_code == 200
         data = response.json()
         assert "rec-001" in data["record_ids"]
+        # F8: the search is audited with the requesting clinician.
+        granted = test_setup["audit_sink"].of_type("access_granted")
+        assert [
+            (g["event_data"]["requester_id"], g["event_data"]["access_via"])
+            for g in granted
+        ] == [("dr-alice", "emergency_search")]
 
     def test_emergency_search_refused_after_expiry(self, test_setup):
         """Emergency search fails closed with 403 once session expires (P3-8)."""
@@ -133,8 +139,19 @@ class TestHospitalSearchEndpoints:
 
         response = client.post(
             "/records/rec-001/emergency-search",
-            json={"search_term": "cardiac"},
+            json={"search_term": "cardiac", "requester_id": "dr-alice"},
         )
 
         assert response.status_code == 403
         assert "Emergency search unavailable" in response.json()["detail"]
+        # F8: the refusal is audited too.
+        denied = test_setup["audit_sink"].of_type("access_denied")
+        assert [d["event_data"]["denied_by"] for d in denied] == ["emergency_search"]
+
+    def test_emergency_search_without_requester_rejected(self, test_setup):
+        """F8: a search with no requester identity is refused before it runs."""
+        response = test_setup["client"].post(
+            "/records/rec-001/emergency-search", json={"search_term": "cardiac"}
+        )
+        assert response.status_code == 422
+        assert test_setup["audit_sink"].events == []

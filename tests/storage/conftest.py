@@ -14,17 +14,21 @@ import psycopg
 import pytest
 from storage.migrate import apply_migrations
 
+from tests.security.conftest import skip_or_fail_without_postgres
+
 _URL = os.environ.get("DATABASE_URL")
 
 
 @pytest.fixture(scope="session")
 def _base_conn():
     if not _URL:
-        pytest.skip("DATABASE_URL not set; storage tests need Postgres")
+        skip_or_fail_without_postgres(
+            "DATABASE_URL not set; storage tests need Postgres"
+        )
     try:
         conn = psycopg.connect(_URL)
     except psycopg.OperationalError as exc:
-        pytest.skip(f"cannot reach Postgres: {exc}")
+        skip_or_fail_without_postgres(f"cannot reach Postgres: {exc}")
     # Clean slate, then migrate once for the whole session.
     conn.autocommit = True
     with conn.cursor() as cur:

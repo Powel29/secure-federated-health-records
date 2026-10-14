@@ -13,10 +13,11 @@ share is looked up by an opaque ``share_key`` the caller chooses -- normally a
 ``record_id`` -- one per 2-of-3 split this service was given a share of.
 
 Reads are non-destructive (:meth:`ShareRegistry.get` does not remove the
-share). Rotation -- which invalidates the old emergency key and mints a new
-one with a fresh 3-way split (P3-6/P3-7, ``lifecycle``'s job, not this
-module's) -- is what should retire an old share, via :meth:`ShareRegistry.put`
-overwriting it or :meth:`ShareRegistry.forget` removing it outright. This
+share). :meth:`ShareRegistry.put` never overwrites (review F4): a second
+deposit under the same key would silently replace a live record's share and
+break its break-glass for good. Rotation -- which invalidates the old
+emergency key and mints a new one with a fresh 3-way split (P3-6/P3-7) --
+retires the old share with :meth:`ShareRegistry.forget` first. This
 mirrors how a real custodian holds a standing share rather than a one-time
 token: what makes a share safe to reuse across repeated legitimate emergency
 sessions for the same record is the log-before-release gate on each release,
@@ -38,6 +39,10 @@ class ShareNotFoundError(CryptoError):
     """No share is registered under the requested key."""
 
 
+class ShareAlreadyHeldError(CryptoError):
+    """A share is already registered under this key; it is never overwritten."""
+
+
 class ShareRegistry:
     """Thread-safe registry of ``share_key -> Share`` held by this process."""
 
@@ -46,14 +51,22 @@ class ShareRegistry:
         self._shares: dict[str, Share] = {}
 
     def put(self, share_key: str, share: Share) -> None:
-        """Register (or replace) the share held under ``share_key``.
+        """Register the share held under ``share_key``; never replace one.
 
         Args:
             share_key: Caller-chosen identifier for this share -- normally
                 the ``record_id`` the underlying emergency key protects.
             share: The opaque ``(x, share_bytes)`` threshold share.
+
+        Raises:
+            ShareAlreadyHeldError: A share is already held under the key
+                (review F4).
         """
         with self._lock:
+            if share_key in self._shares:
+                raise ShareAlreadyHeldError(
+                    f"a share is already held for key {share_key!r}"
+                )
             self._shares[share_key] = share
 
     def has(self, share_key: str) -> bool:

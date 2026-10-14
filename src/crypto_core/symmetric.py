@@ -6,7 +6,6 @@ per CONVENTIONS.md §2 rule 1.
 
 from __future__ import annotations
 
-import os
 import secrets
 
 from contracts.base import GCM_NONCE_BYTES
@@ -49,7 +48,7 @@ def generate_nonce(num_bytes: int = GCM_NONCE_BYTES) -> bytes:
         Nonce uniqueness ensures GCM authentication and confidentiality guarantees
         are preserved (CONVENTIONS.md §2 rule 5).
     """
-    return os.urandom(num_bytes)
+    return secrets.token_bytes(num_bytes)
 
 
 def aes_gcm_encrypt(

@@ -18,16 +18,42 @@ deferred to Phase 4:
 
 from __future__ import annotations
 
-import logging
 import os
+import threading
 from typing import Any, Callable
 
 import httpx
-from contracts.enums import LifecycleState
-
-_logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT_SECONDS = 5.0
+
+# Highest seq each audit service has returned to this process (review F31).
+# In memory only: a restarted process starts trusting again from the next entry.
+_last_seq: dict[str, int] = {}
+_last_seq_lock = threading.Lock()
+
+
+def _seq_before_send(audit_service_url: str) -> int:
+    """The highest seq seen before this append was sent."""
+    with _last_seq_lock:
+        return _last_seq.get(audit_service_url, -1)
+
+
+def _check_seq_advances(audit_service_url: str, seq: int, before: int) -> None:
+    """Refuse an entry that is not after every entry seen before it was sent.
+
+    Every entry already returned was committed before this append was sent, so
+    this one must come after it; a lower seq means a truncated or replaced
+    chain. Concurrent appends may return out of order, so the check is against
+    ``before``, not the latest seq seen since.
+    """
+    with _last_seq_lock:
+        if seq <= before:
+            raise AuditServiceError(
+                f"audit chain went backwards: seq {seq} after {before} "
+                "(truncated or replaced chain)"
+            )
+        _last_seq[audit_service_url] = max(seq, _last_seq.get(audit_service_url, -1))
+
 
 _DISABLE_VALUES = {"0", "false", "no"}
 
@@ -80,8 +106,9 @@ def append_entry(
         base64/ISO-serialized JSON from the service response).
 
     Raises:
-        AuditServiceError: The request failed or the service returned a
-            non-2xx response.
+        AuditServiceError: The request failed, the service returned a
+            non-2xx response, or the returned entry's seq is not after every
+            seq this process saw before (review F31).
 
     Security property:
         Fails closed by propagating the error rather than swallowing it --
@@ -89,6 +116,7 @@ def append_entry(
         transition should be tamper-evident) finds out immediately if it
         was not.
     """
+    before = _seq_before_send(audit_service_url)
     try:
         resp = httpx.post(
             f"{audit_service_url}/entries",
@@ -106,24 +134,25 @@ def append_entry(
         raise AuditServiceError(
             f"audit service append failed for correlation_id={correlation_id!r}: {exc}"
         ) from exc
-    return resp.json()["entry"]
+    entry = resp.json()["entry"]
+    _check_seq_advances(audit_service_url, int(entry["seq"]), before)
+    return entry
 
 
 def make_lifecycle_audit_logger(
     audit_service_url: str,
     *,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
-    state_writer: Callable[[str, LifecycleState, str | None], None] | None = None,
 ) -> Callable[[dict[str, Any]], None]:
     """Build the ``audit_logger`` callback ``EmergencyExpiryManager`` expects.
+
+    The store mirror lives in the expiry manager (``state_writer``), which
+    calls it after this logger as a compare-and-set and retries on failure
+    (review N1, N2). A failed append here raises, so the manager retries.
 
     Args:
         audit_service_url: Base URL of the standalone Audit Service.
         timeout: Per-request HTTP timeout in seconds.
-        state_writer: Optional store update after the audit append succeeds.
-            Mirrors timer state only; does not persist the rotated ciphertext
-            or claim to close ADR-0043's re-baseline persistence gap. A
-            writer failure is logged at ERROR, never raised (ADR-0047).
 
     Returns:
         A ``Callable[[dict[str, Any]], None]`` suitable for
@@ -143,21 +172,5 @@ def make_lifecycle_audit_logger(
             correlation_id=entry["correlation_id"],
             timeout=timeout,
         )
-        if state_writer is None:
-            return
-        try:
-            state_writer(
-                entry["record_id"], LifecycleState(entry["to_state"]), entry["event_id"]
-            )
-        except Exception:
-            # The chain entry is committed and cannot be rolled back. Raising
-            # here would stop the expiry monitor thread (review F20), so log
-            # loudly instead. Access is already closed (the session key is
-            # refused past expires_at), and the facility reconciles the stale
-            # emergency_open on its next state read (ADR-0044, ADR-0047).
-            _logger.exception(
-                "expiry audited but store state not written for record %s",
-                entry["record_id"],
-            )
 
     return _log

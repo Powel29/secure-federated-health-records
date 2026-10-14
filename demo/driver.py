@@ -30,7 +30,6 @@ import httpx
 from breakglass import create_emergency_assertion
 from contracts.enums import ReasonCode
 from crypto_core import (
-    certificate_to_pem,
     generate_ec_keypair,
     private_key_to_pem,
     sha256_digest,
@@ -268,9 +267,7 @@ def standalone_federation(
         signing_key=timer_priv_a,
         timer_actor_id="system:hsm-timer:facility-a",
         default_duration_seconds=default_duration,
-        audit_logger=make_lifecycle_audit_logger(
-            audit_url, state_writer=repo_fa.upsert_lifecycle_state
-        ),
+        audit_logger=make_lifecycle_audit_logger(audit_url),
     )
     exp_mgr_a.start_monitor(poll_interval=0.25)
 
@@ -278,11 +275,13 @@ def standalone_federation(
         signing_key=timer_priv_b,
         timer_actor_id="system:hsm-timer:facility-b",
         default_duration_seconds=default_duration,
-        audit_logger=make_lifecycle_audit_logger(
-            audit_url, state_writer=repo_fb.upsert_lifecycle_state
-        ),
+        audit_logger=make_lifecycle_audit_logger(audit_url),
     )
     exp_mgr_b.start_monitor(poll_interval=0.25)
+
+    # PKI first: the facilities are configured with its trust anchors (F1).
+    root_anchor, pki = bootstrap.generate_federation_pki(["facility-a", "facility-b"])
+    trust = bootstrap.facility_trust(pki)
 
     app_med = create_authority_app("authority-med", frozenset({"role"}))
     app_net = create_authority_app(
@@ -293,12 +292,14 @@ def standalone_federation(
         repository=repo_fa,
         expiry_manager=exp_mgr_a,
         audit_service_url=audit_url,
+        trust=trust,
     )
     app_fb = create_hospital_app(
         facility_id="facility-b",
         repository=repo_fb,
         expiry_manager=exp_mgr_b,
         audit_service_url=audit_url,
+        trust=trust,
     )
 
     server_med = _LiveServer(app_med)
@@ -311,7 +312,6 @@ def standalone_federation(
     url_fa = server_fa.start()
     url_fb = server_fb.start()
 
-    root_anchor, pki = bootstrap.generate_federation_pki(["facility-a", "facility-b"])
     cert_med = bootstrap.register_authority(url_med, root_anchor, "authority-med")
     cert_net = bootstrap.register_authority(url_net, root_anchor, "authority-net")
 
@@ -555,9 +555,6 @@ def run_demo_scenario(
     )
     house_info = seeded_data["clinicians"]["doc-201"]
     alice_rec_info = seeded_data["records"]["rec-001"]
-    root_cert_pem = seeded_data["root_cert_pem"]
-    _, fb_ca_cert = seeded_data["facility_cas"]["facility-b"]
-    fb_ca_cert_pem = certificate_to_pem(fb_ca_cert).decode("ascii")
 
     # 1. Sign EmergencyAssertion
     print("  1. Dr. House generates and signs an EmergencyAssertion:")
@@ -632,8 +629,6 @@ def run_demo_scenario(
         json={
             "assertion": assertion.model_dump(mode="json"),
             "clinician_certificate_pem": house_info["certificate_pem"],
-            "facility_ca_certificate_pem": fb_ca_cert_pem,
-            "trusted_root_certificate_pem": root_cert_pem,
             "shares": [(share1[0], share1[1].hex()), (rel_x, rel_share_hex)],
             "pre_rewrap_key": house_info["pre_public_key"],
             "lifecycle_signing_key_pem": life_priv_pem,
@@ -720,7 +715,7 @@ def run_demo_scenario(
     # Demonstrate search while emergency is open
     search_open_res = client.post(
         f"{endpoints.facility_b}/records/rec-001/emergency-search",
-        json={"search_term": "cardiac"},
+        json={"search_term": "cardiac", "requester_id": "doc-201"},
     )
     if search_open_res.status_code == 200:
         print(
@@ -763,7 +758,7 @@ def run_demo_scenario(
     # Verify dead token: emergency search must now be refused
     dead_search_res = client.post(
         f"{endpoints.facility_b}/records/rec-001/emergency-search",
-        json={"search_term": "cardiac"},
+        json={"search_term": "cardiac", "requester_id": "doc-201"},
     )
     assert dead_search_res.status_code == 403
     print(

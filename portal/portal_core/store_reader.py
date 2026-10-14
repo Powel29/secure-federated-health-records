@@ -14,8 +14,11 @@ from __future__ import annotations
 from typing import Any
 
 from django.db import connections
+from psycopg import sql
 
-_AUDIT_COLUMNS = (
+# Composed with psycopg.sql, never by string formatting (CONVENTIONS §2 rule 7,
+# review F35). Values still travel only as bound parameters.
+_AUDIT_COLUMNS = sql.SQL(
     "seq, event_type, event_data, actor_id, correlation_id, recorded_at,"
     " encode(entry_hash, 'hex') AS entry_hash_hex,"
     " encode(prev_hash, 'hex') AS prev_hash_hex"
@@ -31,15 +34,19 @@ BREAKGLASS_EVENT_TYPES = (
 LIFECYCLE_EVENT_TYPES = ("lifecycle_transition", "transition")
 
 
-def _rows(sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+def _rows(
+    query: str | sql.Composable, params: tuple[Any, ...] = ()
+) -> list[dict[str, Any]]:
     with connections["store"].cursor() as cur:
-        cur.execute(sql, params)
+        cur.execute(query, params)
         cols = [c[0] for c in cur.description]
         return [dict(zip(cols, row, strict=True)) for row in cur.fetchall()]
 
 
-def _one(sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
-    rows = _rows(sql, params)
+def _one(
+    query: str | sql.Composable, params: tuple[Any, ...] = ()
+) -> dict[str, Any] | None:
+    rows = _rows(query, params)
     return rows[0] if rows else None
 
 
@@ -49,7 +56,9 @@ def _one(sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
 def recent_audit(limit: int = 50) -> list[dict[str, Any]]:
     """Most recent audit-chain entries (metadata only; never key material)."""
     return _rows(
-        f"SELECT {_AUDIT_COLUMNS} FROM audit_log ORDER BY seq DESC LIMIT %s",
+        sql.SQL("SELECT {} FROM audit_log ORDER BY seq DESC LIMIT %s").format(
+            _AUDIT_COLUMNS
+        ),
         (limit,),
     )
 
@@ -57,8 +66,9 @@ def recent_audit(limit: int = 50) -> list[dict[str, Any]]:
 def audit_by_correlation(correlation_id: str) -> list[dict[str, Any]]:
     """Every entry of one flow, genesis-order (ADR-0017 correlation IDs)."""
     return _rows(
-        f"SELECT {_AUDIT_COLUMNS} FROM audit_log WHERE correlation_id = %s"
-        " ORDER BY seq ASC",
+        sql.SQL(
+            "SELECT {} FROM audit_log WHERE correlation_id = %s ORDER BY seq ASC"
+        ).format(_AUDIT_COLUMNS),
         (correlation_id,),
     )
 
@@ -73,14 +83,16 @@ def audit_for_patient(
     break-glass release / lifecycle transition payloads.
     """
     return _rows(
-        f"SELECT {_AUDIT_COLUMNS} FROM audit_log"
-        " WHERE event_data->>'patient_id' = %s"
-        "    OR event_data->>'record_id' = ANY(%s)"
-        "    OR correlation_id IN ("
-        "        SELECT correlation_id FROM audit_log"
-        "        WHERE event_data->>'patient_id' = %s"
-        "           OR event_data->>'record_id' = ANY(%s))"
-        " ORDER BY seq DESC LIMIT %s",
+        sql.SQL(
+            "SELECT {} FROM audit_log"
+            " WHERE event_data->>'patient_id' = %s"
+            "    OR event_data->>'record_id' = ANY(%s)"
+            "    OR correlation_id IN ("
+            "        SELECT correlation_id FROM audit_log"
+            "        WHERE event_data->>'patient_id' = %s"
+            "           OR event_data->>'record_id' = ANY(%s))"
+            " ORDER BY seq DESC LIMIT %s"
+        ).format(_AUDIT_COLUMNS),
         (patient_id, record_ids, patient_id, record_ids, limit),
     )
 
@@ -219,6 +231,8 @@ def table_counts() -> dict[str, int]:
         "transition_events",
         "patients",
     ):
-        row = _one(f"SELECT count(*) AS n FROM {table}")  # noqa: S608 - fixed names
+        row = _one(
+            sql.SQL("SELECT count(*) AS n FROM {}").format(sql.Identifier(table))
+        )
         out[table] = int((row or {}).get("n", 0))
     return out

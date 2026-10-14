@@ -1,0 +1,9 @@
+{
+  "timestamp_utc": "2026-10-11T12:10:31.774077+00:00",
+  "cpu": "x86_64",
+  "cores": 16,
+  "ram_gb": 7.4,
+  "python": "3.11.17",
+  "os": "Linux-6.18.40.1-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+  "deployment_path": "local-processes+postgres"
+}

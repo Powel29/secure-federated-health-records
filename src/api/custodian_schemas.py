@@ -24,6 +24,8 @@ from contracts.enums import ReasonCode
 from contracts.policy import PolicyTree
 from pydantic import BaseModel, Field
 
+_THREE_DAYS_SECONDS = 3 * 24 * 60 * 60
+
 SubjectKind = Literal["patient", "clinician"]
 
 
@@ -45,6 +47,10 @@ class TrustMaterialRequest(BaseModel):
 
     root_certificate_pem: str
     facility_ca_certificate_pems: dict[str, str] = Field(default_factory=dict)
+    # The audit service's public key, so the custodian can check that the
+    # entry returned with a released share is really the audit service's
+    # (review F31). Bootstrap reads it from the audit service directly.
+    audit_public_key_pem: str | None = None
 
 
 class DepositMaterialRequest(BaseModel):
@@ -203,8 +209,12 @@ class BreakglassPayload(BaseModel):
         description="Where the emergency is declared; defaults to the clinician's",
     )
     correlation_id: str | None = None
-    assertion_ttl_seconds: int = Field(default=120, gt=0, le=3600)
-    emergency_duration_seconds: float | None = None
+    # Both bounded at 3 days (F6): the facility rejects a longer assertion and
+    # caps the window at its configured duration anyway.
+    assertion_ttl_seconds: int = Field(default=120, gt=0, le=_THREE_DAYS_SECONDS)
+    emergency_duration_seconds: float | None = Field(
+        default=None, gt=0, le=_THREE_DAYS_SECONDS
+    )
 
 
 class SharePresented(BaseModel):

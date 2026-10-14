@@ -21,6 +21,7 @@ from ledger.models import (
     PatientNotification,
 )
 from portal_core.testing import (
+    TEST_PASSWORD,
     RECORD_META,
     SIGNED_REQUEST,
     SUBJECT_PATIENT,
@@ -38,7 +39,7 @@ class PatientRecordViewTests(TestCase):
 
     def setUp(self) -> None:
         self.user = patient()
-        self.client.login(username="alice", password="pw12345")
+        self.client.login(username="alice", password=TEST_PASSWORD)
 
     def test_owner_read_streams_plaintext_for_this_request_only(self) -> None:
         payload = base64.b64encode(b'{"diagnosis": "AMI"}').decode()
@@ -108,7 +109,7 @@ class PatientConsentTests(TestCase):
     def setUp(self) -> None:
         self.user = patient()
         clinician()
-        self.client.login(username="alice", password="pw12345")
+        self.client.login(username="alice", password=TEST_PASSWORD)
         self.row = ConsentRecord.objects.create(
             request_id=SIGNED_REQUEST["request_id"],
             patient_id="pat-101",
@@ -208,7 +209,7 @@ class PatientConsentTests(TestCase):
 class PatientHistoryAndRoleTests(TestCase):
     def test_break_glass_rows_are_badged(self) -> None:
         patient()
-        self.client.login(username="alice", password="pw12345")
+        self.client.login(username="alice", password=TEST_PASSWORD)
         entries = [
             {
                 "seq": 7,
@@ -240,7 +241,7 @@ class PatientHistoryAndRoleTests(TestCase):
 
     def test_patient_is_routed_away_from_clinician_pages(self) -> None:
         patient()
-        self.client.login(username="alice", password="pw12345")
+        self.client.login(username="alice", password=TEST_PASSWORD)
         resp = self.client.get("/clinician/identify/")
         self.assertEqual(resp.status_code, 302)
         self.assertTrue(resp["Location"].startswith("/patient/"))
@@ -251,7 +252,7 @@ class PatientUploadTests(TestCase):
 
     def setUp(self) -> None:
         patient()
-        self.client.login(username="alice", password="pw12345")
+        self.client.login(username="alice", password=TEST_PASSWORD)
 
     def _post(self, **extra):
         from django.core.files.uploadedfile import SimpleUploadedFile
@@ -297,3 +298,53 @@ class PatientUploadTests(TestCase):
             self.assertEqual(self._post(preset="anything-goes").status_code, 400)
             self.assertEqual(self._post(facility_id="facility-z").status_code, 400)
         m["custodian_ingest"].assert_not_called()
+
+
+class PortalHygieneTests(TestCase):
+    """Review F42: redirects stay on this site; uploads never render as HTML."""
+
+    def setUp(self) -> None:
+        self.user = patient()
+        self.client.login(username="alice", password=TEST_PASSWORD)
+
+    def _note(self) -> PatientNotification:
+        return PatientNotification.objects.create(
+            patient_id="pat-101", kind=NotificationKind.REVOKED, title="t"
+        )
+
+    def test_mark_read_never_redirects_off_site(self) -> None:
+        resp = self.client.post(
+            f"/patient/notifications/{self._note().pk}/read/",
+            {"next": "https://evil.example/phish"},
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertNotIn("evil.example", resp["Location"])
+
+    def test_mark_read_follows_a_local_next(self) -> None:
+        resp = self.client.post(
+            f"/patient/notifications/{self._note().pk}/read/",
+            {"next": "/patient/records/"},
+        )
+        self.assertEqual(resp["Location"], "/patient/records/")
+
+    def _raw(self, content_type: str):
+        payload = base64.b64encode(b"<script>alert(1)</script>").decode()
+        with mock.patch(
+            "portal_core.store_reader.record_meta", return_value=RECORD_META
+        ), patched(
+            custodian_read=mock.Mock(
+                return_value={"plaintext_b64": payload, "content_type": content_type}
+            ),
+            custodian_subject=mock.Mock(return_value=SUBJECT_PATIENT),
+        ):
+            return self.client.post("/patient/records/rec-001/", {"mode": "raw"})
+
+    def test_uploaded_html_downloads_with_nosniff(self) -> None:
+        resp = self._raw("text/html")
+        self.assertTrue(resp["Content-Disposition"].startswith("attachment"))
+        self.assertEqual(resp["X-Content-Type-Options"], "nosniff")
+
+    def test_uploaded_pdf_still_shows_inline(self) -> None:
+        resp = self._raw("application/pdf")
+        self.assertTrue(resp["Content-Disposition"].startswith("inline"))
+        self.assertEqual(resp["X-Content-Type-Options"], "nosniff")

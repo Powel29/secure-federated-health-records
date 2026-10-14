@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from django.http import HttpResponse
+from django.http import HttpResponse, HttpResponseBadRequest
 from django.shortcuts import render
 from django.utils import timezone as dj_tz
 from portal_core import services, store_reader, stubs
@@ -92,13 +92,20 @@ def _summary(e: dict[str, Any]) -> str:
 
 
 def _links_intact(entries: list[dict[str, Any]]) -> bool | None:
-    """Within a segment, each entry's prev_hash must equal the prior entry's hash."""
-    if len(entries) < 2:
-        return None
+    """Within a segment, each entry's prev_hash must equal the prior entry's hash.
+
+    Three states (review F42): ``True`` only if at least one consecutive pair
+    was checked and every checked pair links; ``False`` on any broken link;
+    ``None`` (unverifiable) when no two entries are consecutive.
+    """
+    checked = 0
     for prev, cur in zip(entries, entries[1:], strict=False):
-        if cur["seq"] == prev["seq"] + 1 and cur["prev_hash_hex"] != prev["entry_hash_hex"]:
+        if cur["seq"] != prev["seq"] + 1:
+            continue
+        if cur["prev_hash_hex"] != prev["entry_hash_hex"]:
             return False
-    return True
+        checked += 1
+    return True if checked else None
 
 
 def _verify() -> dict[str, Any]:
@@ -234,7 +241,11 @@ def registrations(request: Any) -> HttpResponse:
     ctx = _base_ctx("Registrations")
     if request.method == "POST" and "approve" in request.POST:
         try:
-            stubs.issue_credential(int(request.POST["approve"]))
+            request_id = int(request.POST["approve"])
+        except ValueError:
+            return HttpResponseBadRequest("approve must be a registration id")
+        try:
+            stubs.issue_credential(request_id)
         except stubs.NotWiredYet as exc:
             ctx["notice"] = str(exc)
     ctx["pending"] = RegistrationRequest.objects.filter(status=RequestStatus.PENDING).order_by("-created_at")

@@ -106,10 +106,13 @@ Phase 6).
 
 14. **What are your known limitations?** Forward-only revocation, trusted timer,
     non-collusion-resistant policy tree, shared custodian in the demo, search
-    leakage, synthetic data (file 7).
+    leakage, synthetic data, local-only deployment with in-memory keys (file 7).
 15. **What did testing find?** Three bugs (patient binding, stale
     emergency-open after expiry, admin page error); fixed with tests; one fix is
-    a stop-gap pending full re-key persistence.
+    a stop-gap pending full re-key persistence. Running each service as its
+    own container then exposed a fourth: cross-facility reads failed because
+    policy and consent lived in one process's memory; now shared through
+    Postgres (ADR-0047).
 16. **What is not done yet?** Benchmarks, search-leakage analysis, final traffic
     assertions over both captures, edge cases, the paper, rehearsal and the
     fallback video.

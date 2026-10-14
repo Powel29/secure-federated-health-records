@@ -27,6 +27,10 @@ from __future__ import annotations
 
 import base64
 import datetime
+import ipaddress
+import socket
+import threading
+import time
 from typing import Annotated
 
 from authority.exceptions import (
@@ -82,10 +86,69 @@ _CREDENTIAL_ERRORS = (
 )
 
 
+# Who may call /attribute-keys/author until service authentication exists
+# (review F14 interim; D5-a replaces this with signed request envelopes).
+# Only Compose narrows anything: there each service has its own address. In
+# deploy/run_local every process shares loopback, so this default admits any
+# local caller -- the interim control does not hold in that mode.
+DEFAULT_AUTHORING_CALLERS = frozenset({"127.0.0.1", "::1"})
+
+# How long resolved allowlist hostnames are trusted before resolving again.
+_CALLER_RESOLVE_TTL_SECONDS = 30.0
+
+
+def _resolve_callers(callers: frozenset[str]) -> set[str]:
+    """IP addresses for each allowlist entry; hostnames resolve at call time."""
+    addresses: set[str] = set()
+    for entry in callers:
+        try:
+            addresses.add(str(ipaddress.ip_address(entry)))
+            continue
+        except ValueError:
+            pass
+        try:
+            infos = socket.getaddrinfo(entry, None)
+        except socket.gaierror:
+            continue  # an unresolvable name allows nobody
+        addresses.update(str(info[4][0]) for info in infos)
+    return addresses
+
+
+class _CallerAllowlist:
+    """Allowlist check with hostnames resolved at most once per TTL.
+
+    Not at startup: Compose starts the authorities before the custodian and
+    bootstrap containers exist, so their names do not resolve yet.
+    """
+
+    def __init__(self, callers: frozenset[str]) -> None:
+        self._callers = callers
+        self._lock = threading.Lock()
+        self._addresses: set[str] = set()
+        self._resolved_at: float | None = None
+
+    def allows(self, host: str | None) -> bool:
+        if host is None:
+            return False
+        if host in self._callers:  # literal match: no DNS lookup
+            return True
+        now = time.monotonic()
+        with self._lock:
+            if (
+                self._resolved_at is None
+                or now - self._resolved_at >= _CALLER_RESOLVE_TTL_SECONDS
+            ):
+                self._addresses = _resolve_callers(self._callers)
+                self._resolved_at = now
+            return host in self._addresses
+
+
 def create_authority_app(
     authority_id: str,
     owned_attribute_names: frozenset[str],
     authority: AttributeAuthority | None = None,
+    *,
+    authoring_callers: frozenset[str] = DEFAULT_AUTHORING_CALLERS,
 ) -> FastAPI:
     """Create and configure the standalone Attribute Authority Service application.
 
@@ -97,12 +160,16 @@ def create_authority_app(
             supply a fixed one). Defaults to a freshly generated one --
             ARCHITECTURE.md §7 step 3: "each generates attribute key
             material."
+        authoring_callers: Addresses or hostnames allowed to fetch authoring
+            keys from ``/attribute-keys/author`` (review F14 interim).
+            Defaults to loopback only.
 
     Returns:
         A configured FastAPI application.
     """
     auth = authority or generate_authority(authority_id, owned_attribute_names)
 
+    caller_allowlist = _CallerAllowlist(authoring_callers)
     app = FastAPI(
         title=f"Attribute Authority Service ({authority_id})",
         description="Federated Break-Glass EHR -- multi-authority attribute issuance",
@@ -246,9 +313,21 @@ def create_authority_app(
 
     @app.post("/attribute-keys/author", response_model=AttributeKeyResponse)
     def author_attribute_key(
-        payload: AuthorAttributeKeyRequest, authority: AuthorityDep
+        payload: AuthorAttributeKeyRequest, authority: AuthorityDep, request: Request
     ) -> AttributeKeyResponse:
-        """Mint (or fetch) the authoring-side key for an owned attribute leaf."""
+        """Mint (or fetch) the authoring-side key for an owned attribute leaf.
+
+        The authoring key is the same key ``/attribute-keys/release`` gates
+        behind a credential (ADR-0026), so only allowlisted authoring services
+        may call this (review F14 interim). Those callers are trusted parties
+        by construction; signed service requests (D5-a) replace the address
+        check.
+        """
+        if not caller_allowlist.allows(request.client.host if request.client else None):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="caller is not an allowlisted authoring service",
+            )
         try:
             key = authority.attribute_key(payload.name, payload.value)
         except UnauthorizedAttributeError as exc:

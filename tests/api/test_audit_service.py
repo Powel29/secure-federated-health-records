@@ -18,17 +18,21 @@ from api.audit_service import create_audit_app
 from fastapi.testclient import TestClient
 from storage.migrate import apply_migrations
 
+from tests.security.conftest import skip_or_fail_without_postgres
+
 _URL = os.environ.get("DATABASE_URL")
 
 
 @pytest.fixture()
 def audit_conn():
     if not _URL:
-        pytest.skip("DATABASE_URL not set; audit service tests need Postgres")
+        skip_or_fail_without_postgres(
+            "DATABASE_URL not set; audit service tests need Postgres"
+        )
     try:
         conn = psycopg.connect(_URL)
     except psycopg.OperationalError as exc:
-        pytest.skip(f"cannot reach Postgres: {exc}")
+        skip_or_fail_without_postgres(f"cannot reach Postgres: {exc}")
     conn.autocommit = True
     with conn.cursor() as cur:
         cur.execute("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;")
@@ -100,6 +104,31 @@ def test_append_entry_extends_chain(client: TestClient) -> None:
 
     verify = client.get("/chain/verify").json()
     assert verify == {"verified": True, "head_seq": 1}
+
+
+def test_share_registration_never_overwrites(client: TestClient) -> None:
+    """Review F4: a second share under the same key is refused (409) and the
+    original share is still the one released."""
+    first = client.post(
+        "/breakglass/shares",
+        json={"share_key": "rec-dup", "x": 3, "share_hex": "deadbeef"},
+    )
+    assert first.status_code == 201
+    second = client.post(
+        "/breakglass/shares",
+        json={"share_key": "rec-dup", "x": 3, "share_hex": "00000000"},
+    )
+    assert second.status_code == 409
+    released = client.post(
+        "/breakglass/release",
+        json={
+            "share_key": "rec-dup",
+            "event_data": {"record_id": "rec-dup"},
+            "actor_id": "audit-service-test",
+            "correlation_id": "corr-dup",
+        },
+    )
+    assert released.json()["share_hex"] == "deadbeef"
 
 
 def test_share_release_only_after_commit(client: TestClient) -> None:

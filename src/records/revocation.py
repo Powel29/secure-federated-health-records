@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import datetime
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from contracts import TransitionEvent
@@ -41,7 +41,7 @@ from contracts.enums import LifecycleState, ReasonCode
 from contracts.policy import PolicyTree
 from contracts.records import DEKWrapping, Record
 from crypto_core.symmetric import generate_key
-from cryptography.hazmat.primitives.asymmetric import ec
+from crypto_core.types import ECPrivateKey
 from lifecycle.state_machine import create_transition_event
 
 from records.exceptions import UnauthorizedRevocationError
@@ -89,7 +89,7 @@ class RevocationResult:
     rotated_wrapping: DEKWrapping
     compiled_policy: Any  # policy.engine.CompiledPolicy — Any avoids circular typing
     policy_tree: PolicyTree
-    new_root_secret: bytes
+    new_root_secret: bytes = field(repr=False)
     transition_event: TransitionEvent
     audit_payload: dict[str, Any]
 
@@ -135,7 +135,7 @@ def revoke_record_access(
     owner_authority_id: str,
     attribute_keyring: AttributeKeyring,
     actor_id: str,
-    actor_signing_key: ec.EllipticCurvePrivateKey,
+    actor_signing_key: ECPrivateKey,
     correlation_id: str,
     reason_code: ReasonCode | None = None,
     new_policy_id: str | None = None,

@@ -226,3 +226,39 @@ def test_unwrap_dek_sanity_matches_original(unlock_scenario):
         unlock_scenario["wrapping"], unlock_scenario["emergency_key"]
     )
     assert unwrapped == unlock_scenario["dek"]
+
+
+class TestShareIndexRange:
+    """F27: an aliased or zero share index never counts towards the threshold."""
+
+    def _open(self, scenario, shares):
+        _, pre_pub = generate_pre_keypair()
+        return open_emergency_access(
+            shares_presented=shares,
+            dek_wrapping=scenario["wrapping"],
+            transition_source_state=LifecycleState.GRANTED,
+            record_id=RECORD_ID,
+            actor_id="dr-alice",
+            correlation_id="corr-range",
+            reason_code=ReasonCode.CARDIAC_ARREST,
+            lifecycle_signing_key=scenario["lifecycle_priv"],
+            pre_rewrap_key=pre_pub,
+        )
+
+    def test_share_index_aliasing_rejected(self, unlock_scenario):
+        """One share presented as x and x + P must not pass as two shares."""
+        from shamir.finite_field import PRIME_MODULUS
+
+        x, share = unlock_scenario["shares"][0]
+        # Setup is valid: two genuine shares open the record.
+        assert self._open(unlock_scenario, unlock_scenario["shares"][:THRESHOLD])
+        with pytest.raises(InvalidShareError, match="outside"):
+            self._open(unlock_scenario, [(x, share), (x + PRIME_MODULUS, share)])
+
+    def test_emergency_key_repr_contains_no_key_bytes(self, unlock_scenario):
+        """F26: the unlock result's repr never prints the key or wrapped DEK."""
+        result = self._open(unlock_scenario, unlock_scenario["shares"][:THRESHOLD])
+        text = repr(result)
+        for secret in (result.emergency_key, result.rewrapped_dek):
+            assert secret.hex() not in text
+            assert repr(secret) not in text

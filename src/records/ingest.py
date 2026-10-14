@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from contracts.enums import LifecycleState
@@ -55,9 +55,11 @@ class IngestResult:
     dek_wrapping: DEKWrapping
     compiled_policy: CompiledPolicy
     policy_tree: PolicyTree  # the authored tree (with owner leaf)
-    root_secret: bytes  # the wrapping key (caller must NOT persist this)
+    # The wrapping key (caller must NOT persist this) and the search tokens
+    # stay out of repr() so a log line or traceback never prints them (F26).
+    root_secret: bytes = field(repr=False)
     lifecycle_state: LifecycleState
-    search_tokens: dict[str, bytes]  # {plaintext_term: coded_token}
+    search_tokens: dict[str, bytes] = field(repr=False)  # {term: coded_token}
     emergency_dek_wrapping: DEKWrapping | None = None
 
 

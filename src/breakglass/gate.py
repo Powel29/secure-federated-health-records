@@ -53,16 +53,18 @@ contract; that is out of scope for this gate.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from contracts import TransitionEvent
 from contracts.enums import LifecycleState, ReasonCode
 from contracts.records import DEKWrapping
 from crypto_core.symmetric import aes_gcm_encrypt
-from cryptography.hazmat.primitives.asymmetric import ec
+from crypto_core.types import ECPrivateKey
 from lifecycle.state_machine import create_transition_event
 from pre.elgamal import encapsulate_key
 from records.service import unwrap_dek
+from shamir.exceptions import InvalidShareError
+from shamir.finite_field import PRIME_MODULUS
 from shamir.split import combine_shares
 
 from breakglass.emergency_key import THRESHOLD, Share
@@ -102,8 +104,8 @@ class EmergencyUnlockResult:
             into ``EMERGENCY_OPEN``.
     """
 
-    emergency_key: bytes
-    rewrapped_dek: bytes
+    emergency_key: bytes = field(repr=False)
+    rewrapped_dek: bytes = field(repr=False)
     transition_event: TransitionEvent
 
 
@@ -116,7 +118,7 @@ def open_emergency_access(
     actor_id: str,
     correlation_id: str,
     reason_code: ReasonCode,
-    lifecycle_signing_key: ec.EllipticCurvePrivateKey,
+    lifecycle_signing_key: ECPrivateKey,
     pre_rewrap_key: int,
 ) -> EmergencyUnlockResult:
     """Open emergency access to one record from presented threshold shares.
@@ -176,6 +178,10 @@ def open_emergency_access(
     """
     unique_by_x: dict[int, bytes] = {}
     for x, share_bytes in shares_presented:
+        # Range-check before counting: x and x + P would otherwise count as
+        # two distinct shares of the same point (F27).
+        if not 1 <= x < PRIME_MODULUS:
+            raise InvalidShareError(f"share index x={x} outside 1..P-1")
         unique_by_x.setdefault(x, share_bytes)
 
     if len(unique_by_x) < THRESHOLD:

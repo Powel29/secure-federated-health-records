@@ -13,7 +13,7 @@ from typing import Any, Callable
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import redirect
 
-from accounts.models import Profile, Role
+from accounts.models import Profile, RegistrationRequest, RequestStatus, Role
 
 _HOME = {
     Role.PATIENT: "patient:home",
@@ -24,6 +24,18 @@ _HOME = {
 
 def profile_of(user: Any) -> Profile | None:
     return getattr(user, "profile", None)
+
+
+def is_issued(user: Any) -> bool:
+    """No registration of this login is still pending or was denied (F17).
+
+    Seeded and administrator-created accounts are issued by construction; a
+    self-registered login has a PENDING request until an authority issues
+    its credential, and reaches no portal (and so no custodian call) before.
+    """
+    return not RegistrationRequest.objects.filter(
+        user=user, status__in=(RequestStatus.PENDING, RequestStatus.DENIED)
+    ).exists()
 
 
 def role_required(role: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
@@ -40,6 +52,8 @@ def role_required(role: str) -> Callable[[Callable[..., Any]], Callable[..., Any
                 return redirect("home")
             if profile.role != role:
                 return redirect(_HOME.get(profile.role, "home"))
+            if not is_issued(request.user):
+                return redirect("home")  # "pending approval" page
             return view(request, *args, **kwargs)
 
         return wrapped

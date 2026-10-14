@@ -41,12 +41,15 @@ from typing import Any
 
 import httpx
 import psycopg
+from api.audit_client import _tls_verify
+from api.hospital import FacilityTrust
 from contracts import Facility
 from contracts.enums import FacilityStatus
 from crypto_core import (
     certificate_from_pem,
     certificate_to_pem,
     generate_ec_keypair,
+    private_key_from_pem,
     private_key_to_pem,
     public_key_from_pem,
     public_key_to_pem,
@@ -61,6 +64,7 @@ from storage.migrate import apply_migrations, reset_schema
 from storage.repositories import insert_authority, insert_facility, insert_patient
 
 from demo.seed_data import create_synthetic_dataset, seed_synthetic_data
+from deploy.config import env_flag
 from deploy.run_scenario import ScenarioEndpoints
 from deploy.seed_portal import deposit_custodian
 
@@ -70,8 +74,12 @@ class BootstrapError(RuntimeError):
 
 
 def _http_verify() -> bool:
-    """Return whether HTTPS certificate verification is enabled."""
-    return os.environ.get("TLS_VERIFY", "true").lower() not in {"0", "false", "no"}
+    """Whether HTTPS certificates are verified: always, except the capture gate.
+
+    A lone ``TLS_VERIFY=false`` no longer turns verification off (review
+    N14); only the double-gated capture escape hatch of ADR-0042 does.
+    """
+    return _tls_verify()
 
 
 @dataclass(frozen=True)
@@ -93,7 +101,7 @@ class FederationPKI:
 
 def seed_enabled() -> bool:
     """Whether bootstrap step 6 seeds the synthetic dataset (``SEED_DATA``)."""
-    return os.environ.get("SEED_DATA", "true").lower() not in {"0", "false", "no"}
+    return env_flag("SEED_DATA", default=True)
 
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
@@ -175,6 +183,76 @@ def generate_federation_pki(
     pki = FederationPKI(
         root_certificate_pem=certificate_to_pem(root.certificate).decode("ascii"),
         facilities=facilities,
+    )
+    return root, pki
+
+
+def facility_trust(pki: FederationPKI) -> FacilityTrust:
+    """The break-glass trust anchors an in-process facility is configured with.
+
+    For the standalone demo and tests, which build facility apps in-process
+    instead of reading :func:`write_trust_bundle`'s files (review F1).
+    """
+    return FacilityTrust(
+        root=certificate_from_pem(pki.root_certificate_pem.encode("ascii")),
+        facility_cas={
+            facility_id: certificate_from_pem(f.ca_certificate_pem.encode("ascii"))
+            for facility_id, f in pki.facilities.items()
+        },
+    )
+
+
+def write_trust_bundle(directory: Path, pki: FederationPKI) -> None:
+    """Write the public break-glass trust anchors facilities load at startup (F1).
+
+    ``<directory>/root.crt`` plus ``<directory>/facility-cas/<id>.crt``.
+    Certificates only -- no private key goes here, so this directory is what
+    the facility containers mount.
+    """
+    cas = directory / "facility-cas"
+    cas.mkdir(parents=True, exist_ok=True)
+    for stale in cas.glob("*.crt"):
+        stale.unlink()
+    (directory / "root.crt").write_text(pki.root_certificate_pem, encoding="ascii")
+    for facility_id, facility in pki.facilities.items():
+        (cas / f"{facility_id}.crt").write_text(
+            facility.ca_certificate_pem, encoding="ascii"
+        )
+
+
+def save_federation_pki(path: Path, root: RootAnchor, pki: FederationPKI) -> None:
+    """Persist the generated PKI for the Compose bootstrap job to load.
+
+    Compose generates the PKI in a one-shot job *before* the facilities start
+    (they need the trust anchors at startup, F1), but bootstrap needs the
+    root key later to sign authority certificates. The file holds private
+    keys and lives under the git-ignored ``deploy/pki/``, like
+    ``federation.json``.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "root_private_key_pem": private_key_to_pem(root.private_key).decode("ascii"),
+        "root_certificate_pem": pki.root_certificate_pem,
+        "facilities": {fid: asdict(f) for fid, f in pki.facilities.items()},
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def load_federation_pki(path: Path) -> tuple[RootAnchor, FederationPKI]:
+    """Load what :func:`save_federation_pki` wrote."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    private_key = private_key_from_pem(payload["root_private_key_pem"].encode("ascii"))
+    certificate = certificate_from_pem(payload["root_certificate_pem"].encode("ascii"))
+    root = RootAnchor(
+        private_key=private_key,
+        public_key=private_key.public_key(),
+        certificate=certificate,
+    )
+    pki = FederationPKI(
+        root_certificate_pem=payload["root_certificate_pem"],
+        facilities={
+            fid: FacilityPKI(**fields) for fid, fields in payload["facilities"].items()
+        },
     )
     return root, pki
 
@@ -311,7 +389,7 @@ def seed_federation(
         A one-line summary for the bootstrap log.
     """
     seed = seed_synthetic_data(endpoints, config)
-    counts = deposit_custodian(custodian_url, seed)
+    counts = deposit_custodian(custodian_url, seed, audit_url=endpoints.audit)
     return (
         f"{len(seed['records'])} records ingested; custodian holds "
         f"{counts['subjects']} subjects and {counts['shares']} clinician shares"

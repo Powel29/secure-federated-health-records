@@ -274,7 +274,13 @@ def upsert_lifecycle_state(
     state: LifecycleState,
     last_event_id: str | None = None,
 ) -> None:
-    """Set (or update) the current lifecycle state of a record."""
+    """Set (or overwrite) a record's lifecycle state.
+
+    Test seeding only. Production code creates the row with
+    :func:`insert_lifecycle_state` and changes it with
+    :func:`transition_lifecycle_state`, so no write can silently undo another
+    (review N1).
+    """
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO lifecycle_state (record_id, state, last_event_id,"
@@ -283,6 +289,28 @@ def upsert_lifecycle_state(
             " last_event_id = EXCLUDED.last_event_id, updated_at = now()",
             (record_id, state.value, last_event_id),
         )
+
+
+def insert_lifecycle_state(
+    conn: psycopg.Connection,
+    record_id: str,
+    state: LifecycleState,
+    last_event_id: str | None = None,
+) -> bool:
+    """Create a record's first lifecycle-state row (ingest only, review N1).
+
+    Never overwrites: returns ``False`` if a row already exists, so the caller
+    can refuse. Every later change goes through
+    :func:`transition_lifecycle_state`.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO lifecycle_state (record_id, state, last_event_id,"
+            " updated_at) VALUES (%s, %s, %s, now())"
+            " ON CONFLICT (record_id) DO NOTHING",
+            (record_id, state.value, last_event_id),
+        )
+        return cur.rowcount == 1
 
 
 def get_lifecycle_state(

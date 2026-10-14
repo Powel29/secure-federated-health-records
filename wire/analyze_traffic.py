@@ -23,15 +23,15 @@ from dataclasses import asdict
 from pathlib import Path
 
 from wire.canaries import load_manifest
+from wire.capture import default_db_port
 from wire.checks import (
     CLAIM1_SCOPES,
-    DEFAULT_DB_PORT,
     Capture,
     ClaimResult,
     run_all,
     search_leakage_rows,
 )
-from wire.streams import read_segments
+from wire.streams import Segment, read_segments
 from wire.tls import SERVICES
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -48,10 +48,36 @@ EXPECTED_HTTP_ENDPOINTS = {
     "/records/rec-001/read",
     "/records/rec-001/breakglass",
     "/records/rec-001/emergency-search",
+    "/records/rec-001/revoke",  # review N4: revocation is on the wire too
 }
 
 # TLS record header: content type (handshake 0x16 / application 0x17), 0x03.
 _TLS_RECORD_PREFIXES = (b"\x16\x03", b"\x17\x03")
+
+
+class StaleCaptureError(RuntimeError):
+    """The pcap does not belong to the run its canary manifest describes (N5)."""
+
+
+def check_capture_matches_run(segments: list[Segment], manifest: Path) -> None:
+    """Refuse a pcap with no traffic from the manifest's run (review N5).
+
+    The manifest is rewritten on every run while a failed capture could leave
+    an older pcap in place; that pcap holds none of the new canaries, so
+    claims 1 and 4 would pass on it. Every frame of such a pcap predates the
+    run's ``started_at``.
+    """
+    meta = json.loads(manifest.read_text(encoding="utf-8"))
+    started_at = meta.get("started_at")
+    if not isinstance(started_at, (int, float)):
+        raise StaleCaptureError(
+            f"{manifest} has no run stamp; recapture with `python -m wire.capture`"
+        )
+    if not any(seg.timestamp >= started_at for seg in segments):
+        raise StaleCaptureError(
+            f"no frame in this pcap is from run {meta.get('run_id')!r} "
+            f"(started {started_at}); it is older than its canary manifest"
+        )
 
 
 def load_capture(directory: Path, mode: str, db_port: int) -> Capture:
@@ -62,9 +88,11 @@ def load_capture(directory: Path, mode: str, db_port: int) -> Capture:
             f"Canary manifest not found: {manifest} -- capture with "
             "`python -m wire.capture`, which writes it beside the pcap"
         )
+    segments = read_segments(pcap)
+    check_capture_matches_run(segments, manifest)
     return Capture(
         mode=mode,
-        segments=read_segments(pcap),
+        segments=segments,
         canaries=load_manifest(manifest),
         ports=dict(SERVICES),
         db_port=db_port,
@@ -82,13 +110,25 @@ def check_preconditions(plain: Capture, tls: Capture) -> ClaimResult:
         problems.append("a canary manifest is empty")
     if tls.exchanges:
         problems.append(f"TLS capture exposes {len(tls.exchanges)} HTTP exchange(s)")
-    tls_records = any(
-        flow.data.startswith(_TLS_RECORD_PREFIXES)
+    # Every service the plain run talked to must show TLS in the TLS run; one
+    # handshake on one port proves nothing about the rest (review N5).
+    plain_ports = {
+        key.dst_port for key in plain.flows if key.dst_port in plain.service_ports
+    }
+    tls_ports = {
+        key.dst_port
         for key, flow in tls.flows.items()
         if key.dst_port in tls.service_ports
-    )
-    if not tls_records:
+        and flow.data.startswith(_TLS_RECORD_PREFIXES)
+    }
+    if not tls_ports:
         problems.append("TLS capture contains no TLS records on service ports")
+    elif plain_ports - tls_ports:
+        missing_tls = sorted(plain_ports - tls_ports)
+        problems.append(
+            f"TLS capture has no TLS traffic to ports {missing_tls} "
+            "that the plain run used"
+        )
     return ClaimResult(
         "0-preconditions",
         not problems,
@@ -114,7 +154,7 @@ def write_reports(
                 "frame",
                 "timestamp",
                 "path",
-                "query_sha256",
+                "query_id",
                 "request_bytes",
                 "response_status",
                 "response_bytes",
@@ -135,7 +175,12 @@ def main(argv: list[str] | None = None) -> int:
         help="all: neither capture may expose a secret (default); "
         "tls: only TLS must be clean, plain is the positive control (D6-b)",
     )
-    parser.add_argument("--db-port", type=int, default=DEFAULT_DB_PORT)
+    parser.add_argument(
+        "--db-port",
+        type=int,
+        default=default_db_port(),
+        help="Postgres port to trace for claim 2 (default: DATABASE_URL's port)",
+    )
     parser.add_argument(
         "--json", type=Path, default=RESULTS_DIR / "p55_wire_checks.json"
     )

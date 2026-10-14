@@ -14,7 +14,7 @@ from __future__ import annotations
 import base64
 
 import pytest
-from api.hospital import create_hospital_app
+from api.hospital import FacilityTrust, create_hospital_app
 from api.repository import InMemoryStorageRepository
 from breakglass.emergency_key import generate_emergency_key, split_emergency_key
 from contracts.enums import LifecycleState, PolicyNodeType
@@ -87,6 +87,55 @@ def federation_pki():
         "life_priv": life_priv,
         "life_pub": life_pub,
     }
+
+
+class FromHost:
+    """ASGI wrapper that presents a fixed client address to the wrapped app.
+
+    Starlette's TestClient sends no client address at all, so address-based
+    checks (the F14 authoring allowlist) would refuse every test call.
+    """
+
+    def __init__(self, app, host: str = "testclient") -> None:
+        self.app = app
+        self.host = host
+
+    def __getattr__(self, name):
+        return getattr(self.app, name)
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] in ("http", "websocket"):
+            scope = {**scope, "client": (self.host, 50000)}
+        await self.app(scope, receive, send)
+
+
+class RecordingAuditSink:
+    """An explicit in-memory audit destination (review F19) that tests can read."""
+
+    def __init__(self) -> None:
+        self.events: list[dict] = []
+
+    def __call__(self, event_type, event_data, actor_id, correlation_id) -> None:
+        self.events.append(
+            {
+                "event_type": event_type,
+                "event_data": event_data,
+                "actor_id": actor_id,
+                "correlation_id": correlation_id,
+            }
+        )
+
+    def of_type(self, event_type: str) -> list[dict]:
+        return [e for e in self.events if e["event_type"] == event_type]
+
+
+def make_trust(pki, revoked_serials=frozenset()) -> FacilityTrust:
+    """The facility's configured break-glass trust anchors (review F1)."""
+    return FacilityTrust(
+        root=pki["root"].certificate,
+        facility_cas={"facility-a": pki["fa_cert"], "facility-b": pki["fb_cert"]},
+        revoked_serials=frozenset(revoked_serials),
+    )
 
 
 @pytest.fixture()
@@ -178,15 +227,19 @@ def test_setup(federation_pki, attribute_materials):
     em_wrapping = ingest_res.emergency_dek_wrapping
     repo.insert_dek_wrapping(em_wrapping)
 
+    audit_sink = RecordingAuditSink()
     app = create_hospital_app(
         facility_id="facility-a",
         repository=repo,
         expiry_manager=expiry_manager,
+        trust=make_trust(federation_pki),
+        audit_sink=audit_sink,
     )
     client = TestClient(app)
 
     return {
         "repo": repo,
+        "audit_sink": audit_sink,
         "app": app,
         "client": client,
         "expiry_manager": expiry_manager,

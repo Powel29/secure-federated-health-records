@@ -36,7 +36,6 @@ from audit.chain import verify_full_chain
 from breakglass import create_emergency_assertion
 from contracts.enums import ReasonCode
 from crypto_core import (
-    certificate_to_pem,
     generate_ec_keypair,
     public_key_from_pem,
 )
@@ -461,10 +460,6 @@ def run_db_benchmarks(iterations: int, database_url: str) -> list[Row]:
         record_info = seeded["records"]["rec-001"]
         clinician = seeded["clinicians"]["doc-201"]
 
-        facility_ca = seeded["facility_cas"]["facility-b"]
-
-        facility_ca_pem = certificate_to_pem(facility_ca[1]).decode("ascii")
-
         assertion = create_emergency_assertion(
             patient_id="pat-101",
             clinician_id="doc-201",
@@ -491,8 +486,6 @@ def run_db_benchmarks(iterations: int, database_url: str) -> list[Row]:
         unlock_payload = {
             "assertion": assertion.model_dump(mode="json"),
             "clinician_certificate_pem": clinician["certificate_pem"],
-            "facility_ca_certificate_pem": facility_ca_pem,
-            "trusted_root_certificate_pem": seeded["root_cert_pem"],
             "shares": shares_payload,
             "pre_rewrap_key": clinician["pre_public_key"],
             "lifecycle_signing_key_pem": clinician["private_key_pem"],
@@ -512,6 +505,7 @@ def run_db_benchmarks(iterations: int, database_url: str) -> list[Row]:
                 f"{endpoints.facility_b}/records/rec-001/emergency-search",
                 json={
                     "search_term": "cardiac",
+                    "requester_id": "doc-201",
                 },
             )
             response.raise_for_status()

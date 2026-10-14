@@ -231,18 +231,29 @@ def _url(name: str) -> str:
 # --- Break-glass ----------------------------------------------------------------------
 
 
-def _identified(request: Any, patient_id: str) -> dict[str, Any]:
-    """Prefer the correlation id of the lookup that produced this patient_id."""
-    ident = request.session.get("clinician.identified") or {}
-    if ident.get("patient_id") == patient_id:
-        return ident
-    return {"patient_id": patient_id, "correlation_id": f"bg-{uuid4()}"}
+def _identified(request: Any) -> dict[str, Any]:
+    """The patient picked in this session's logged lookup (ADR-0033), if any.
+
+    Kept server-side in the session, never taken from the form: the
+    break-glass page acts only on the patient the logged lookup selected,
+    under that lookup's correlation id (review F41).
+    """
+    return request.session.get("clinician.identified") or {}
 
 
 @role_required(Role.CLINICIAN)
 def breakglass(request: Any) -> HttpResponse:
     ctx = _base_ctx(request, "Emergency break-glass")
-    patient_id = (request.POST.get("patient_id") or request.GET.get("patient_id") or "").strip()
+    ident = _identified(request)
+    patient_id = ident.get("patient_id", "")
+    requested = (request.POST.get("patient_id") or request.GET.get("patient_id") or "").strip()
+    if requested and requested != patient_id:
+        # A raw patient_id would skip the patient.lookup event (review F41).
+        ctx["error"] = (
+            "That patient was not selected through a logged directory lookup — "
+            "identify the patient first."
+        )
+        return render(request, "clinician/breakglass.html", ctx, status=400)
     directory = PatientDirectory.objects.filter(subject_id=patient_id).first() if patient_id else None
     discovery = (request.session.get(_DISCOVERY_SESSION_KEY) or {}).get(patient_id)
     ctx.update(
@@ -284,7 +295,6 @@ def breakglass(request: Any) -> HttpResponse:
         ctx["error"] = "Choose a discovered record and a reason code."
         return render(request, "clinician/breakglass.html", ctx, status=400)
 
-    ident = _identified(request, patient_id)
     correlation_id = ident["correlation_id"]
     try:
         result = services.custodian_breakglass(
@@ -449,7 +459,13 @@ def case_detail(request: Any, pk: int) -> HttpResponse:
             ctx["search_error"] = "Enter a term to derive a token for."
         else:
             try:
-                hits = services.facility_emergency_search(case.facility_id, case.record_id, term)
+                hits = services.facility_emergency_search(
+                    case.facility_id,
+                    case.record_id,
+                    term,
+                    case.clinician_id,
+                    case.correlation_id,
+                )
                 ctx["search_results"] = hits
                 ctx["search_state"] = "TOKEN LIVE" if case.status == CaseStatus.OPEN else "TOKEN DEAD"
             except ServiceError as exc:

@@ -1,6 +1,6 @@
 # ADR-0044: Break-glass enforces the assertion's patient binding; the store reconciles an expired time-box
 
-- **Status:** Proposed
+- **Status:** Proposed; the state-reconciliation half is superseded by ADR-0050 (review N1)
 - **Date:** 2026-10-02
 - **Deciders:** Powel (proposal) — pending ratification by the `src/api` owner (Avaneeth) and `src/lifecycle` owner
 - **Task / source:** automated end-to-end run of the portal flows (`tests/e2e/portal_flows.py`); ARCHITECTURE.md §8; ADR-0043 (re-baseline persistence gap, P5-4)

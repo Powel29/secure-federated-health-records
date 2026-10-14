@@ -18,6 +18,7 @@ from authority.issuance import (
     issue_owner_credential,
     verify_credential,
 )
+from authority.revocation import RevocationRegistry
 from contracts import Attribute, AttributeCredential, CredentialStatus
 from crypto_core import InvalidSignatureError, sign
 
@@ -35,7 +36,9 @@ def test_issued_credential_verifies_against_issuer_key(
         valid_until,
     )
 
-    verify_credential(cred, authority_med.public_key)
+    verify_credential(
+        cred, authority_med.public_key, revocation_registry=RevocationRegistry()
+    )
     assert cred.status == CredentialStatus.ACTIVE
     assert cred.issuer_id == "authority-med"
 
@@ -62,8 +65,12 @@ def test_two_independent_authorities_issue_valid_credentials(
         valid_until,
     )
 
-    verify_credential(med_cred, authority_med.public_key)
-    verify_credential(net_cred, authority_net.public_key)
+    verify_credential(
+        med_cred, authority_med.public_key, revocation_registry=RevocationRegistry()
+    )
+    verify_credential(
+        net_cred, authority_net.public_key, revocation_registry=RevocationRegistry()
+    )
 
 
 def test_owner_credential_issued_to_patient(
@@ -73,7 +80,9 @@ def test_owner_credential_issued_to_patient(
     valid_from, valid_until = valid_window
     cred = issue_owner_credential(authority_net, "patient-123", valid_from, valid_until)
 
-    verify_credential(cred, authority_net.public_key)
+    verify_credential(
+        cred, authority_net.public_key, revocation_registry=RevocationRegistry()
+    )
     assert cred.subject_id == "patient-123"
     assert cred.attribute == Attribute(name="owner", value="patient-123")
 
@@ -118,7 +127,9 @@ def test_forged_credential_rejected(
     forged = cred.model_copy(update={"subject_id": "dr-attacker"})
 
     with pytest.raises(InvalidSignatureError):
-        verify_credential(forged, authority_med.public_key)
+        verify_credential(
+            forged, authority_med.public_key, revocation_registry=RevocationRegistry()
+        )
 
 
 def test_credential_verified_against_wrong_authority_key_rejected(
@@ -137,7 +148,9 @@ def test_credential_verified_against_wrong_authority_key_rejected(
     )
 
     with pytest.raises(InvalidSignatureError):
-        verify_credential(cred, authority_net.public_key)
+        verify_credential(
+            cred, authority_net.public_key, revocation_registry=RevocationRegistry()
+        )
 
 
 def test_credential_not_yet_valid_rejected(authority_med: AttributeAuthority) -> None:
@@ -154,7 +167,12 @@ def test_credential_not_yet_valid_rejected(authority_med: AttributeAuthority) ->
     )
 
     with pytest.raises(CredentialNotYetValidError):
-        verify_credential(cred, authority_med.public_key, at=now)
+        verify_credential(
+            cred,
+            authority_med.public_key,
+            at=now,
+            revocation_registry=RevocationRegistry(),
+        )
 
 
 def test_expired_credential_rejected(authority_med: AttributeAuthority) -> None:
@@ -171,7 +189,12 @@ def test_expired_credential_rejected(authority_med: AttributeAuthority) -> None:
     )
 
     with pytest.raises(CredentialExpiredError):
-        verify_credential(cred, authority_med.public_key, at=now)
+        verify_credential(
+            cred,
+            authority_med.public_key,
+            at=now,
+            revocation_registry=RevocationRegistry(),
+        )
 
 
 def test_tampering_status_after_issuance_breaks_signature(
@@ -194,7 +217,9 @@ def test_tampering_status_after_issuance_breaks_signature(
     tampered = cred.model_copy(update={"status": CredentialStatus.REVOKED})
 
     with pytest.raises(InvalidSignatureError):
-        verify_credential(tampered, authority_med.public_key)
+        verify_credential(
+            tampered, authority_med.public_key, revocation_registry=RevocationRegistry()
+        )
 
 
 def test_genuinely_revoked_credential_rejected_by_status_check(
@@ -229,4 +254,8 @@ def test_genuinely_revoked_credential_rejected_by_status_check(
     )
 
     with pytest.raises(CredentialStatusError):
-        verify_credential(revoked_cred, authority_med.public_key)
+        verify_credential(
+            revoked_cred,
+            authority_med.public_key,
+            revocation_registry=RevocationRegistry(),
+        )

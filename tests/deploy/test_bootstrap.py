@@ -27,6 +27,7 @@ from api.authority_service import create_authority_app
 from storage.migrate import apply_migrations
 
 from deploy import bootstrap
+from tests.security.conftest import skip_or_fail_without_postgres
 
 _URL = os.environ.get("DATABASE_URL")
 
@@ -96,11 +97,13 @@ def test_generate_federation_pki_chains_facilities_to_root():
 @pytest.fixture()
 def audit_conn():
     if not _URL:
-        pytest.skip("DATABASE_URL not set; bootstrap audit-chain test needs Postgres")
+        skip_or_fail_without_postgres(
+            "DATABASE_URL not set; bootstrap audit-chain test needs Postgres"
+        )
     try:
         conn = psycopg.connect(_URL)
     except psycopg.OperationalError as exc:
-        pytest.skip(f"cannot reach Postgres: {exc}")
+        skip_or_fail_without_postgres(f"cannot reach Postgres: {exc}")
     conn.autocommit = True
     with conn.cursor() as cur:
         cur.execute("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;")

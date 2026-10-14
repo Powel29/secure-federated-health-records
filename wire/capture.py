@@ -30,16 +30,34 @@ federation service ports.
 from __future__ import annotations
 
 import argparse
+import os
+import re
 import shutil
 import subprocess
 import time
 from collections.abc import Callable
 from pathlib import Path
+from urllib.parse import urlparse
 
 from wire.tls import SERVICES
 
 CAPTURE_DIR = Path(__file__).resolve().parent / "captures"
 DEFAULT_DB_PORT = 5432
+
+
+def default_db_port() -> int:
+    """The Postgres port claim 2 traces: ``DATABASE_URL``'s, else 5432.
+
+    This project's Postgres listens on 55432/55433, so a fixed 5432 default
+    made claim 2 fail unless the flag was passed (review N15).
+    """
+    url = os.environ.get("DATABASE_URL")
+    if url:
+        port = urlparse(url).port
+        if port:
+            return port
+    return DEFAULT_DB_PORT
+
 
 # Default loopback interface name by platform family. dumpcap on Windows with
 # Npcap exposes loopback as this friendly name; Linux/macOS use "lo"/"lo0".
@@ -61,7 +79,9 @@ _LOOPBACK_INTERFACES = frozenset(
     }
 )
 _BRIDGE_INTERFACES = frozenset({"docker0"})
-_BRIDGE_PREFIX = "br-"
+# Docker names its user-defined bridges br-<first 12 hex of the network id>;
+# a looser "br-*" also admitted host bridges such as br-lan (review N15).
+_DOCKER_BRIDGE = re.compile(r"br-[0-9a-f]{12}")
 CAPTURE_RULE = (
     "capture is allowed only on loopback (lo, lo0, \\Device\\NPF_Loopback, "
     "'Adapter for loopback traffic capture') or the Docker bridge (docker0, br-*) "
@@ -77,12 +97,16 @@ class CaptureInterfaceRefused(ValueError):
     """The requested interface is not loopback or the Docker bridge."""
 
 
+class CaptureFailed(RuntimeError):
+    """dumpcap did not produce a usable capture (review N5)."""
+
+
 def is_allowed_interface(name: str) -> bool:
     """True only for loopback adapters and the Docker bridge (F39)."""
     return (
         name in _LOOPBACK_INTERFACES
         or name in _BRIDGE_INTERFACES
-        or (name.startswith(_BRIDGE_PREFIX) and len(name) > len(_BRIDGE_PREFIX))
+        or _DOCKER_BRIDGE.fullmatch(name) is not None
     )
 
 
@@ -136,12 +160,16 @@ def capture_scenario(
     Raises:
         CaptureInterfaceRefused: ``interface`` is not loopback / Docker bridge.
         CaptureToolUnavailable: ``dumpcap`` is not installed.
+        CaptureFailed: dumpcap stopped on its own, or wrote nothing (N5).
     """
     iface = interface or default_loopback_interface()
     if not is_allowed_interface(iface):
         raise CaptureInterfaceRefused(f"refusing interface {iface!r}: {CAPTURE_RULE}")
     dumpcap = _require_dumpcap()
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    # Never leave an older run's pcap behind: a failed capture would otherwise
+    # be analysed against this run's canaries and pass (review N5).
+    output_path.unlink(missing_ok=True)
 
     proc = subprocess.Popen(
         [
@@ -160,12 +188,19 @@ def capture_scenario(
         time.sleep(settle_seconds)  # let dumpcap bind before traffic starts
         scenario()
         time.sleep(settle_seconds)  # let trailing packets flush
+        exited_early = proc.poll()
     finally:
         proc.terminate()
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+    if exited_early is not None:
+        raise CaptureFailed(
+            f"dumpcap exited with status {exited_early} before the scenario ended"
+        )
+    if not output_path.exists() or output_path.stat().st_size == 0:
+        raise CaptureFailed(f"dumpcap wrote no capture to {output_path}")
     return output_path
 
 
@@ -214,8 +249,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--db-port",
         type=int,
-        default=DEFAULT_DB_PORT,
-        help="Postgres port to include in the capture (claim-2 evidence)",
+        default=default_db_port(),
+        help="Postgres port to include in the capture (claim-2 evidence; "
+        "default: DATABASE_URL's port)",
     )
     args = parser.parse_args(argv)
 

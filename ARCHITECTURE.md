@@ -429,7 +429,8 @@ Capture points:
   inter-service traffic in one place.
 - **Local path:** capture on loopback across the five service ports.
 
-PCAPs are written to `bench/captures/`, which is `.gitignore`d — captures of a
+PCAPs are written to `wire/captures/` (beside the canary manifest each run
+writes; review F40), which is `.gitignore`d — captures of a
 seeded synthetic federation are still large and still regenerable. The analysers
 and their assertions are committed; the raw captures are not.
 

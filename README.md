@@ -231,7 +231,7 @@ a request — CONVENTIONS.md §2 rule 8):
 | `PORTAL_DB_HOST` / `PORT` / `NAME` / `USER` / `PASSWORD` | `localhost` / `55432` / `ehr_test` / `postgres` / *(empty)* | Django's own tables (the `portal` schema) |
 | `STORE_DB_USER` / `STORE_DB_PASSWORD` | `portal_ro` / *(empty)* | **read-only** window onto the store tables |
 | `DJANGO_SECRET_KEY` | random per start | set a fixed value in any real deployment |
-| `DJANGO_DEBUG` | `1` | set `0` in production (then set `DJANGO_ALLOWED_HOSTS`) |
+| `DJANGO_DEBUG` | `0` | `deploy.run_portal_demo` sets `1` for the loopback demo; `DJANGO_ALLOWED_HOSTS` defaults to `127.0.0.1,localhost` |
 | `PORTAL_PRODUCT_NAME` | `CUSTOS` | name shown in the UI |
 
 The `store` alias connects as `portal_ro`, which has `SELECT` only on the store

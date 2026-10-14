@@ -52,7 +52,7 @@ from typing import Any
 import psycopg
 from contracts import AuditEntry
 from crypto_core import sha256_digest
-from cryptography.hazmat.primitives.asymmetric import ec
+from crypto_core.types import ECPrivateKey
 
 from audit.chain import append_entry
 
@@ -80,6 +80,7 @@ EVENT_CONSENT_DECISION = "consent.decision"  # P4-7: grant / deny / revoke recor
 ACCESS_VIA_POLICY = "policy"
 ACCESS_VIA_CONSENT = "consent"
 ACCESS_VIA_OWNER = "owner"
+ACCESS_VIA_EMERGENCY_SEARCH = "emergency_search"  # F8: search under break-glass
 
 # Suggested, non-exhaustive values for ``log_access_denied``'s ``denied_by`` --
 # free text is still accepted (a future denial source needs no contract
@@ -89,6 +90,20 @@ DENIED_BY_POLICY = "policy"
 DENIED_BY_CONSENT = "consent"
 DENIED_BY_CREDENTIAL = "credential_authority"
 DENIED_BY_REVOCATION_AUTHZ = "revocation_authorization"
+# Break-glass and read-path refusals (review F1/F8): one value per refusal
+# source so the denial view can tell a forged chain from a bad share.
+DENIED_BY_BREAKGLASS_ASSERTION = "breakglass_assertion"
+DENIED_BY_BREAKGLASS_CHAIN = "breakglass_chain"
+DENIED_BY_BREAKGLASS_GATE = "breakglass_gate"
+DENIED_BY_BREAKGLASS_TRANSITION = "breakglass_transition"
+DENIED_BY_RECORD_NOT_FOUND = "record_not_found"
+DENIED_BY_DEK_UNWRAP = "dek_unwrap"
+DENIED_BY_EMERGENCY_SEARCH = "emergency_search"
+
+
+def patient_id_hash(patient_id: str) -> str:
+    """Hex SHA-256 of a patient id, for events that must not name the patient."""
+    return sha256_digest(patient_id.encode("utf-8")).hex()
 
 
 def log_access_granted(
@@ -99,7 +114,7 @@ def log_access_granted(
     access_via: str,
     actor_id: str,
     correlation_id: str,
-    signing_key: ec.EllipticCurvePrivateKey,
+    signing_key: ECPrivateKey,
     timestamp: datetime.datetime | None = None,
 ) -> AuditEntry:
     """Log a successful record read (plaintext released to ``requester_id``).
@@ -160,7 +175,7 @@ def log_access_denied(
     reason: str,
     actor_id: str,
     correlation_id: str,
-    signing_key: ec.EllipticCurvePrivateKey,
+    signing_key: ECPrivateKey,
     timestamp: datetime.datetime | None = None,
 ) -> AuditEntry:
     """Log a denied access attempt.
@@ -223,7 +238,7 @@ def log_federation_discovery(
     record_ids: list[str],
     actor_id: str,
     correlation_id: str,
-    signing_key: ec.EllipticCurvePrivateKey,
+    signing_key: ECPrivateKey,
     timestamp: datetime.datetime | None = None,
 ) -> AuditEntry:
     """Log a federated discovery lookup (``federation.discovery``, C13).
@@ -281,7 +296,7 @@ def log_federation_rewrap(
     target_actor_id: str,
     actor_id: str,
     correlation_id: str,
-    signing_key: ec.EllipticCurvePrivateKey,
+    signing_key: ECPrivateKey,
     timestamp: datetime.datetime | None = None,
 ) -> AuditEntry:
     """Log a cross-facility PRE re-wrap (``breakglass.gate`` step 4, C3).

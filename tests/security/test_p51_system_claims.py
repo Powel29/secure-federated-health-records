@@ -42,7 +42,12 @@ from storage.migrate import apply_migrations
 
 # PKI and attribute fixtures are shared with the API suite; the hospital
 # fixture below is our own (it seeds the ingest-produced emergency wrapping).
-from tests.api.conftest import attribute_materials, federation_pki  # noqa: F401
+from tests.api.conftest import (  # noqa: F401
+    RecordingAuditSink,
+    attribute_materials,
+    federation_pki,
+    make_trust,
+)
 from tests.security.conftest import skip_or_fail_without_postgres
 
 RECORD = "rec-001"
@@ -84,12 +89,16 @@ def _seed(repo: InMemoryStorageRepository, attrs: dict) -> dict:
     }
 
 
-def _hospital_app(repo: InMemoryStorageRepository, life_priv) -> TestClient:
+def _hospital_app(repo: InMemoryStorageRepository, pki) -> TestClient:
     manager = EmergencyExpiryManager(
-        signing_key=life_priv, default_duration_seconds=60.0
+        signing_key=pki["life_priv"], default_duration_seconds=60.0
     )
     app = create_hospital_app(
-        facility_id="facility-a", repository=repo, expiry_manager=manager
+        facility_id="facility-a",
+        repository=repo,
+        expiry_manager=manager,
+        trust=make_trust(pki),
+        audit_sink=RecordingAuditSink(),
     )
     return TestClient(app)
 
@@ -100,7 +109,7 @@ def hospital(federation_pki, attribute_materials):  # noqa: F811
     seeded = _seed(repo, attribute_materials)
     return {
         "repo": repo,
-        "client": _hospital_app(repo, federation_pki["life_priv"]),
+        "client": _hospital_app(repo, federation_pki),
         "pki": federation_pki,
         "attrs": attribute_materials,
         **seeded,
@@ -150,7 +159,7 @@ def _read(client: TestClient, requester: str, keyring: dict[str, str]):
     )
 
 
-def _unlock_payload(h: dict, *, shares=None, register_session: bool = True) -> dict:
+def _unlock_payload(h: dict, *, shares=None) -> dict:
     pki = h["pki"]
     shares = shares if shares is not None else h["shares"][:2]
     assertion = create_emergency_assertion(
@@ -163,26 +172,20 @@ def _unlock_payload(h: dict, *, shares=None, register_session: bool = True) -> d
     payload = {
         "assertion": assertion.model_dump(mode="json"),
         "clinician_certificate_pem": certificate_to_pem(pki["alice_cert"]).decode(),
-        "facility_ca_certificate_pem": certificate_to_pem(pki["fa_cert"]).decode(),
-        "trusted_root_certificate_pem": certificate_to_pem(
-            pki["root"].certificate
-        ).decode(),
         "shares": [(x, s.hex()) for x, s in shares],
         "pre_rewrap_key": pki["alice_pre_pub"],
         "lifecycle_signing_key_pem": private_key_to_pem(pki["life_priv"]).decode(),
         "correlation_id": f"corr-{secrets.token_hex(4)}",
+        "baseline_wrapping_key_b64": base64.b64encode(secrets.token_bytes(32)).decode(),
+        "emergency_duration_seconds": 60,
     }
-    if register_session:
-        payload["baseline_wrapping_key_b64"] = base64.b64encode(
-            secrets.token_bytes(32)
-        ).decode()
-        payload["emergency_duration_seconds"] = 60
     return payload
 
 
 def _search(client: TestClient, term: str = "cardiac"):
     return client.post(
-        f"/records/{RECORD}/emergency-search", json={"search_term": term}
+        f"/records/{RECORD}/emergency-search",
+        json={"search_term": term, "requester_id": "dr-alice"},
     )
 
 
@@ -330,6 +333,9 @@ def test_c4_pre_expiry_shares_do_not_restore_search(hospital):
     reopened = client.post(
         f"/records/{RECORD}/breakglass", json=_unlock_payload(hospital)
     )
+    # Review N6: a refusal (403) proves nothing about search on its own, and
+    # anything else (a 500, a 409) must fail the test, not pass it silently.
+    assert reopened.status_code in (200, 403), reopened.text
     if reopened.status_code == 200:
         result = _search(client)
         assert result.status_code != 200 or RECORD not in result.json()["record_ids"]
@@ -373,13 +379,13 @@ def test_c5_tampered_db_row_fails_the_chain_verify_endpoint(audit_client):
 
 
 @pytest.mark.claim("C6", level="system")
-@pytest.mark.xfail(
-    strict=True,
-    reason="F11/D7: the revoke handler writes REVOKED directly; it never checks "
-    "the record's current state against LEGAL_TRANSITIONS",
-)
 def test_c6_api_refuses_revocation_of_an_emergency_open_record(hospital):
-    """C6: EMERGENCY_OPEN -> REVOKED is not a legal transition, so the API refuses."""
+    """C6: EMERGENCY_OPEN -> REVOKED is not a legal transition, so the API refuses.
+
+    Holds since review N1: the revoke handler claims the state with a
+    compare-and-set from its event's ``from_state`` (GRANTED), so a record in
+    any other state is refused before anything is written.
+    """
     client, repo = hospital["client"], hospital["repo"]
     assert (
         client.post(
@@ -429,12 +435,12 @@ def test_c7_breakglass_event_verifies_against_the_clinicians_certificate(hospita
 @pytest.mark.claim("C8", level="system")
 def test_c8_replayed_assertion_rejected_after_facility_restart(hospital):
     """C8: replay protection survives a restart of the facility process."""
-    payload = _unlock_payload(hospital, register_session=False)
+    payload = _unlock_payload(hospital)
     first = hospital["client"].post(f"/records/{RECORD}/breakglass", json=payload)
     assert first.status_code == 200
 
     # Same store, new process: the replay store and timer start empty.
-    restarted = _hospital_app(hospital["repo"], hospital["pki"]["life_priv"])
+    restarted = _hospital_app(hospital["repo"], hospital["pki"])
     replay = restarted.post(f"/records/{RECORD}/breakglass", json=payload)
     assert replay.status_code == 400
     assert "rewrapped_dek_b64" not in replay.text
@@ -481,13 +487,14 @@ def test_c9_bola_authenticated_but_unauthorised_caller_denied_before_crypto_or_d
 
 
 @pytest.mark.claim("C10", level="system")
-@pytest.mark.xfail(
-    strict=True,
-    reason="F14: /attribute-keys/author releases any attribute key with no "
-    "credential at all, so revocation and expiry are never consulted",
-)
 def test_c10_attribute_key_not_released_without_a_valid_credential():
-    """C10: no attribute key leaves the authority without a valid credential."""
+    """C10: no attribute key leaves the authority without a valid credential.
+
+    The authoring path is closed to any caller outside the authority's
+    authoring allowlist (review F14 interim). Allowlisted authoring services
+    are trusted parties by construction (ADR-0026) until signed service
+    requests (D5-a) replace the address check.
+    """
     client = TestClient(create_authority_app("authority-med", frozenset({"role"})))
     issued = client.post(
         "/credentials/issue",

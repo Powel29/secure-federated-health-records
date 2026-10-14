@@ -37,10 +37,20 @@ from typing import Annotated
 
 import psycopg
 from audit.chain import append_entry, create_genesis_entry, verify_full_chain
-from audit.exceptions import AuditCommitFailedError, EmptyChainError
+from audit.exceptions import (
+    AuditCommitFailedError,
+    ChainBreakError,
+    EmptyChainError,
+    TamperedEntryError,
+)
 from audit.share_custody import release_share_after_commit
-from audit.share_registry import ShareNotFoundError, ShareRegistry
+from audit.share_registry import (
+    ShareAlreadyHeldError,
+    ShareNotFoundError,
+    ShareRegistry,
+)
 from crypto_core import generate_ec_keypair, public_key_to_pem
+from crypto_core.exceptions import InvalidSignatureError
 from crypto_core.types import ECPrivateKey, ECPublicKey
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from storage.repositories import get_chain_head, insert_audit_entry
@@ -178,10 +188,16 @@ def create_audit_app(
             head = verify_full_chain(conn, public_key)
         except EmptyChainError:
             return ChainVerifyResponse(verified=False, head_seq=None)
-        except Exception as exc:
+        except (ChainBreakError, TamperedEntryError, InvalidSignatureError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"chain verification failed: {exc}",
+            ) from exc
+        except psycopg.Error as exc:
+            # A store outage is not evidence of tampering (review F42).
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"chain verification unavailable: {exc}",
             ) from exc
         return ChainVerifyResponse(verified=True, head_seq=head.seq)
 
@@ -193,14 +209,21 @@ def create_audit_app(
     ) -> AppendEntryResponse:
         """Sign and append one entry. The caller never touches the signing key."""
         with lock:
-            entry = append_entry(
-                conn,
-                event_type=payload.event_type,
-                event_data=payload.event_data,
-                actor_id=payload.actor_id,
-                correlation_id=payload.correlation_id,
-                signing_key=key,
-            )
+            try:
+                entry = append_entry(
+                    conn,
+                    event_type=payload.event_type,
+                    event_data=payload.event_data,
+                    actor_id=payload.actor_id,
+                    correlation_id=payload.correlation_id,
+                    signing_key=key,
+                )
+            except ValueError as exc:
+                # e.g. a float in event_data, which would later fail
+                # verification after the jsonb round trip (review F31).
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                ) from exc
         return AppendEntryResponse(entry=entry)
 
     # --- Break-glass share custody (P3-4, headline precondition) -----------
@@ -221,7 +244,13 @@ def create_audit_app(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"invalid hex share: {exc}",
             ) from exc
-        shares.put(payload.share_key, (payload.x, share_bytes))
+        try:
+            shares.put(payload.share_key, (payload.x, share_bytes))
+        except ShareAlreadyHeldError as exc:
+            # Never overwrite a live record's share (review F4).
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+            ) from exc
         return RegisterShareResponse(share_key=payload.share_key)
 
     @app.post("/breakglass/release", response_model=ReleaseShareResponse)

@@ -77,7 +77,7 @@ clean-clone gate check runs.
 | **Wireshark** (dumpcap + tshark) on PATH | pyshark wraps tshark | `tshark -v`, `dumpcap -D` |
 | **Npcap with loopback support** (Windows) | without it dumpcap captures nothing on `127.0.0.1` | trivial loopback capture shows packets |
 | Federation on fixed ports | `deploy/run_local.py` (8001/8002/8010/8011/8020/8030) | `deploy.run_scenario` prints all 9 steps |
-| TLS profile | certs from `wire.tls`; `CAPTURE_TLS=true TLS_VERIFY=false` | `run_scenario --scheme https` succeeds |
+| TLS profile | certs from `wire.tls` (clients verify against the generated bundle; no `TLS_VERIFY=false`, ADR-0047, review N15) | `run_scenario --scheme https` succeeds |
 
 ### A3. Reviews, merges and ownership
 

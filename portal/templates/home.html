@@ -11,7 +11,8 @@
       <a class="btn btn-secondary" href="{% url 'accounts:register_patient' %}">Register as patient</a>
       <a class="btn btn-secondary" href="{% url 'accounts:register_clinician' %}">Register as clinician</a>
     </div>
-    {% if user.is_authenticated %}<div class="notice notice-info mt-4">Signed in as {{ user.username }} with no portal profile. {% if user.is_superuser %}<a href="{% url 'admin_audit:home' %}">Open the admin &amp; audit portal</a>.{% endif %}</div>{% endif %}
+    {% if pending %}<div class="notice notice-info mt-4">Your registration is pending approval. An authority has to verify and issue your credential before any portal opens.</div>
+    {% elif user.is_authenticated %}<div class="notice notice-info mt-4">Signed in as {{ user.username }} with no portal profile. {% if user.is_superuser %}<a href="{% url 'admin_audit:home' %}">Open the admin &amp; audit portal</a>.{% endif %}</div>{% endif %}
   </div>
 </div>
 {% endblock %}

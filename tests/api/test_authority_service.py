@@ -11,11 +11,44 @@ import pytest
 from api.authority_service import create_authority_app
 from fastapi.testclient import TestClient
 
+from tests.api.conftest import FromHost
+
 
 @pytest.fixture()
 def client() -> TestClient:
-    app = create_authority_app("authority-med", frozenset({"role"}))
-    return TestClient(app)
+    # The test client is the allowlisted authoring service here (F14 interim).
+    app = create_authority_app(
+        "authority-med",
+        frozenset({"role"}),
+        authoring_callers=frozenset({"testclient"}),
+    )
+    return TestClient(FromHost(app))
+
+
+def test_author_endpoint_refuses_unauthenticated_caller() -> None:
+    """Review F14 (interim): a caller outside the allowlist gets no authoring key.
+
+    The authoring key is the very key /attribute-keys/release gates behind a
+    credential, so an open authoring endpoint bypassed the credential check.
+    """
+    allowed = TestClient(
+        FromHost(
+            create_authority_app(
+                "authority-med",
+                frozenset({"role"}),
+                authoring_callers=frozenset({"testclient"}),
+            )
+        )
+    )
+    body = {"name": "role", "value": "physician"}
+    assert allowed.post("/attribute-keys/author", json=body).status_code == 200
+
+    outsider = TestClient(
+        FromHost(create_authority_app("authority-med", frozenset({"role"})), "10.0.0.9")
+    )
+    refused = outsider.post("/attribute-keys/author", json=body)
+    assert refused.status_code == 403
+    assert "key_b64" not in refused.text
 
 
 def test_health(client: TestClient) -> None:

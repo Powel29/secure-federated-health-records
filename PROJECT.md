@@ -281,16 +281,16 @@ than this is the fastest way to lose credibility in the viva.
    This simplification does not weaken the threshold property (the custodian
    holds share 1 only; the audit service still commits before releasing share
    3; the policy engine still gates every read), but it must be stated.
+6. **Deployed expiry does not persist its rotation (ADR-0043/0044/0047).** The
+   timer invalidates emergency search and mirrors its audited state
+   transitions into the store (as a compare-and-set, review N1). Its rotated
+   ciphertext and baseline wrapping are still not persisted: the custodian
+   supplies a throwaway baseline key. Consequently the deployed demo must not
+   claim persisted post-expiry DEK rotation or forward secrecy from that
+   rotation. The unit-tested rotation primitive is distinct from this open
+   storage integration gap (review F9, decision D3).
 
 ---
-
-**Deployed expiry limitation (ADR-0043/0044/0047).** The timer invalidates
-emergency search and the deployment mirrors its audited state transitions into
-the store. Its rotated ciphertext and baseline wrapping are still not persisted:
-the custodian supplies a throwaway baseline key. Consequently the deployed demo
-must not claim persisted post-expiry DEK rotation or forward secrecy from that
-rotation. The unit-tested rotation primitive is distinct from this open storage
-integration gap.
 
 ## 5A. UI decision reversed (ADR-0014)
 

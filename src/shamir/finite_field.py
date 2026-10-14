@@ -1,6 +1,7 @@
 """Finite field arithmetic over prime field GF(P) for Shamir secret sharing (C2).
 
-Uses the 257-bit safe prime P = 2^256 + 297, which is strictly greater than 2^256 - 1,
+Uses the 257-bit prime P = 2^256 + 297 (prime, but not a safe prime), which is
+strictly greater than 2^256 - 1,
 allowing any 256-bit secret block to be embedded directly as a field element.
 """
 

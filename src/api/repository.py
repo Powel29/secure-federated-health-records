@@ -21,6 +21,7 @@ from contracts.enums import LifecycleState
 from contracts.lifecycle import TransitionEvent
 from contracts.records import DEKWrapping, Record
 from federation.discovery import find_record_ids_by_patient
+from lifecycle.exceptions import StateConflictError
 from policy.engine import CompiledPolicy
 from psycopg.types.json import Jsonb
 from storage.policy_codec import decode_policy, encode_policy
@@ -35,6 +36,7 @@ from storage.repositories import (
     has_consumed_id,
     insert_audit_entry,
     insert_dek_wrapping,
+    insert_lifecycle_state,
     insert_record,
     insert_search_term,
     insert_transition_event,
@@ -43,11 +45,11 @@ from storage.repositories import (
 )
 
 
-class StateConflictError(Exception):
-    """A compare-and-set lost: the record's state was not what the caller expected.
+class RecordExistsError(Exception):
+    """An ingest named a ``record_id`` that is already stored (review F4).
 
-    Two concurrent transitions from the same state must not both succeed
-    (review F12). Callers map this to HTTP 409 and never treat it as success.
+    The API maps this to 409. Overwriting would replace the record while its
+    emergency shares still belong to the old one.
     """
 
 
@@ -78,6 +80,15 @@ class StorageRepository(Protocol):
 
     def get_lifecycle_state(self, record_id: str) -> LifecycleState | None:
         """Get the current lifecycle state of a record."""
+        ...
+
+    def insert_lifecycle_state(
+        self,
+        record_id: str,
+        state: LifecycleState,
+        last_event_id: str | None = None,
+    ) -> None:
+        """Create the first state row; raise StateConflictError if one exists."""
         ...
 
     def upsert_lifecycle_state(
@@ -181,6 +192,7 @@ class InMemoryStorageRepository:
         self.wrappings: dict[str, DEKWrapping] = {}
         self.record_wrappings: dict[str, list[DEKWrapping]] = {}
         self.lifecycle_states: dict[str, LifecycleState] = {}
+        self.lifecycle_last_event_ids: dict[str, str | None] = {}
         self.transition_events: dict[str, TransitionEvent] = {}
         self.audit_log: list[AuditEntry] = []
         self.search_index: list[tuple[str, bytes]] = []
@@ -228,8 +240,24 @@ class InMemoryStorageRepository:
         state: LifecycleState,
         last_event_id: str | None = None,
     ) -> None:
+        """Overwrite the state. Test seeding only (review N1)."""
         with self._lock:
             self.lifecycle_states[record_id] = state
+            self.lifecycle_last_event_ids[record_id] = last_event_id
+
+    def insert_lifecycle_state(
+        self,
+        record_id: str,
+        state: LifecycleState,
+        last_event_id: str | None = None,
+    ) -> None:
+        with self._lock:
+            if record_id in self.lifecycle_states:
+                raise StateConflictError(
+                    f"record {record_id!r} already has a lifecycle state"
+                )
+            self.lifecycle_states[record_id] = state
+            self.lifecycle_last_event_ids[record_id] = last_event_id
 
     def transition_lifecycle_state(
         self,
@@ -245,6 +273,7 @@ class InMemoryStorageRepository:
                     f"record {record_id!r} is {current}, expected {expected}"
                 )
             self.lifecycle_states[record_id] = new
+            self.lifecycle_last_event_ids[record_id] = last_event_id
 
     def consume_once(self, kind: str, item_id: UUID) -> bool:
         with self._lock:
@@ -338,7 +367,12 @@ class PostgresStorageRepository:
         return get_record(self._conn, record_id)
 
     def insert_record(self, record: Record) -> None:
-        insert_record(self._conn, record)
+        try:
+            insert_record(self._conn, record)
+        except psycopg.errors.UniqueViolation as exc:
+            raise RecordExistsError(
+                f"record {record.record_id!r} already exists"
+            ) from exc
 
     def get_dek_wrapping(self, wrapping_id: str) -> DEKWrapping | None:
         return get_dek_wrapping(self._conn, wrapping_id)
@@ -379,6 +413,17 @@ class PostgresStorageRepository:
         last_event_id: str | None = None,
     ) -> None:
         upsert_lifecycle_state(self._conn, record_id, state, last_event_id)
+
+    def insert_lifecycle_state(
+        self,
+        record_id: str,
+        state: LifecycleState,
+        last_event_id: str | None = None,
+    ) -> None:
+        if not insert_lifecycle_state(self._conn, record_id, state, last_event_id):
+            raise StateConflictError(
+                f"record {record_id!r} already has a lifecycle state"
+            )
 
     def transition_lifecycle_state(
         self,

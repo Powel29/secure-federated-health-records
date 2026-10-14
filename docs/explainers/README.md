@@ -34,7 +34,7 @@ document (`PROJECT.md`, `ARCHITECTURE.md`, an ADR) or to code you can show.
 | 4 | [04-who-can-read-what.md](04-who-can-read-what.md) | Policy tree, consent gate, patient self-access, why portals never decide | 7 |
 | 5 | [05-audit-chain-search-and-pre.md](05-audit-chain-search-and-pre.md) | Hash chain, emergency-only search, proxy re-encryption | 6 |
 | 6 | [06-traffic-analysis-module.md](06-traffic-analysis-module.md) | The required course module: what we capture and what we assert | 4 |
-| 7 | [07-honest-limits-and-what-we-found.md](07-honest-limits-and-what-we-found.md) | Caveats, plus the three bugs the stress test found and the fixes | 5 |
+| 7 | [07-honest-limits-and-what-we-found.md](07-honest-limits-and-what-we-found.md) | Caveats, the three bugs the stress test found, and what the deployment review fixed | 5 |
 | 8 | [08-demo-script-and-viva-qa.md](08-demo-script-and-viva-qa.md) | A step-by-step demo and 20 likely questions with short answers | 10 |
 | 9 | [09-technical-details.md](09-technical-details.md) | Parameters, protocol, ports, API, tables, tests, ADR index | 8 |
 
