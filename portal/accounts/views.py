@@ -5,9 +5,12 @@ credential -- that is the authority's job (P2-2), stubbed here. So a freshly
 registered account holds no working attribute and can decrypt nothing.
 
 It does not bind an identity either (review F17): the requested ``patient_id``
-or ``clinician_id`` is recorded on the request only. The ``Profile`` that ties
-a login to a subject is created at issuance, by an administrator, so the first
-person to type ``doc-201`` into a form does not become that clinician.
+or ``clinician_id`` is recorded on the request only, so the first person to
+type ``doc-201`` into a form does not become that clinician. The ``Profile``
+that ties a login to a subject belongs to issuance, which is not wired yet
+(``portal_core.stubs.issue_credential`` raises NotWiredYet): until it is, a
+self-registered login stays on the pending page, and only seeded accounts
+(``deploy/seed_portal.py``) reach a portal.
 """
 
 from __future__ import annotations

@@ -133,6 +133,9 @@ class EmergencySession:
     expired_event: TransitionEvent | None = None
     expired_emitted: bool = False
     rebaselined_event: TransitionEvent | None = None
+    # Events already in the audit chain: a retry after a store failure only
+    # repeats the store write, never the append.
+    audited_event_ids: set[str] = field(default_factory=set)
 
     def is_expired(self, now: datetime.datetime) -> bool:
         """Whether ``now`` is at or past ``expires_at`` -- inclusive, fail closed."""
@@ -670,12 +673,15 @@ class EmergencyExpiryManager:
     def _emit(self, event: TransitionEvent, session: EmergencySession) -> None:
         """Audit first, then mirror into the store as a compare-and-set (N1).
 
-        An audit or store failure raises, so the attempt is retried. A state
-        conflict means someone else changed the record's state; overwriting
-        it could undo a revocation, so it is logged and left alone.
+        An audit or store failure raises, so the attempt is retried; an event
+        already appended is not appended again. A state conflict means someone
+        else changed the record's state; overwriting it could undo a
+        revocation, so it is logged and left alone.
         """
-        if self._audit_logger is not None:
+        event_id = str(event.event_id)
+        if self._audit_logger is not None and event_id not in session.audited_event_ids:
             self._audit_logger(self._transition_metadata(event, session))
+            session.audited_event_ids.add(event_id)
         if self._state_writer is None:
             return
         try:

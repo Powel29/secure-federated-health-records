@@ -29,6 +29,8 @@ import base64
 import datetime
 import ipaddress
 import socket
+import threading
+import time
 from typing import Annotated
 
 from authority.exceptions import (
@@ -86,7 +88,13 @@ _CREDENTIAL_ERRORS = (
 
 # Who may call /attribute-keys/author until service authentication exists
 # (review F14 interim; D5-a replaces this with signed request envelopes).
+# Only Compose narrows anything: there each service has its own address. In
+# deploy/run_local every process shares loopback, so this default admits any
+# local caller -- the interim control does not hold in that mode.
 DEFAULT_AUTHORING_CALLERS = frozenset({"127.0.0.1", "::1"})
+
+# How long resolved allowlist hostnames are trusted before resolving again.
+_CALLER_RESOLVE_TTL_SECONDS = 30.0
 
 
 def _resolve_callers(callers: frozenset[str]) -> set[str]:
@@ -104,6 +112,35 @@ def _resolve_callers(callers: frozenset[str]) -> set[str]:
             continue  # an unresolvable name allows nobody
         addresses.update(str(info[4][0]) for info in infos)
     return addresses
+
+
+class _CallerAllowlist:
+    """Allowlist check with hostnames resolved at most once per TTL.
+
+    Not at startup: Compose starts the authorities before the custodian and
+    bootstrap containers exist, so their names do not resolve yet.
+    """
+
+    def __init__(self, callers: frozenset[str]) -> None:
+        self._callers = callers
+        self._lock = threading.Lock()
+        self._addresses: set[str] = set()
+        self._resolved_at: float | None = None
+
+    def allows(self, host: str | None) -> bool:
+        if host is None:
+            return False
+        if host in self._callers:  # literal match: no DNS lookup
+            return True
+        now = time.monotonic()
+        with self._lock:
+            if (
+                self._resolved_at is None
+                or now - self._resolved_at >= _CALLER_RESOLVE_TTL_SECONDS
+            ):
+                self._addresses = _resolve_callers(self._callers)
+                self._resolved_at = now
+            return host in self._addresses
 
 
 def create_authority_app(
@@ -132,6 +169,7 @@ def create_authority_app(
     """
     auth = authority or generate_authority(authority_id, owned_attribute_names)
 
+    caller_allowlist = _CallerAllowlist(authoring_callers)
     app = FastAPI(
         title=f"Attribute Authority Service ({authority_id})",
         description="Federated Break-Glass EHR -- multi-authority attribute issuance",
@@ -285,12 +323,7 @@ def create_authority_app(
         by construction; signed service requests (D5-a) replace the address
         check.
         """
-        caller = request.client.host if request.client else None
-        allowed = caller is not None and (
-            caller in authoring_callers  # literal match: no DNS lookup
-            or caller in _resolve_callers(authoring_callers)
-        )
-        if not allowed:
+        if not caller_allowlist.allows(request.client.host if request.client else None):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="caller is not an allowlisted authoring service",
