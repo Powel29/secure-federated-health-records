@@ -707,7 +707,11 @@ def case_detail(request: Any, pk: int) -> HttpResponse:
                         rid
                         for t in ctx["search_terms"]
                         for rid in services.facility_emergency_search(
-                            case.facility_id, case.record_id, t, case.clinician_id
+                            case.facility_id,
+                            case.record_id,
+                            t,
+                            case.clinician_id,
+                            case.correlation_id,
                         )
                     }
                 )

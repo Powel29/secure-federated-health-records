@@ -15,6 +15,7 @@ from typing import Any
 import httpx
 import psycopg
 from breakglass.emergency_key import generate_emergency_key, split_emergency_key
+from contracts.clinical import ClinicalMetadata
 from contracts.enums import PolicyNodeType
 from contracts.policy import Attribute, PolicyTree
 from crypto_core import (
@@ -24,8 +25,9 @@ from crypto_core import (
     private_key_from_pem,
     private_key_to_pem,
 )
-from identity.certificates import issue_clinician_certificate
+from identity.certificates import issue_clinician_certificate, issue_patient_certificate
 from pre.elgamal import generate_keypair as generate_pre_keypair
+from records.labels import sign_clinical_labels
 from storage.repositories import get_patient, insert_patient
 
 from deploy.run_scenario import ScenarioEndpoints
@@ -407,6 +409,22 @@ def _parse_ca_credentials(ca_data: object) -> tuple[object, object]:
     )
 
 
+def _signed_labels(
+    patient: dict[str, Any], record_id: str, patient_id: str, labels: dict[str, Any]
+) -> dict[str, Any]:
+    """The record's clinical labels, signed by its patient (ADR-0064).
+
+    Unsigned labels would get the strictest disclosure rules at the facility.
+    """
+    return sign_clinical_labels(
+        ClinicalMetadata(**labels),
+        record_id=record_id,
+        patient_id=patient_id,
+        signing_key=patient["private_key"],
+        certificate_pem=patient["certificate_pem"],
+    ).model_dump(mode="json")
+
+
 def seed_synthetic_data(
     endpoints: ScenarioEndpoints,
     config: dict[str, Any] | None = None,
@@ -537,12 +555,21 @@ def seed_synthetic_data(
         # sign consent decisions on their behalf (ADR-0043). Kept in memory
         # only, like every other key here.
         pat_priv, pat_pub = generate_ec_keypair()
+        # The home facility certifies the patient's key (ADR-0064), so a
+        # facility verifies their signatures -- on record labels and consent
+        # decisions -- against a key it trusts, not one a caller supplies.
+        home_ca_priv, home_ca_cert = facility_cas[patient.home_facility]
+        pat_cert = issue_patient_certificate(
+            home_ca_priv, home_ca_cert, patient.patient_id, pat_pub
+        )
         patient_meta[patient.patient_id] = {
             "patient": patient,
             "credentials": [owner_res.json()["credential"]],
             "private_key": pat_priv,
             "public_key": pat_pub,
             "private_key_pem": private_key_to_pem(pat_priv).decode("ascii"),
+            "certificate": pat_cert,
+            "certificate_pem": certificate_to_pem(pat_cert).decode("ascii"),
         }
 
     def get_author_key(
@@ -633,19 +660,26 @@ def seed_synthetic_data(
                 "search_terms": rec.search_terms,
                 "emergency_key_b64": base64.b64encode(emergency_key).decode("ascii"),
                 "record_id": rec.record_id,
-                "clinical": {
-                    "title": rec.title,
-                    "author_id": (
-                        "doc-301"
-                        if rec.record_id == "rec-001"
-                        else ("doc-202" if rec.record_id == "rec-002" else "doc-201")
-                    ),
-                    "clinical_date": rec.payload["encounter_id"][4:14],
-                    "record_type": "clinical_encounter",
-                    "episode_id": rec.payload["encounter_id"],
-                    "source": "hospital",
-                    "care_team_consent": True,
-                },
+                "clinical": _signed_labels(
+                    patient_meta[rec.patient_id],
+                    rec.record_id,
+                    rec.patient_id,
+                    {
+                        "title": rec.title,
+                        "author_id": (
+                            "doc-301"
+                            if rec.record_id == "rec-001"
+                            else (
+                                "doc-202" if rec.record_id == "rec-002" else "doc-201"
+                            )
+                        ),
+                        "clinical_date": rec.payload["encounter_id"][4:14],
+                        "record_type": "clinical_encounter",
+                        "episode_id": rec.payload["encounter_id"],
+                        "source": "hospital",
+                        "care_team_consent": True,
+                    },
+                ),
             },
         )
         ingest_res.raise_for_status()

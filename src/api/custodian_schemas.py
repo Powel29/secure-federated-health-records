@@ -163,7 +163,9 @@ class RevokeConsentPayload(BaseModel):
 
 class SignedGrantResponse(BaseModel):
     grant: ConsentGrant
-    patient_public_key_pem: str
+    # The facility verifies the grant against this certificate's key, never a
+    # bare key a caller could swap for its own (ADR-0064).
+    patient_certificate_pem: str
 
 
 # --- Key-bearing federation calls performed on the subject's behalf ----------
@@ -220,6 +222,9 @@ class BreakglassPayload(BaseModel):
     emergency_duration_seconds: float | None = Field(
         default=None, gt=0, le=_THREE_DAYS_SECONDS
     )
+    # Only join a session that is already open; never open one (used to
+    # authorize writing a note under an emergency).
+    join_only: bool = False
 
 
 class SharePresented(BaseModel):

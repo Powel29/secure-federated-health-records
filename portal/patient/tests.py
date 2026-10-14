@@ -169,7 +169,7 @@ class PatientConsentTests(TestCase):
             custodian_decide_consent=mock.Mock(
                 return_value={
                     "grant": signed_grant("granted"),
-                    "patient_public_key_pem": "PEM",
+                    "patient_certificate_pem": "PEM",
                 }
             ),
             facility_submit_grant=mock.Mock(return_value={"status": "accepted"}),
@@ -196,7 +196,7 @@ class PatientConsentTests(TestCase):
             custodian_decide_consent=mock.Mock(
                 return_value={
                     "grant": signed_grant("granted"),
-                    "patient_public_key_pem": "PEM",
+                    "patient_certificate_pem": "PEM",
                 }
             ),
             facility_submit_grant=mock.Mock(
@@ -225,7 +225,7 @@ class PatientConsentTests(TestCase):
             custodian_revoke_consent=mock.Mock(
                 return_value={
                     "grant": signed_grant("revoked"),
-                    "patient_public_key_pem": "PEM",
+                    "patient_certificate_pem": "PEM",
                 }
             ),
             facility_submit_grant=mock.Mock(return_value={"status": "revoked"}),
@@ -299,7 +299,7 @@ class GuardianConsentTests(TestCase):
             custodian_decide_consent=mock.Mock(
                 return_value={
                     "grant": signed_grant("granted"),
-                    "patient_public_key_pem": "PEM",
+                    "patient_certificate_pem": "PEM",
                 }
             ),
             facility_submit_grant=mock.Mock(return_value={"status": "accepted"}),

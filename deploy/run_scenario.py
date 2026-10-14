@@ -43,6 +43,7 @@ from api.audit_client import _tls_verify
 from breakglass import create_emergency_assertion
 from breakglass.emergency_key import generate_emergency_key, split_emergency_key
 from contracts.base import GCM_NONCE_BYTES
+from contracts.clinical import ClinicalMetadata
 from contracts.enums import PolicyNodeType, ReasonCode
 from contracts.policy import Attribute, PolicyTree
 from crypto_core import (
@@ -53,9 +54,13 @@ from crypto_core import (
     private_key_to_pem,
 )
 from crypto_core.symmetric import aes_gcm_decrypt
-from identity.certificates import issue_clinician_certificate
+from identity.certificates import (
+    issue_clinician_certificate,
+    issue_patient_certificate,
+)
 from pre.elgamal import decapsulate_key
 from pre.elgamal import generate_keypair as generate_pre_keypair
+from records.labels import sign_clinical_labels
 
 from deploy.config import configure_transport, tls_enabled
 
@@ -191,6 +196,13 @@ def run_scenario(
     )
     carol_cert_pem = certificate_to_pem(carol_cert).decode("ascii")
     carol_pre_priv, carol_pre_pub = generate_pre_keypair()
+
+    # Patient pat-101, certified by home Facility A, signs the record's
+    # clinical labels; unsigned labels would get the strictest rules (ADR-0064).
+    pat_priv, pat_pub = generate_ec_keypair()
+    pat_cert_pem = certificate_to_pem(
+        issue_patient_certificate(fa_ca_priv, fa_ca_cert, "pat-101", pat_pub)
+    ).decode("ascii")
 
     # Lifecycle signing key for Facility B
     life_priv, life_pub = generate_ec_keypair()
@@ -329,6 +341,13 @@ def run_scenario(
             "search_terms": ["cardiac", "infarction", "aspirin"],
             "emergency_key_b64": base64.b64encode(emergency_key).decode("ascii"),
             "record_id": record_id,
+            "clinical": sign_clinical_labels(
+                ClinicalMetadata(),
+                record_id=record_id,
+                patient_id="pat-101",
+                signing_key=pat_priv,
+                certificate_pem=pat_cert_pem,
+            ).model_dump(mode="json"),
         },
     )
     ingest_res.raise_for_status()

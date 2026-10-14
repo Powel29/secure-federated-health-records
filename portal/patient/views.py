@@ -25,6 +25,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 from portal_core import notify, policies, services, store_reader
 from portal_core.access import role_required
+from portal_core.clinical import latest_local_date
 from portal_core.services import ServiceError
 
 from accounts.models import (
@@ -233,7 +234,7 @@ def decide(request: Any, request_id: str) -> HttpResponse:
         services.facility_submit_grant(
             row.requester_facility_id or _first_facility(row),
             grant=signed["grant"],
-            patient_public_key_pem=signed["patient_public_key_pem"],
+            patient_certificate_pem=signed["patient_certificate_pem"],
         )
     except ServiceError as exc:
         messages.error(request, f"Decision not recorded — {exc.service}: {exc.detail}")
@@ -287,7 +288,7 @@ def revoke(request: Any, request_id: str) -> HttpResponse:
         services.facility_submit_grant(
             row.requester_facility_id or _first_facility(row),
             grant=signed["grant"],
-            patient_public_key_pem=signed["patient_public_key_pem"],
+            patient_certificate_pem=signed["patient_certificate_pem"],
         )
     except ServiceError as exc:
         messages.error(
@@ -621,7 +622,7 @@ def upload(request: Any) -> HttpResponse:
             if request.POST.get("clinical_date")
             else None
         )
-        if clinical_date and clinical_date > dj_tz.now().date():
+        if clinical_date and clinical_date > latest_local_date():
             raise ValueError("Clinical date cannot be in the future")
     except ValueError as exc:
         ctx["error"] = str(exc)

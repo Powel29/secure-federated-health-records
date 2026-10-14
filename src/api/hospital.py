@@ -86,18 +86,19 @@ from consent.service import (
 from contracts.enums import ConsentStatus, LifecycleState
 from crypto_core import (
     certificate_from_pem,
+    certificate_public_key,
     private_key_from_pem,
-    public_key_from_pem,
 )
 from crypto_core.exceptions import (
     CertificateExpiredError,
     InvalidSignatureError,
     KeyFormatError,
 )
-from crypto_core.types import ECPrivateKey
+from crypto_core.types import ECPrivateKey, ECPublicKey
 from cryptography.x509 import Certificate
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
+from identity import PatientCertificateError, validate_patient_certificate
 from identity.exceptions import ChainValidationError
 from lifecycle.exceptions import (
     EmergencySessionExpiredError,
@@ -115,6 +116,12 @@ from records.exceptions import (
     UnwrappingError,
 )
 from records.ingest import ingest_record
+from records.labels import (
+    LabelTrust,
+    LabelVerificationError,
+    disclosure_rules,
+    verify_clinical_labels,
+)
 from records.revocation import (
     check_revocation_authorization,
     revoke_record_access,
@@ -483,6 +490,60 @@ def create_hospital_app(
         expiry_manager.attach_state_writer(repo.transition_lifecycle_state)
     # Backed by the store so a facility restart does not re-open replay (F22).
     consumed_assertions = ConsumedAssertionIds(backend=repo)
+    # Clinical labels are trusted only when their patient signature verifies
+    # against these anchors; otherwise the strictest rules apply (ADR-0064).
+    label_trust = (
+        LabelTrust(
+            facility_cas=trust.facility_cas,
+            trusted_root=trust.root,
+            revoked_serials=trust.revoked_serials,
+        )
+        if trust is not None
+        else None
+    )
+
+    def patient_key(certificate_pem: str | None, patient_id: str) -> ECPublicKey:
+        """``patient_id``'s key from a certificate a configured CA issued.
+
+        Never a key the caller supplies (ADR-0064): a forger would sign with
+        their own and send that.
+        """
+        if trust is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="consent verification needs configured trust anchors",
+            )
+        if not certificate_pem:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="patient_certificate_pem required to verify consent grant",
+            )
+        try:
+            certificate = certificate_from_pem(certificate_pem.encode("utf-8"))
+        except KeyFormatError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid patient certificate PEM: {exc}",
+            ) from exc
+        try:
+            validate_patient_certificate(
+                certificate,
+                patient_id=patient_id,
+                facility_cas=trust.facility_cas,
+                trusted_root=trust.root,
+                revoked_serials=trust.revoked_serials,
+            )
+        except (
+            ChainValidationError,
+            CertificateExpiredError,
+            PatientCertificateError,
+        ) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Patient certificate refused: {exc}",
+            ) from exc
+        return certificate_public_key(certificate)
+
     audit_key: ECPrivateKey | None = (
         private_key_from_pem(audit_signing_key_pem.encode("utf-8"))
         if audit_signing_key_pem
@@ -556,8 +617,11 @@ def create_hospital_app(
             )
 
         wrapping = repo.get_wrapping_for_record(record_id, wrapped_for=record.policy_id)
+        # Only patient-signed labels can relax this; unsigned or tampered
+        # labels require consent (ADR-0064).
+        rules = disclosure_rules(record, label_trust)
         if (
-            (record.clinical.care_team_consent or record.clinical.source != "unknown")
+            rules.consent_for_read
             and payload.requester_id != record.patient_id
             and payload.grant is None
         ):
@@ -597,20 +661,9 @@ def create_hospital_app(
 
         # 1. If a consent grant is provided, read under the consent gate
         if payload.grant is not None:
-            if not payload.patient_public_key_pem:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="patient_public_key_pem required to verify consent grant",
-                )
-            try:
-                patient_pub = public_key_from_pem(
-                    payload.patient_public_key_pem.encode("utf-8")
-                )
-            except KeyFormatError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid patient public key PEM: {exc}",
-                ) from exc
+            patient_pub = patient_key(
+                payload.patient_certificate_pem, record.patient_id
+            )
 
             access_via = ACCESS_VIA_CONSENT
             try:
@@ -622,7 +675,18 @@ def create_hospital_app(
                         and decision.grantee_id == payload.requester_id
                         and decision.status == ConsentStatus.REVOKED
                     ):
-                        verify_consent_grant(decision, patient_pub)
+                        try:
+                            verify_consent_grant(decision, patient_pub)
+                        except InvalidSignatureError:
+                            # Not signed by this patient, so not a revocation of
+                            # theirs: skip it rather than fail the read with 500.
+                            _logger.error(
+                                "stored revocation %s for record %s does not "
+                                "verify; ignoring it",
+                                decision.grant_id,
+                                record_id,
+                            )
+                            continue
                         raise ConsentRevokedError(
                             "A stored patient revocation supersedes this grant"
                         )
@@ -798,15 +862,9 @@ def create_hospital_app(
         repo: RepoDep,
     ) -> ConsentResponse:
         """Submit and verify a patient-signed ConsentGrant."""
-        try:
-            patient_pub = public_key_from_pem(
-                payload.patient_public_key_pem.encode("utf-8")
-            )
-        except KeyFormatError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid patient public key PEM: {exc}",
-            ) from exc
+        patient_pub = patient_key(
+            payload.patient_certificate_pem, payload.grant.patient_id
+        )
 
         try:
             verify_consent_grant(payload.grant, patient_pub)
@@ -1165,9 +1223,18 @@ def create_hospital_app(
                 f"Emergency assertion not valid for this record: {reason}",
             )
 
+        # Requirements come from patient-signed labels only; unsigned or
+        # tampered labels get every requirement (ADR-0064).
+        rules = disclosure_rules(record, label_trust)
+        if not rules.labels_verified and record.clinical.signature is not None:
+            _logger.error(
+                "record %s labels do not verify; applying the strictest rules: %s",
+                record_id,
+                rules.reason,
+            )
         if (
-            record.clinical.source != "unknown"
-            or record.clinical.sensitivity != "general"
+            rules.clinical_justification
+            or rules.sensitive_justification
             or payload.assertion.clinical_context_digest
         ):
             try:
@@ -1179,10 +1246,7 @@ def create_hospital_app(
                 )
             except ValueError as exc:
                 raise deny("clinical_context", str(exc), 403, str(exc)) from exc
-            if (
-                record.clinical.source != "unknown"
-                and len(payload.justification.strip()) < 20
-            ):
+            if rules.clinical_justification and len(payload.justification.strip()) < 20:
                 raise deny(
                     "clinical_context",
                     "clinical necessity required",
@@ -1190,7 +1254,7 @@ def create_hospital_app(
                     "Explain the immediate clinical need (at least 20 characters)",
                 )
         if (
-            record.clinical.sensitivity != "general"
+            rules.sensitive_justification
             and len(payload.sensitive_justification.strip()) < 20
         ):
             raise deny(
@@ -1311,6 +1375,15 @@ def create_hospital_app(
                 correlation_id=corr_id,
                 expires_at=session_expires_at,
                 message="Joined the open emergency session; DEK re-wrapped",
+            )
+
+        if payload.join_only:
+            reason = "no open emergency session to join for this record"
+            raise deny(
+                DENIED_BY_BREAKGLASS_TRANSITION,
+                reason,
+                status.HTTP_409_CONFLICT,
+                reason,
             )
 
         # 5. Claim the state (N1, F7): of two concurrent opens exactly one wins.
@@ -1585,6 +1658,17 @@ def create_hospital_app(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Ingest failed: {exc}",
             ) from exc
+
+        # Signed labels must verify before they are stored; unsigned labels are
+        # stored as they are and get the strictest rules (ADR-0064).
+        if result.record.clinical.signature is not None and label_trust is not None:
+            try:
+                verify_clinical_labels(result.record, label_trust)
+            except LabelVerificationError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Ingest refused: {exc}",
+                ) from exc
 
         try:
             repo.insert_record(result.record)

@@ -44,9 +44,12 @@ class ReadRecordRequest(BaseModel):
         default=None,
         description="Optional patient-signed ConsentGrant for consent gate",
     )
-    patient_public_key_pem: str | None = Field(
+    patient_certificate_pem: str | None = Field(
         default=None,
-        description="PEM-encoded EC public key of patient to verify grant",
+        description=(
+            "Patient certificate (PEM) from a configured facility CA; the grant "
+            "is verified against its key, never a caller-supplied one (ADR-0064)"
+        ),
     )
     correlation_id: str | None = Field(
         default=None,
@@ -86,9 +89,9 @@ class SubmitConsentGrantPayload(BaseModel):
     """Request body submitting a patient-signed ConsentGrant."""
 
     grant: ConsentGrant
-    patient_public_key_pem: str = Field(
+    patient_certificate_pem: str = Field(
         ...,
-        description="PEM-encoded ECDSA public key of the patient",
+        description="Patient certificate (PEM) from a configured facility CA",
     )
 
 
@@ -207,6 +210,10 @@ class BreakglassUnlockRequest(BaseModel):
             "Optional shorter session in seconds; never longer than the "
             "facility's configured duration (F6)"
         ),
+    )
+    join_only: bool = Field(
+        default=False,
+        description="Refuse (409) unless the record is already emergency_open",
     )
 
 

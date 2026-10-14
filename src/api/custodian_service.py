@@ -61,6 +61,7 @@ from contracts import AttributeCredential, AuditEntry, Record, TransitionEvent
 from contracts.enums import ConsentStatus, PolicyNodeType
 from contracts.policy import PolicyTree
 from crypto_core import (
+    certificate_from_pem,
     private_key_from_pem,
     public_key_from_pem,
     public_key_to_pem,
@@ -78,6 +79,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from pre.exceptions import PREError
 from pydantic import ValidationError
 from records.exceptions import DecryptionError
+from records.labels import LabelTrust, disclosure_rules, sign_clinical_labels
 
 from api.custodian_schemas import (
     BreakglassPayload,
@@ -293,6 +295,34 @@ def _raise_upstream(resp: httpx.Response, *, what: str) -> None:
     raise HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
         detail=f"{what} failed upstream ({resp.status_code}): {detail}",
+    )
+
+
+def _patient_certificate(material: SubjectMaterial) -> str:
+    """The patient's certificate, which a facility verifies their signature by.
+
+    Raises:
+        HTTPException: 403 if the patient holds none -- a signature nobody can
+            verify is worthless (ADR-0064).
+    """
+    if not material.certificate_pem:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="patient holds no certificate; their signature cannot be verified",
+        )
+    return material.certificate_pem
+
+
+def _label_trust(vault: CustodianVault) -> LabelTrust | None:
+    """The vault's trust anchors, to judge a record's labels as a facility does."""
+    if not vault.root_certificate_pem:
+        return None
+    return LabelTrust(
+        facility_cas={
+            fid: certificate_from_pem(pem.encode("ascii"))
+            for fid, pem in vault.facility_ca_certificate_pems.items()
+        },
+        trusted_root=certificate_from_pem(vault.root_certificate_pem.encode("ascii")),
     )
 
 
@@ -674,6 +704,7 @@ def create_custodian_app(
                     f"{payload.request.patient_id!r}, not {subject_id!r}"
                 ),
             )
+        certificate_pem = _patient_certificate(material)
         grant = create_consent_grant(
             request=payload.request,
             status=ConsentStatus(payload.status),
@@ -681,12 +712,7 @@ def create_custodian_app(
             patient_signing_key=material.signing_key,
             ttl=datetime.timedelta(days=payload.ttl_days),
         )
-        return SignedGrantResponse(
-            grant=grant,
-            patient_public_key_pem=public_key_to_pem(
-                material.signing_key.public_key()
-            ).decode("ascii"),
-        )
+        return SignedGrantResponse(grant=grant, patient_certificate_pem=certificate_pem)
 
     @app.post(
         "/subjects/{subject_id}/consent/revoke", response_model=SignedGrantResponse
@@ -702,14 +728,12 @@ def create_custodian_app(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="only the granting patient can revoke this grant",
             )
+        certificate_pem = _patient_certificate(material)
         revoked = revoke_consent_grant(
             prior_grant=payload.prior_grant, patient_signing_key=material.signing_key
         )
         return SignedGrantResponse(
-            grant=revoked,
-            patient_public_key_pem=public_key_to_pem(
-                material.signing_key.public_key()
-            ).decode("ascii"),
+            grant=revoked, patient_certificate_pem=certificate_pem
         )
 
     # --- Key-bearing federation calls ---------------------------------------
@@ -753,9 +777,7 @@ def create_custodian_app(
                     ),
                 )
             body["grant"] = payload.grant.model_dump(mode="json")
-            body["patient_public_key_pem"] = public_key_to_pem(
-                patient.signing_key.public_key()
-            ).decode("ascii")
+            body["patient_certificate_pem"] = _patient_certificate(patient)
             access_via = "consent"
 
         data = _post(
@@ -821,8 +843,14 @@ def create_custodian_app(
             elif payload.emergency is not None:
                 if payload.emergency.patient_id != payload.patient_id:
                     raise HTTPException(403, "Emergency belongs to another patient")
+                # Writing a note may join the patient's open emergency, never
+                # open a new one as a side effect (the facility refuses, 409).
                 declare_breakglass(
-                    subject_id, payload.emergency, vault, endpoints, http
+                    subject_id,
+                    payload.emergency.model_copy(update={"join_only": True}),
+                    vault,
+                    endpoints,
+                    http,
                 )
             else:
                 raise HTTPException(
@@ -881,6 +909,21 @@ def create_custodian_app(
         emergency = provision_emergency_key()
         share1, share3 = emergency.clinician_share, emergency.audit_share
 
+        # The patient signs the labels, bound to this record (ADR-0064), so a
+        # store write cannot loosen them; without a certificate they go unsigned
+        # and the facility applies the strictest rules.
+        clinical = payload.clinical.model_copy(
+            update={"author_id": author_id, "source": source}
+        )
+        if material.certificate_pem:
+            clinical = sign_clinical_labels(
+                clinical,
+                record_id=record_id,
+                patient_id=subject_id,
+                signing_key=material.signing_key,
+                certificate_pem=material.certificate_pem,
+            )
+
         # Ingest first (review F4): a duplicate record_id is refused by the
         # facility (409) before any share is deposited, so an existing
         # record's shares can never be replaced by a failed upload.
@@ -897,9 +940,7 @@ def create_custodian_app(
                 "emergency_key_b64": base64.b64encode(emergency.key).decode("ascii"),
                 "content_type": payload.content_type,
                 "record_id": record_id,
-                "clinical": payload.clinical.model_copy(
-                    update={"author_id": author_id, "source": source}
-                ).model_dump(mode="json"),
+                "clinical": clinical.model_dump(mode="json"),
             },
             what="record ingest",
         )
@@ -986,14 +1027,13 @@ def create_custodian_app(
             if target_record.patient_id != payload.patient_id:
                 raise HTTPException(403, "record belongs to another patient")
             facility_id = target_record.facility_id
-            if (
-                target_record.clinical.source != "unknown"
-                and len(payload.justification.strip()) < 20
-            ):
+            # Unsigned or unverifiable labels get every requirement (ADR-0064).
+            rules = disclosure_rules(target_record, _label_trust(vault))
+            if rules.clinical_justification and len(payload.justification.strip()) < 20:
                 raise HTTPException(
                     403, "Explain the immediate clinical need (at least 20 characters)"
                 )
-            if target_record.clinical.sensitivity != "general":
+            if rules.sensitive_justification:
                 if len(payload.sensitive_justification.strip()) < 20:
                     raise HTTPException(
                         403,
@@ -1056,10 +1096,7 @@ def create_custodian_app(
                     "sensitive_justification_digest": justification_digest(
                         payload.sensitive_justification
                     ),
-                    "restricted": bool(
-                        target_record
-                        and target_record.clinical.sensitivity != "general"
-                    ),
+                    "restricted": bool(target_record and rules.sensitive_justification),
                 },
                 "actor_id": SHARE_HOLDER_AUDIT,
                 "correlation_id": corr_id,
@@ -1114,6 +1151,7 @@ def create_custodian_app(
                 "correlation_id": corr_id,
                 "baseline_wrapping_key_b64": unlock_material.baseline_wrapping_key_b64,
                 "emergency_duration_seconds": payload.emergency_duration_seconds,
+                "join_only": payload.join_only,
                 "sensitive_justification": payload.sensitive_justification,
                 "justification": payload.justification,
             },

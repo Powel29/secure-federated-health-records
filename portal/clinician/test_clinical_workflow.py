@@ -74,7 +74,7 @@ class ClinicalWorkflowTests(TestCase):
             for rid in ("rec-001", "rec-002", "rec-003")
         ]
         search = mock.Mock(
-            side_effect=lambda f, r, t, c: [r] if t == "penicillin" else []
+            side_effect=lambda f, r, t, c, corr: [r] if t == "penicillin" else []
         )
         with (
             mock.patch("clinician.views._discover", return_value=records),
