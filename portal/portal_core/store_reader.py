@@ -11,6 +11,7 @@ signatures, ``coded_term``. Sizes and hashes only.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from django.db import connections
@@ -40,7 +41,12 @@ def _rows(
     with connections["store"].cursor() as cur:
         cur.execute(query, params)
         cols = [c[0] for c in cur.description]
-        return [dict(zip(cols, row, strict=True)) for row in cur.fetchall()]
+        rows = [dict(zip(cols, row, strict=True)) for row in cur.fetchall()]
+    # Django's psycopg backend hands jsonb back as text; callers expect a dict.
+    for row in rows:
+        if isinstance(row.get("clinical"), str):
+            row["clinical"] = json.loads(row["clinical"])
+    return rows
 
 
 def _one(

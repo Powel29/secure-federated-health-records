@@ -241,7 +241,7 @@ class BreakglassTests(TestCase):
         self.assertEqual(resp.status_code, 400)
         m["custodian_breakglass"].assert_not_called()
 
-    def test_successful_breakglass_creates_case_notifies_patient_shows_payload_once(
+    def test_successful_breakglass_creates_case_notifies_patient_shows_payload(
         self,
     ) -> None:
         audit = AuditLog()
@@ -276,7 +276,7 @@ class BreakglassTests(TestCase):
                 },
             )
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, "Penicillin")  # shown on this response only
+        self.assertContains(resp, "Penicillin")
         self.assertEqual(resp["Cache-Control"], "no-store")
         # The assertion binds the identified patient and lookup correlation id.
         kwargs = m["custodian_breakglass"].call_args.kwargs
@@ -293,17 +293,24 @@ class BreakglassTests(TestCase):
         self.assertEqual(
             audit.of_type("patient.notification")[0]["event_data"]["kind"], "breakglass"
         )
-        # Reloading the case never shows the payload again.
+        # Opening the case again shows the record through a fresh audited join.
         with (
-            patched(custodian_subject=mock.Mock(return_value=SUBJECT_CLINICIAN)),
+            patched(
+                custodian_subject=mock.Mock(return_value=SUBJECT_CLINICIAN),
+                custodian_breakglass=mock.Mock(return_value={**UNLOCK, "joined": True}),
+            ) as again_m,
             mock.patch(
                 "portal_core.store_reader.audit_by_correlation", return_value=[]
             ),
         ):
             again = self.client.get(f"/clinician/cases/{case.pk}/")
         self.assertEqual(again.status_code, 200)
-        self.assertNotContains(again, "Penicillin")
+        self.assertContains(again, "Penicillin")
         self.assertContains(again, "Threshold collection")
+        self.assertEqual(
+            again_m["custodian_breakglass"].call_args.kwargs["correlation_id"],
+            case.correlation_id,
+        )
 
     def test_failed_unlock_is_recorded_as_failed_closed_and_nobody_is_notified(
         self,
@@ -384,8 +391,8 @@ class BreakglassTests(TestCase):
         self.assertEqual(case.status, CaseStatus.EXPIRED)
 
 
-class ViewAgainTests(TestCase):
-    """Re-reading must use the custodian and stay inside the existing window."""
+class ViewOnOpenTests(TestCase):
+    """Opening a live case shows the record through the custodian, every time."""
 
     def setUp(self) -> None:
         self.client.force_login(clinician())
@@ -413,22 +420,15 @@ class ViewAgainTests(TestCase):
             mock.patch("portal_core.store_reader.audit_by_correlation", return_value=[])
         )
 
-    def test_live_view_uses_custodian_without_extending_or_persisting_payload(
+    def test_opening_a_live_case_shows_the_record_without_persisting_it(
         self,
     ) -> None:
         before = BreakglassCase.objects.values().get(pk=self.case.pk)
-        page = self.client.get(self.url)
-        self.assertContains(page, "View record again")
-        self.assertNotContains(page, "Penicillin")
-        self.services["custodian_breakglass"].assert_not_called()
-
-        # Submitted identifiers cannot override the case's patient or clinician.
-        response = self.client.post(
-            self.url,
-            {"action": "view", "patient_id": "pat-other", "record_id": "rec-other"},
-        )
-        self.assertContains(response, "Penicillin")
-        self.assertEqual(response["Cache-Control"], "no-store")
+        page = self.client.get(self.url, {"patient_id": "pat-other"})
+        self.assertContains(page, "Penicillin")
+        self.assertNotContains(page, "View record again")
+        self.assertEqual(page["Cache-Control"], "no-store")
+        # Query parameters cannot override the case's patient or clinician.
         self.services["custodian_breakglass"].assert_called_once_with(
             self.case.clinician_id,
             patient_id=self.case.patient_id,
@@ -445,27 +445,59 @@ class ViewAgainTests(TestCase):
         self.assertFalse(PatientNotification.objects.exists())
         self.assertNotIn("Penicillin", str(dict(self.client.session)))
         self.assertNotIn(UNLOCK["plaintext_b64"], str(dict(self.client.session)))
-        self.assertNotContains(self.client.get(self.url), "Penicillin")
-        self.assertEqual(self.services["custodian_breakglass"].call_count, 1)
+        # Every load is its own audited join; nothing is cached between them.
+        self.assertContains(self.client.get(self.url), "Penicillin")
+        self.assertEqual(self.services["custodian_breakglass"].call_count, 2)
 
-    def test_elapsed_window_is_refused_before_contacting_custodian(self) -> None:
+    def test_binary_records_are_embedded_or_downloaded_never_dumped_as_text(
+        self,
+    ) -> None:
+        pdf = b"%PDF-1.3 synthetic test document"
+        html = b"<script>alert(1)</script>"
+        cases = {
+            "application/pdf": (
+                pdf,
+                '<iframe class="record-embed" src="data:application/pdf;base64,',
+            ),
+            "image/png": (
+                b"PNG synthetic",
+                '<img class="record-embed-image" src="data:image/png;base64,',
+            ),
+            # Text types stay escaped text; other binaries become a download.
+            "text/html; charset=utf-8": (html, "&lt;script&gt;alert(1)&lt;/script&gt;"),
+            "application/zip": (b"PK zip", "data:application/octet-stream;base64,"),
+        }
+        for content_type, (payload, expected) in cases.items():
+            with self.subTest(content_type):
+                self.services["custodian_breakglass"].return_value = {
+                    **UNLOCK,
+                    "joined": True,
+                    "content_type": content_type,
+                    "plaintext_b64": base64.b64encode(payload).decode(),
+                }
+                page = self.client.get(self.url)
+                self.assertContains(page, expected)
+                self.assertNotContains(page, "%PDF-1.3")
+                self.assertNotContains(page, "<script>alert(1)</script>")
+                if not content_type.startswith("text/"):
+                    self.assertNotContains(page, '<pre class="plaintext">')
+
+    def test_elapsed_window_shows_no_record_and_skips_the_custodian(self) -> None:
         self.case.expires_at = timezone.now() - timedelta(seconds=1)
         self.case.save(update_fields=["expires_at"])
-        response = self.client.post(self.url, {"action": "view"})
-        self.assertContains(response, "The window has closed", status_code=409)
-        self.assertNotContains(response, "Penicillin", status_code=409)
+        response = self.client.get(self.url)
+        self.assertNotContains(response, "Penicillin")
         self.services["custodian_breakglass"].assert_not_called()
         self.case.refresh_from_db()
         self.assertEqual(self.case.status, CaseStatus.EXPIRED)
 
-    def test_closed_cases_are_refused_even_with_a_future_expiry(self) -> None:
+    def test_closed_cases_show_no_record_even_with_a_future_expiry(self) -> None:
         for status in (CaseStatus.EXPIRED, CaseStatus.FAILED):
             with self.subTest(status=status):
                 self.case.status = status
                 self.case.save(update_fields=["status"])
-                response = self.client.post(self.url, {"action": "view"})
-                self.assertContains(response, "The window has closed", status_code=409)
-                self.assertNotContains(response, "Penicillin", status_code=409)
+                response = self.client.get(self.url)
+                self.assertNotContains(response, "Penicillin")
                 self.services["custodian_breakglass"].assert_not_called()
 
     def test_upstream_denial_or_outage_shows_no_plaintext(self) -> None:
@@ -477,14 +509,14 @@ class ViewAgainTests(TestCase):
                 self.services["custodian_breakglass"].side_effect = refuse(
                     status, detail
                 )
-                response = self.client.post(self.url, {"action": "view"})
+                response = self.client.get(self.url)
                 self.assertContains(response, detail, status_code=status)
                 self.assertNotContains(response, "Penicillin", status_code=status)
                 self.assertFalse(PatientNotification.objects.exists())
 
     def test_another_clinician_cannot_view_the_case(self) -> None:
         self.client.force_login(clinician("other", "doc-other"))
-        response = self.client.post(self.url, {"action": "view"})
+        response = self.client.get(self.url)
         self.assertEqual(response.status_code, 404)
         self.services["custodian_breakglass"].assert_not_called()
 

@@ -1,4 +1,6 @@
-{% extends "base.html" %}{% block content %}<section class="card"><h1>Adjudicate {{ case.case_number }}</h1>
+{% extends "base.html" %}
+{% block title %}Case adjudication · {{ product_name }}{% endblock %}
+{% block content %}<section class="card"><h1>Adjudicate {{ case.case_number }}</h1>
 <p>Clinician {{ case.clinician_id }} · patient {{ case.patient_id }} · record {{ case.record_id }}</p><p>Reason: {{ case.reason_code }}</p><blockquote>{{ case.justification }}</blockquote><blockquote>{{ case.sensitive_justification }}</blockquote>
 <p>Justification matches audit commitment: {{ justification_verified|yesno:"Yes,No" }}</p>
 {% if error %}<p role="alert">{{ error }}</p>{% endif %}

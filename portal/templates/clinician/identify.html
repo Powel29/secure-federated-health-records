@@ -44,7 +44,7 @@
       {% empty %}
         <p class="empty mt-2">No directory match. The miss is in the chain (<span class="cid">{{ correlation_id }}</span>); nothing was carried forward. Check the spelling and date of birth.</p>
       {% endfor %}
-      {% if candidates|length > 1 %}<div class="notice notice-info small mt-3" role="status">{% include "_icon.html" with name="alert" %}<div><strong>Ambiguous match:</strong> {{ candidates|length }} people share this name and date of birth. All are shown; you must choose. The portal never picks for you.</div></div>{% endif %}
+      {% if candidates|length > 1 %}<div class="notice notice-info small mt-3" role="status">{% include "_icon.html" with name="alert" %}<div><strong>Ambiguous match:</strong> {{ candidates|length }} people match this search, including close spellings and aliases. All are shown; you must choose. The portal never picks for you.</div></div>{% endif %}
     </div>
     {% endif %}
   </section>

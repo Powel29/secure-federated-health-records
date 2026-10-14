@@ -20,7 +20,8 @@ An encounter retains the identified patient across records. Unidentified arrival
 receive a temporary encounter identifier; resolving it requires an explicit,
 audited identity confirmation and never guesses or merges historical records.
 Guardian and next-of-kin relationships are separate: contact status alone grants
-no signing authority. Downtime documentation cannot release encrypted records;
+no signing authority (amended by ADR-0061: a verified guardian or parent may
+decide consent for a minor). Downtime documentation cannot release encrypted records;
 staff use local emergency procedures and reconcile events after audit recovery.
 
 The default clinical window is four hours. Short windows must be requested

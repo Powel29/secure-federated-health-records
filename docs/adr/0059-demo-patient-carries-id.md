@@ -25,6 +25,13 @@ opened.
 - The limitation is real and common in emergency departments; it must appear
   in the paper's limitations, not only in the docs.
 
+## Amendment — 2026-10-14
+
+ADR-0060 added a temporary encounter identifier for unidentified arrivals, so
+the John Doe *encounter* now exists. The limitation stands for history: no
+record can be opened until identity is confirmed and the encounter linked,
+and the paper still says the scenario assumes identification.
+
 ## Alternatives considered
 
 - **Build the John Doe flow** — needs re-binding assertions to a later

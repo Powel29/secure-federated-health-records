@@ -20,8 +20,8 @@ The clinical review flagged both as the wrong way round.
   matching `create_emergency_assertion`'s own default. The custodian's
   `assertion_ttl_seconds` carries the same bound.
 - The session window stays separate configuration. The facility default is
-  **4 hours** (an emergency encounter) for the paper; the demo paths keep
-  setting 120 s. The 3-day cap on the requested window (ADR-0049) and the rule
+  **4 hours** (an emergency encounter) everywhere, including Compose and
+  `run_portal_demo`; a timer demo sets 60–120 s explicitly (ADR-0060). The 3-day cap on the requested window (ADR-0049) and the rule
   that a caller can only shorten the configured window are unchanged.
 
 ## Consequences
@@ -30,7 +30,11 @@ The clinical review flagged both as the wrong way round.
   consumed (`tests/security/test_phase3_assertion_security.py`).
 - A deployment that omits `EMERGENCY_DURATION_SECONDS` now gets a 4-hour
   window instead of 15 minutes; the forced rotation fires later. Compose and
-  `run_portal_demo` still set 120 s explicitly.
+  `run_portal_demo` default to the same 4 hours; set
+  `EMERGENCY_DURATION_SECONDS` to see expiry live.
+- The portal requests a 120 s assertion (`ASSERTION_TTL_SECONDS`) and shows
+  that same value on the break-glass page; the custodian refuses more than
+  15 minutes.
 
 ## Alternatives considered
 

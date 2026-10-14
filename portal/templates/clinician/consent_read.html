@@ -19,9 +19,9 @@
       <strong>Refused — {{ denied }}</strong>
       <div class="small mt-2">A grant is necessary, not sufficient: the facility verified the patient signature and then ran the policy tree with your attribute keys. Whichever check failed, nothing was decrypted and the denial is in the chain. <span class="cid">{{ correlation_id }}</span></div>
     </div></div>
-  {% elif plaintext %}
+  {% elif plaintext or record_uri %}
     <div class="flex between"><span class="tag tag-ok">{% include "_icon.html" with name="check" %}Decrypted for this request only</span><span class="tiny text-muted mono">{{ attributes_presented|join:", " }} · <span class="cid">{{ correlation_id }}</span></span></div>
-    <pre class="plaintext">{{ plaintext }}</pre>
+    {% include "clinician/_record_body.html" %}
   {% else %}
     <form method="post" class="flex" style="align-items:flex-end">
       {% csrf_token %}

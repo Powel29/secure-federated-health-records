@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import unicodedata
-from difflib import SequenceMatcher
+from difflib import SequenceMatcher, get_close_matches
 from typing import Any
 
 
@@ -36,6 +36,39 @@ def name_matches(query: str, candidate: str) -> bool:
             query == candidate or SequenceMatcher(None, query, candidate).ratio() >= 0.8
         )
     )
+
+
+# Spelling variants and true synonyms only, never drug classes: a token matches
+# a term exactly as indexed, so a query asks for every spelling (ADR-0061).
+_SYNONYMS = [
+    {"haemorrhage", "hemorrhage", "bleeding"},
+    {"anaesthesia", "anesthesia"},
+    {"oedema", "edema"},
+    {"anaemia", "anemia"},
+    {"penicillin", "penicillins"},
+    {"anaphylaxis", "anaphylactic"},
+    {"stemi", "infarction", "myocardial infarction", "heart attack"},
+    {"diabetes", "diabetic"},
+    {"anticoagulant", "anticoagulation"},
+    {"seizure", "seizures", "epilepsy"},
+]
+SEARCH_VOCABULARY = sorted(
+    {term for group in _SYNONYMS for term in group}
+    | {"allergy", "aspirin", "troponin", "cardiac", "insulin", "metformin"}
+    | {"glucose", "endocrinology", "trauma", "emergency", "fracture"}
+    | {"resuscitation", "warfarin", "heparin", "pregnancy", "asthma"}
+)
+
+
+def expand_search_terms(term: str) -> list[str]:
+    """The typed term, its closest vocabulary spelling, and that spelling's synonyms."""
+    typed = " ".join(term.casefold().split())
+    if not typed:
+        return []
+    close = get_close_matches(typed, SEARCH_VOCABULARY, n=1, cutoff=0.85)
+    base = close[0] if close else typed
+    group = next((g for g in _SYNONYMS if base in g), {base})
+    return sorted({typed, base, *group})
 
 
 def record_label(record: dict[str, Any]) -> str:

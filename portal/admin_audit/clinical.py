@@ -16,13 +16,15 @@ from portal_core.clinical import digest
 from accounts.models import PatientDirectory, PatientRepresentative, Role
 from ledger.models import BreakglassCase, DowntimeEvent
 
+from admin_audit.views import _base_ctx
+
 
 @role_required(Role.ADMIN)
 def review(request: Any, pk: int) -> HttpResponse:
     """Adjudicate only after the decision has been committed to the audit chain."""
     with transaction.atomic():
         case = get_object_or_404(BreakglassCase.objects.select_for_update(), pk=pk)
-        context: dict[str, Any] = {"case": case}
+        context = _base_ctx("Case adjudication") | {"case": case}
         try:
             entries = store_reader.audit_by_correlation(case.correlation_id)
             import json
@@ -92,7 +94,7 @@ def review(request: Any, pk: int) -> HttpResponse:
 
 @role_required(Role.ADMIN)
 def downtime(request: Any) -> HttpResponse:
-    context: dict[str, Any] = {}
+    context = _base_ctx("Downtime reconciliation")
     if request.method == "POST":
         with transaction.atomic():
             item = get_object_or_404(
@@ -124,7 +126,7 @@ def downtime(request: Any) -> HttpResponse:
 
 @role_required(Role.ADMIN)
 def representatives(request: Any) -> HttpResponse:
-    context: dict[str, Any] = {}
+    context = _base_ctx("Guardians and next of kin")
     if request.method == "POST" and request.POST.get("action") == "revoke":
         with transaction.atomic():
             representative = get_object_or_404(

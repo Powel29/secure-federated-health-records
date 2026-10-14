@@ -27,7 +27,12 @@ from portal_core import notify, policies, services, store_reader
 from portal_core.access import role_required
 from portal_core.services import ServiceError
 
-from accounts.models import Role
+from accounts.models import (
+    PatientDirectory,
+    PatientRepresentative,
+    Role,
+    minors_represented_by,
+)
 from ledger.models import (
     BreakglassCase,
     CaseStatus,
@@ -89,8 +94,31 @@ def _base_ctx(request: Any, screen: str) -> dict[str, Any]:
             ("patient:access", "Access control & consent"),
             ("patient:records", "Encrypted health records"),
             ("patient:history", "Access history"),
+            ("patient:profile", "Your profile"),
         ],
     }
+
+
+def _principal(request: Any) -> tuple[str, str | None]:
+    """Whose consent this request decides, and the guardian acting, if any.
+
+    ``for`` names a minor the logged-in subject represents (ADR-0061); any
+    other value is a 404, so a link cannot reach another patient's consents.
+    """
+    own = request.user.profile.subject_id
+    target = (request.POST.get("for") or request.GET.get("for") or "").strip()
+    if not target or target == own:
+        return own, None
+    if target not in {p.subject_id for p in minors_represented_by(own)}:
+        raise Http404("No guardian authority for this patient")
+    return target, own
+
+
+def _access_redirect(subject_id: str, acting: str | None) -> HttpResponse:
+    response = redirect("patient:access")
+    if acting:
+        response["Location"] += f"?for={subject_id}"
+    return response
 
 
 # --- Page 1: overview ---------------------------------------------------------------
@@ -156,7 +184,12 @@ def mark_read(request: Any, pk: int) -> HttpResponse:
 @role_required(Role.PATIENT)
 def access(request: Any) -> HttpResponse:
     ctx = _base_ctx(request, "Access control & consent")
-    subject_id = ctx["subject_id"]
+    subject_id, acting = _principal(request)
+    ctx["represented"] = minors_represented_by(ctx["subject_id"])
+    ctx["acting_for"] = next(
+        (p for p in ctx["represented"] if acting and p.subject_id == subject_id),
+        None,
+    )
     now = dj_tz.now()
     rows = ConsentRecord.objects.filter(patient_id=subject_id)
     # Lapse unanswered requests whose window closed; nothing signs, nothing grants.
@@ -184,12 +217,12 @@ def access(request: Any) -> HttpResponse:
 @require_POST
 def decide(request: Any, request_id: str) -> HttpResponse:
     """Approve or deny: the custodian signs as the patient; the facility verifies."""
-    subject_id = request.user.profile.subject_id
+    subject_id, acting = _principal(request)
     row = get_object_or_404(ConsentRecord, request_id=request_id, patient_id=subject_id)
     decision = request.POST.get("decision")
     if row.status != ConsentStatus.PENDING or decision not in ("granted", "denied"):
         messages.error(request, "This request is no longer open for a decision.")
-        return redirect("patient:access")
+        return _access_redirect(subject_id, acting)
     try:
         signed = services.custodian_decide_consent(
             subject_id,
@@ -204,7 +237,7 @@ def decide(request: Any, request_id: str) -> HttpResponse:
         )
     except ServiceError as exc:
         messages.error(request, f"Decision not recorded — {exc.service}: {exc.detail}")
-        return redirect("patient:access")
+        return _access_redirect(subject_id, acting)
     grant = signed["grant"]
     row.status = (
         ConsentStatus.GRANTED if decision == "granted" else ConsentStatus.DENIED
@@ -222,6 +255,7 @@ def decide(request: Any, request_id: str) -> HttpResponse:
             "grantee_id": row.requester_id,
             "status": decision,
             "scope": list(row.scope),
+            "decided_by": acting or subject_id,
         },
         actor_id=notify.ACTOR_PATIENT_PORTAL,
         correlation_id=row.correlation_id,
@@ -231,18 +265,21 @@ def decide(request: Any, request_id: str) -> HttpResponse:
         f"Signed {decision} for {row.requester_id} — grant {grant['grant_id'][:8]}… "
         f"verified and stored by the facility.",
     )
-    return redirect("patient:access")
+    return _access_redirect(subject_id, acting)
 
 
 @role_required(Role.PATIENT)
 @require_POST
 def revoke(request: Any, request_id: str) -> HttpResponse:
-    """Revocation is patient-only and cryptographic: a fresh patient-signed REVOKED grant."""
-    subject_id = request.user.profile.subject_id
+    """Revocation is patient-only and cryptographic: a fresh patient-signed REVOKED grant.
+
+    A minor's guardian or parent acts as the patient here (ADR-0061).
+    """
+    subject_id, acting = _principal(request)
     row = get_object_or_404(ConsentRecord, request_id=request_id, patient_id=subject_id)
     if row.status != ConsentStatus.GRANTED or not row.grant_json:
         messages.error(request, "Only a live grant can be revoked.")
-        return redirect("patient:access")
+        return _access_redirect(subject_id, acting)
     try:
         signed = services.custodian_revoke_consent(
             subject_id, prior_grant=row.grant_json
@@ -256,7 +293,7 @@ def revoke(request: Any, request_id: str) -> HttpResponse:
         messages.error(
             request, f"Revocation not recorded — {exc.service}: {exc.detail}"
         )
-        return redirect("patient:access")
+        return _access_redirect(subject_id, acting)
     row.status = ConsentStatus.REVOKED
     row.grant_json = signed["grant"]
     row.decided_at = dj_tz.now()
@@ -270,6 +307,7 @@ def revoke(request: Any, request_id: str) -> HttpResponse:
             "grantee_id": row.requester_id,
             "status": "revoked",
             "scope": list(row.scope),
+            "decided_by": acting or subject_id,
         },
         actor_id=notify.ACTOR_PATIENT_PORTAL,
         correlation_id=row.correlation_id,
@@ -283,7 +321,7 @@ def revoke(request: Any, request_id: str) -> HttpResponse:
     messages.success(
         request, f"Revoked {row.requester_id}'s grant; the facility now refuses it."
     )
-    return redirect("patient:access")
+    return _access_redirect(subject_id, acting)
 
 
 def _first_facility(row: ConsentRecord) -> str:
@@ -416,6 +454,26 @@ def history(request: Any) -> HttpResponse:
 
 
 # --- Page 4: encrypted records and the one-request view -----------------------------
+
+
+@role_required(Role.PATIENT)
+def profile(request: Any) -> HttpResponse:
+    """The patient's own details, read only; nothing here changes access."""
+    ctx = _base_ctx(request, "Your profile")
+    ctx.update(
+        {
+            "subject": services_subject_safe(ctx["subject_id"]),
+            "directory": PatientDirectory.objects.filter(
+                subject_id=ctx["subject_id"]
+            ).first(),
+            "representatives": PatientRepresentative.objects.filter(
+                patient__subject_id=ctx["subject_id"], revoked_at__isnull=True
+            ),
+            "represented": minors_represented_by(ctx["subject_id"]),
+            "requests": request.user.requests.all(),
+        }
+    )
+    return render(request, "profile.html", ctx)
 
 
 @role_required(Role.PATIENT)

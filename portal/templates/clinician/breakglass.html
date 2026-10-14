@@ -62,8 +62,8 @@
           <p><strong>Identify the patient first.</strong> An emergency assertion is bound to one identified <span class="mono">patient_id</span>.</p>
           <a class="btn btn-secondary btn-block" href="{% url 'clinician:identify' %}">Identify patient</a>
         {% else %}
-          <p>Opens the chosen record for <strong>{{ duration }} s</strong>. {% if directory %}{{ directory.given_name }} {{ directory.family_name }}{% else %}The patient{% endif %} is notified. The audit service writes the chain entry before it releases share 3.</p>
-          <p class="tiny text-muted">Assertion valid {{ assertion_ttl }} s · one-time id · ECDSA · signed at <span class="mono">{{ facility_id|default:"—" }}</span></p>
+          <p>Opens each chosen record for <strong>{{ duration }} s</strong>. {% if directory %}{{ directory.given_name }} {{ directory.family_name }}{% else %}The patient{% endif %} is notified. The audit service writes the chain entry before it releases share 3.</p>
+          <p class="tiny text-muted">One assertion per record · valid {{ assertion_ttl }} s · one-time id · ECDSA · bound to the facility that holds the record</p>
         {% endif %}
         <button class="btn btn-emergency btn-block" name="action" value="declare" {% if not discovered %}disabled aria-describedby="declare-why"{% endif %}>Declare emergency</button>
         {% if not discovered %}<p class="tiny text-muted" id="declare-why">{% if not patient_id %}Available after you identify the patient and locate their records.{% else %}Available after discovery finds at least one record.{% endif %}</p>{% endif %}
@@ -72,13 +72,13 @@
 
     <section class="card card-frame" aria-label="Declaration details">
       <fieldset class="field">
-        <legend>Target record</legend>
+        <legend>Target records</legend>
         {% if discovered %}
           {% for r in discovered %}
-            <label class="radio-row"><input type="radio" name="record_id" value="{{ r.record_id }}" required {% if record_id == r.record_id %}checked{% endif %}>
+            <label class="radio-row"><input type="checkbox" name="record_ids" value="{{ r.record_id }}" {% if r.record_id in record_ids %}checked{% endif %}>
               <span><strong>{{ r.clinical.title|default:"Legacy record — title unknown" }}</strong> · {{ r.clinical.record_type|default:"Type unknown" }} · {{ r.clinical.clinical_date|default:"Clinical date unknown" }} · author {{ r.clinical.author_id|default:"unknown" }} · {{ r.clinical.source|default:"Source unknown" }}<br><span class="mono">{{ r.record_id }}</span> · {{ r.facility_name|default:r.facility_id }} · {{ r.content_type }}{% if r.clinical.sensitivity != 'general' and r.clinical.sensitivity %} · RESTRICTED{% endif %}{% if r.lifecycle_state %} · <span class="tag tag-quiet">{{ r.lifecycle_state|humanize_code }}</span>{% endif %}</span></label>
           {% endfor %}
-          <div class="hint">None is pre-selected. Choose the record you need.</div>
+          <div class="hint">None is pre-selected. Choose every record you need; one declaration covers them, and each is authorized, audited and notified on its own.</div>
         {% else %}
           <p class="empty mb-0">Run discovery to list the patient's sealed records.</p>
         {% endif %}

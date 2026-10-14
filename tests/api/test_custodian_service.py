@@ -571,6 +571,27 @@ def test_breakglass_unlocks_with_clinician_and_audit_shares(federation):
     assert "share" not in json.dumps(entry["event_data"]).lower()
 
 
+def test_second_viewer_naming_another_facility_joins_at_the_record_node(federation):
+    """ADR-0061: a clinician elsewhere is routed to the node holding the session."""
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    body = {
+        "patient_id": PATIENT,
+        "record_id": RECORD,
+        "reason_code": "sepsis",
+        "emergency_duration_seconds": 30,
+    }
+    first = client.post(f"/subjects/{DOC_ER}/breakglass", json=body)
+    assert first.status_code == 200, first.text
+    second = client.post(
+        f"/subjects/{DOC_ER}/breakglass", json={**body, "facility_id": "facility-b"}
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["facility_id"] == "facility-a"
+    assert second.json()["joined"] is True
+    assert second.json()["expires_at"] == first.json()["expires_at"]
+
+
 def test_breakglass_fails_closed_when_audit_cannot_commit(federation):
     """No log entry, no share 3, no unlock -- the record stays GRANTED."""
     client = _custodian(federation, audit_commit_ok=False)

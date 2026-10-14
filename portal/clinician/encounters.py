@@ -12,111 +12,82 @@ from django.conf import settings
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
-from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_POST
 from portal_core import notify, services
 from portal_core.access import role_required
-from portal_core.clinical import digest
+from portal_core.clinical import digest, expand_search_terms, record_label
 from portal_core.services import ServiceError
 
 from accounts.models import Role
 from ledger.models import CareEpisode, DowntimeEvent, BreakglassCase, CaseStatus
 
+from clinician import views
+
 
 @role_required(Role.CLINICIAN)
 @require_POST
 def federated_search(request: Any, pk: int) -> HttpResponse:
-    """Authorize each record separately; never present an incomplete scan as negative."""
-    from clinician.views import _discover
+    """Search every record this clinician holds open for the patient (ADR-0061).
 
+    A search opens nothing: records not yet opened under emergency are listed
+    as unsearched, never reported as a negative result.
+    """
     case = get_object_or_404(
         BreakglassCase, pk=pk, clinician_id=request.user.profile.subject_id
     )
-    term = request.POST.get("search_term", "").strip()
-    context: dict[str, Any] = {
-        "case": case,
-        "term": term,
-        "hits": [],
-        "errors": [],
-        "checked": 0,
-    }
-    deadline = case.expires_at
-    if case.episode:
-        if case.episode.closed_at:
-            return HttpResponse("Care episode is closed", status=403)
-        deadline = min(deadline, case.episode.expires_at) if deadline else None
-    if (
-        not term
-        or not deadline
-        or deadline <= timezone.now()
-        or case.status != CaseStatus.OPEN
-    ):
+    if case.episode and case.episode.closed_at:
+        return HttpResponse("Care episode is closed", status=403)
+    terms = expand_search_terms(request.POST.get("search_term", ""))
+    if not terms or views._refresh(case).status != CaseStatus.OPEN:
         return HttpResponse(
             "A term and a live emergency window are required", status=403
         )
-    try:
-        records = _discover(request.user.profile.home_facility_id, case.patient_id)
-    except ServiceError as exc:
-        context["errors"].append(f"Discovery unavailable: {exc.detail}")
-        records = []
-    for record in records:
-        rid = record["record_id"]
-        clinical = record.get("clinical")
-        if not clinical or clinical.get("sensitivity", "general") != "general":
-            context["errors"].append(
-                f"{rid}: restricted or unclassified; select this record separately and explain its necessity."
-            )
-            continue
-        remaining = (deadline - timezone.now()).total_seconds()
-        if remaining <= 0:
-            context["errors"].append(
-                "The window expired before all records could be checked."
-            )
-            break
-        correlation = f"search-{uuid4()}"
+    context = views._base_ctx(request, "Emergency search")
+    context |= {
+        "case": case,
+        "term": request.POST.get("search_term", "").strip(),
+        "terms": terms,
+        "hits": [],
+        "errors": [],
+        "unsearched": [],
+        "checked": 0,
+    }
+    live = {}
+    for other in BreakglassCase.objects.filter(
+        clinician_id=case.clinician_id,
+        patient_id=case.patient_id,
+        status=CaseStatus.OPEN,
+    ).order_by("-opened_at"):
+        if views._refresh(other).status == CaseStatus.OPEN:
+            live.setdefault(other.record_id, other)
+    for rid, other in live.items():
         try:
-            opened = services.custodian_breakglass(
-                case.clinician_id,
-                patient_id=case.patient_id,
-                record_id=rid,
-                reason_code=case.reason_code,
-                correlation_id=correlation,
-                facility_id=record["facility_id"],
-                emergency_duration_seconds=remaining,
-                justification=case.justification,
-            )
-            # Payload may be returned by the existing agent; do not render or persist it.
-            opened.pop("plaintext_b64", None)
-            opened_case = BreakglassCase.objects.create(
-                correlation_id=opened["correlation_id"],
-                record_id=rid,
-                patient_id=case.patient_id,
-                clinician_id=case.clinician_id,
-                facility_id=opened["facility_id"],
-                reason_code=case.reason_code,
-                justification=case.justification,
-                episode=case.episode,
-                assertion_id=opened["assertion_id"],
-                shares=opened["shares_presented"],
-                opened_at=parse_datetime(opened["opened_at"]),
-                expires_at=parse_datetime(opened["expires_at"]),
-            )
-            notify.notify_breakglass(
-                patient_id=case.patient_id,
-                record_id=rid,
-                clinician_id=case.clinician_id,
-                facility_id=opened["facility_id"],
-                correlation_id=opened["correlation_id"],
-                reason_code=case.reason_code,
-            )
-            hits = services.facility_emergency_search(
-                opened["facility_id"], rid, term, case.clinician_id
-            )
-            context["checked"] += 1
-            if rid in hits:
-                context["hits"].append({"case": opened_case, "record": record})
+            matched = [
+                term
+                for term in terms
+                if rid
+                in services.facility_emergency_search(
+                    other.facility_id, rid, term, case.clinician_id
+                )
+            ]
         except ServiceError as exc:
             context["errors"].append(f"{rid}: {exc.service}: {exc.detail}")
+            continue
+        context["checked"] += 1
+        if matched:
+            context["hits"].append({"case": other, "terms": matched})
+    try:
+        discovered = views._discover(
+            request.user.profile.home_facility_id, case.patient_id
+        )
+    except ServiceError as exc:
+        context["errors"].append(f"Discovery unavailable: {exc.detail}")
+        discovered = []
+    context["unsearched"] = [
+        {**r, "label": record_label(r)}
+        for r in discovered
+        if r["record_id"] not in live
+    ]
     response = render(request, "clinician/federated_search.html", context)
     response["Cache-Control"] = "no-store"
     return response
@@ -126,7 +97,8 @@ def federated_search(request: Any, pk: int) -> HttpResponse:
 def encounter(request: Any) -> HttpResponse:
     """Create an unidentified encounter or resolve it using a logged selection."""
     clinician = request.user.profile.subject_id
-    context: dict[str, Any] = {
+    context = views._base_ctx(request, "Care encounters")
+    context |= {
         "episodes": CareEpisode.objects.filter(clinician_id=clinician).order_by(
             "-created_at"
         )[:30]
@@ -205,7 +177,7 @@ def encounter(request: Any) -> HttpResponse:
 @role_required(Role.CLINICIAN)
 def downtime(request: Any) -> HttpResponse:
     """Capture the use of local procedures without pretending to release records."""
-    context: dict[str, Any] = {}
+    context = views._base_ctx(request, "Downtime procedure")
     if request.method == "POST":
         procedure = request.POST.get("procedure")
         if procedure not in dict(DowntimeEvent._meta.get_field("procedure").choices):
@@ -227,7 +199,8 @@ def note(request: Any, pk: int) -> HttpResponse:
     case = get_object_or_404(
         BreakglassCase, pk=pk, clinician_id=request.user.profile.subject_id
     )
-    context: dict[str, Any] = {"case": case, "today": timezone.now().date().isoformat()}
+    context = views._base_ctx(request, "Clinical note")
+    context |= {"case": case, "today": timezone.now().date().isoformat()}
     if request.method == "POST":
         title = request.POST.get("title", "").strip()
         content = request.POST.get("content", "").strip()

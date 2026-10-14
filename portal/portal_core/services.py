@@ -175,6 +175,7 @@ def custodian_breakglass(
         "emergency_duration_seconds": emergency_duration_seconds,
         "justification": justification,
         "sensitive_justification": sensitive_justification,
+        "assertion_ttl_seconds": settings.ASSERTION_TTL_SECONDS,
     }
     if facility_id:
         body["facility_id"] = facility_id

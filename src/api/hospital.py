@@ -1250,8 +1250,9 @@ def create_hospital_app(
             try:
                 session_expires_at = exp_manager.active_session_expires_at(record_id)
             except (SessionNotFoundError, EmergencySessionExpiredError) as exc:
-                # ponytail: sessions live in the facility that opened them; a
-                # clinician at another facility cannot join until expiry.
+                # Sessions live at the record's own facility, and the custodian
+                # and portal route every viewer there (ADR-0061), so this is
+                # reached only by a request sent to the wrong node.
                 reason = (
                     "record is already emergency_open and this facility holds "
                     f"no live session to join ({exc})"

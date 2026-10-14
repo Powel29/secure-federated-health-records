@@ -30,7 +30,9 @@ from portal_core import notify, services, store_reader
 from portal_core.access import role_required
 from portal_core.services import ServiceError
 from portal_core.clinical import (
+    SEARCH_VOCABULARY,
     episode_groups,
+    expand_search_terms,
     name_matches,
     normalized_name,
     record_label,
@@ -135,8 +137,20 @@ def _base_ctx(request: Any, screen: str) -> dict[str, Any]:
             ("clinician:breakglass", "Emergency break-glass"),
             ("clinician:consent_request", "Request consent"),
             ("clinician:cases", "Emergency sessions"),
+            ("clinician:profile", "Your profile"),
         ],
     }
+
+
+# --- Profile -------------------------------------------------------------------------
+
+
+@role_required(Role.CLINICIAN)
+def profile(request: Any) -> HttpResponse:
+    """The clinician's own details, read only; nothing here changes access."""
+    ctx = _base_ctx(request, "Your profile")
+    ctx["requests"] = request.user.requests.all()
+    return render(request, "profile.html", ctx)
 
 
 # --- Overview ------------------------------------------------------------------------
@@ -350,7 +364,7 @@ def breakglass(request: Any) -> HttpResponse:
             "reason_codes": REASON_CODES,
             "discovered": discovery,
             "duration": int(settings.EMERGENCY_DURATION_SECONDS),
-            "assertion_ttl": 120,
+            "assertion_ttl": settings.ASSERTION_TTL_SECONDS,
         }
     )
     if request.method != "POST":
@@ -377,8 +391,14 @@ def breakglass(request: Any) -> HttpResponse:
             record["label"] = record_label(record)
         return render(request, "clinician/breakglass.html", ctx)
 
-    # action == "declare"
-    record_id = request.POST.get("record_id", "").strip()
+    # action == "declare": one declaration may cover several records (ADR-0061).
+    record_ids = [
+        rid.strip()
+        for rid in (
+            request.POST.getlist("record_ids") or [request.POST.get("record_id", "")]
+        )
+        if rid.strip()
+    ]
     reason_code = request.POST.get("reason_code", "")
     justification = request.POST.get("justification", "").strip()
     sensitive_justification = request.POST.get("sensitive_justification", "").strip()
@@ -386,20 +406,21 @@ def breakglass(request: Any) -> HttpResponse:
         {
             "reason_code": reason_code,
             "justification": justification,
-            "record_id": record_id,
+            "record_ids": record_ids,
         }
     )
     if (
-        not record_id
+        not record_ids
         or reason_code not in dict(REASON_CODES)
         or len(justification) < 20
     ):
         ctx["error"] = (
-            "Choose a discovered record and a reason, and explain the immediate clinical need (at least 20 characters)."
+            "Choose at least one discovered record and a reason, and explain the immediate clinical need (at least 20 characters)."
         )
         return render(request, "clinician/breakglass.html", ctx, status=400)
-    if not any(r["record_id"] == record_id for r in discovery or []):
-        ctx["error"] = "Choose a record from this patient's discovery results."
+    by_id = {r["record_id"]: r for r in discovery or []}
+    if not set(record_ids) <= by_id.keys():
+        ctx["error"] = "Choose records from this patient's discovery results."
         return render(request, "clinician/breakglass.html", ctx, status=400)
 
     episode = (
@@ -407,38 +428,39 @@ def breakglass(request: Any) -> HttpResponse:
         if request.session.get("clinician.episode")
         else None
     )
-    correlation_id = f"{ident['correlation_id']}-{uuid4().hex[:8]}"
-    try:
-        result = services.custodian_breakglass(
-            ctx["subject_id"],
-            patient_id=patient_id,
-            record_id=record_id,
+    outcomes = [
+        _declare(
+            ctx,
+            ident,
+            by_id[rid],
+            episode,
             reason_code=reason_code,
-            correlation_id=correlation_id,
-            facility_id=ctx["facility_id"],
-            emergency_duration_seconds=(
-                min(
-                    settings.EMERGENCY_DURATION_SECONDS,
-                    max(1, (episode.expires_at - dj_tz.now()).total_seconds()),
-                )
-                if episode
-                else settings.EMERGENCY_DURATION_SECONDS
-            ),
             justification=justification,
             sensitive_justification=sensitive_justification,
         )
-    except ServiceError as exc:
-        case = BreakglassCase.objects.create(
-            correlation_id=f"{correlation_id}#{uuid4().hex[:6]}",
-            record_id=record_id,
-            patient_id=patient_id,
-            clinician_id=ctx["subject_id"],
-            facility_id=ctx["facility_id"] or "",
-            reason_code=reason_code,
-            justification=justification,
-            status=CaseStatus.FAILED,
-            failure_reason=f"{exc.service}: {exc.detail}",
-        )
+        for rid in dict.fromkeys(record_ids)
+    ]
+    # Keep this explicit patient binding until the care episode closes.
+
+    if len(outcomes) > 1:
+        for case, _result, exc in outcomes:
+            if exc is not None:
+                messages.error(
+                    request,
+                    f"{case.record_id}: break-glass refused — {exc.service}: {exc.detail}",
+                )
+        opened = sum(1 for _c, _r, exc in outcomes if exc is None)
+        if opened:
+            messages.success(
+                request,
+                f"Opened {opened} record{'s' if opened != 1 else ''} under one declaration. "
+                "Each was authorized, audited and notified separately; open a case "
+                "to read its record.",
+            )
+        return redirect("clinician:cases")
+
+    case, result, exc = outcomes[0]
+    if exc is not None:
         ctx.update(
             {
                 "error": f"Break-glass refused — {exc.service}: {exc.detail}",
@@ -451,6 +473,66 @@ def breakglass(request: Any) -> HttpResponse:
             ctx,
             status=403 if exc.is_denial else 503,
         )
+
+    # The decrypted payload is shown on this response only -- never stored.
+    ctx = _case_ctx(request, case)
+    ctx.update({"just_opened": True, "unlock": result, **_record_display(result)})
+    response = render(request, "clinician/case.html", ctx)
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+def _declare(
+    ctx: dict[str, Any],
+    ident: dict[str, Any],
+    record: dict[str, Any],
+    episode: CareEpisode | None,
+    *,
+    reason_code: str,
+    justification: str,
+    sensitive_justification: str,
+) -> tuple[BreakglassCase, dict[str, Any], ServiceError | None]:
+    """Break-glass one discovered record at the facility that holds it."""
+    record_id = record["record_id"]
+    patient_id = ident["patient_id"]
+    correlation_id = f"{ident['correlation_id']}-{uuid4().hex[:8]}"
+    # The record's own node holds its session, so every viewer joins there,
+    # whichever facility they work at (ADR-0057, ADR-0061). "?" = metadata gap.
+    facility_id = record.get("facility_id")
+    if facility_id in (None, "", "?"):
+        facility_id = ctx["facility_id"]
+    duration = settings.EMERGENCY_DURATION_SECONDS
+    if episode:
+        duration = min(
+            duration, max(1, (episode.expires_at - dj_tz.now()).total_seconds())
+        )
+    try:
+        result = services.custodian_breakglass(
+            ctx["subject_id"],
+            patient_id=patient_id,
+            record_id=record_id,
+            reason_code=reason_code,
+            correlation_id=correlation_id,
+            facility_id=facility_id,
+            emergency_duration_seconds=duration,
+            justification=justification,
+            sensitive_justification=sensitive_justification,
+        )
+    except ServiceError as exc:
+        case = BreakglassCase.objects.create(
+            correlation_id=f"{correlation_id}#{uuid4().hex[:6]}",
+            record_id=record_id,
+            patient_id=patient_id,
+            clinician_id=ctx["subject_id"],
+            facility_id=facility_id or "",
+            reason_code=reason_code,
+            justification=justification,
+            sensitive_justification=sensitive_justification,
+            episode=episode,
+            status=CaseStatus.FAILED,
+            failure_reason=f"{exc.service}: {exc.detail}",
+        )
+        return case, {}, exc
 
     case = BreakglassCase.objects.create(
         correlation_id=result["correlation_id"],
@@ -485,20 +567,33 @@ def breakglass(request: Any) -> HttpResponse:
         facility_id=result["facility_id"],
         correlation_id=result["correlation_id"],
         reason_code=reason_code,
+        record_title=(record.get("clinical") or {}).get("title", ""),
+        facility_name=record.get("facility_name", ""),
     )
-    # Keep this explicit patient binding until the care episode closes.
+    return case, result, None
 
-    # The decrypted payload is shown on this response only -- never stored.
-    plaintext = None
-    if result.get("plaintext_b64"):
-        plaintext = _pretty(
-            base64.b64decode(result["plaintext_b64"]), result.get("content_type") or ""
-        )
-    ctx = _case_ctx(request, case)
-    ctx.update({"just_opened": True, "plaintext": plaintext, "unlock": result})
-    response = render(request, "clinician/case.html", ctx)
-    response["Cache-Control"] = "no-store"
-    return response
+
+# Passive types shown in the page from the one audited fetch (no second key
+# release); every other binary type is offered as a download (review F42).
+_EMBED_TYPES = {"application/pdf": "pdf", "image/png": "image", "image/jpeg": "image"}
+
+
+def _record_display(result: dict[str, Any]) -> dict[str, Any]:
+    """Template context for a decrypted record; its content type is the uploader's claim."""
+    if not result.get("plaintext_b64"):
+        return {}
+    raw = base64.b64decode(result["plaintext_b64"])
+    content_type = (result.get("content_type") or "").split(";")[0].strip().lower()
+    if not content_type or content_type.startswith("text/") or "json" in content_type:
+        return {"plaintext": _pretty(raw, content_type)}
+    kind = _EMBED_TYPES.get(content_type, "download")
+    mime = content_type if kind != "download" else "application/octet-stream"
+    return {
+        "record_kind": kind,
+        "record_type": content_type,
+        "record_bytes": len(raw),
+        "record_uri": f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}",
+    }
 
 
 def _pretty(plaintext: bytes, content_type: str) -> str:
@@ -543,6 +638,7 @@ def _case_ctx(request: Any, case: BreakglassCase) -> dict[str, Any]:
                 subject_id=case.patient_id
             ).first(),
             "search_results": None,
+            "search_vocabulary": SEARCH_VOCABULARY,
         }
     )
     return ctx
@@ -598,8 +694,6 @@ def case_detail(request: Any, pk: int) -> HttpResponse:
         BreakglassCase, pk=pk, clinician_id=request.user.profile.subject_id
     )
     ctx = _case_ctx(request, case)
-    if request.method == "POST" and request.POST.get("action") == "view":
-        return _view_again(request, case, ctx)
     if request.method == "POST":
         term = request.POST.get("search_term", "").strip()
         ctx["search_term"] = term
@@ -607,10 +701,16 @@ def case_detail(request: Any, pk: int) -> HttpResponse:
             ctx["search_error"] = "Enter a term to derive a token for."
         else:
             try:
-                hits = services.facility_emergency_search(
-                    case.facility_id, case.record_id, term, case.clinician_id
+                ctx["search_terms"] = expand_search_terms(term)
+                ctx["search_results"] = sorted(
+                    {
+                        rid
+                        for t in ctx["search_terms"]
+                        for rid in services.facility_emergency_search(
+                            case.facility_id, case.record_id, t, case.clinician_id
+                        )
+                    }
                 )
-                ctx["search_results"] = hits
                 ctx["search_state"] = (
                     "TOKEN LIVE" if case.status == CaseStatus.OPEN else "TOKEN DEAD"
                 )
@@ -620,24 +720,23 @@ def case_detail(request: Any, pk: int) -> HttpResponse:
                 if exc.status == 403 and case.status == CaseStatus.OPEN:
                     case.status = CaseStatus.EXPIRED
                     case.save(update_fields=["status"])
-    return render(request, "clinician/case.html", ctx)
+    status = _show_record(case, ctx)
+    response = render(request, "clinician/case.html", ctx, status=status)
+    response["Cache-Control"] = "no-store"
+    return response
 
 
-def _view_again(
-    request: Any, case: BreakglassCase, ctx: dict[str, Any]
-) -> HttpResponse:
-    """Show the record again inside the clinician's live window (ADR-0057).
+def _show_record(case: BreakglassCase, ctx: dict[str, Any]) -> int:
+    """Put the decrypted record on the page while the window is open (ADR-0062).
 
-    The facility joins the open session: a fresh one-time assertion, the same
-    threshold, the audit entry committed before share 3 is released, no new
-    transition and no extension of the window. The case's correlation id is
-    reused so every view lands in this case's chain segment.
+    Every page load joins the open session (ADR-0057): a fresh one-time
+    assertion, the same threshold, the audit entry committed before share 3
+    is released, no new transition and no extension of the window. The case's
+    correlation id is reused so every view lands in this case's chain
+    segment. Nothing is stored; the payload lives in this response only.
     """
     if case.status != CaseStatus.OPEN:
-        ctx["view_error"] = (
-            "The window has closed; declare break-glass again if the emergency continues."
-        )
-        return render(request, "clinician/case.html", ctx, status=409)
+        return 200
     try:
         result = services.custodian_breakglass(
             case.clinician_id,
@@ -651,16 +750,9 @@ def _view_again(
         )
     except ServiceError as exc:
         ctx["view_error"] = f"{exc.service}: {exc.detail}"
-        return render(
-            request, "clinician/case.html", ctx, status=403 if exc.is_denial else 503
-        )
-    if result.get("plaintext_b64"):
-        ctx["plaintext"] = _pretty(
-            base64.b64decode(result["plaintext_b64"]), result.get("content_type") or ""
-        )
-    response = render(request, "clinician/case.html", ctx)
-    response["Cache-Control"] = "no-store"
-    return response
+        return 403 if exc.is_denial else 503
+    ctx.update(_record_display(result))
+    return 200
 
 
 # --- Consent requests -----------------------------------------------------------------
@@ -821,10 +913,7 @@ def consent_read(request: Any, request_id: str) -> HttpResponse:
         )
     ctx.update(
         {
-            "plaintext": _pretty(
-                base64.b64decode(result["plaintext_b64"]),
-                result.get("content_type") or "",
-            ),
+            **_record_display(result),
             "correlation_id": correlation_id,
             "attributes_presented": result.get("attributes_presented", []),
         }

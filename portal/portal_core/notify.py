@@ -98,8 +98,11 @@ def notify_breakglass(
     facility_id: str,
     correlation_id: str,
     reason_code: str,
+    record_title: str = "",
+    facility_name: str = "",
 ) -> PatientNotification:
     from accounts.models import PatientRepresentative
+    from portal_core.display import humanize_code
     from django.utils import timezone
 
     try:
@@ -112,9 +115,10 @@ def notify_breakglass(
         kind=NotificationKind.BREAKGLASS,
         title="Your record was opened under emergency break-glass",
         body=(
-            f"Record {record_id} was opened by {clinician_name} ({clinician_id}) at {facility_id} "
-            f"(reason: {reason_code}). The access is time-boxed and fully logged; "
-            f"follow the correlation id to the audit evidence."
+            f"Your record “{record_title or record_id}” was opened by "
+            f"{clinician_name} at {facility_name or facility_id} "
+            f"(reason: {humanize_code(reason_code)}). The access is time-boxed and "
+            f"fully logged; follow the correlation id to the audit evidence."
         ),
         record_id=record_id,
         correlation_id=correlation_id,

@@ -2,6 +2,12 @@
 {% block title %}Access control & consent · {{ product_name }}{% endblock %}
 {% block content %}
 {% include "patient/_case_banner.html" %}
+{% if represented %}
+<nav class="card" aria-label="Whose consent">
+  <p class="mb-0">{% if acting_for %}Deciding as the verified guardian of <strong>{{ acting_for.full_name }}</strong> (minor). Each decision is signed with their key and logged with you as the decider.{% else %}You are viewing your own consent.{% endif %}</p>
+  <p class="mb-0"><a href="{% url 'patient:access' %}">Your own consent</a>{% for p in represented %} · <a href="{% url 'patient:access' %}?for={{ p.subject_id|urlencode }}">{{ p.full_name }}</a>{% endfor %}</p>
+</nav>
+{% endif %}
 
 <div class="grid-2">
   <section class="card card-frame" aria-labelledby="req-h">
@@ -27,7 +33,7 @@
         </dl>
         <p class="quote mt-3">“{{ row.purpose }}”</p>
         <form method="post" action="{% url 'patient:decide' row.request_id %}" class="flex">
-          {% csrf_token %}
+          {% csrf_token %}{% if acting_for %}<input type="hidden" name="for" value="{{ acting_for.subject_id }}">{% endif %}
           <button class="btn btn-primary grow" name="decision" value="granted" onclick="return confirm('Sign a grant giving {{ row.requester_id|escapejs }} read access to {{ row.scope|join:", "|escapejs }}?')">Sign grant</button>
           <button class="btn btn-secondary grow" name="decision" value="denied">Deny</button>
         </form>
@@ -60,7 +66,7 @@
           </td>
           <td data-label="Action" class="right">
             {% if row.status == "granted" %}
-              <form method="post" action="{% url 'patient:revoke' row.request_id %}">{% csrf_token %}<button class="btn btn-strong btn-sm" onclick="return confirm('Revoke {{ row.requester_id|escapejs }}\'s access? The facility will refuse their grant from now on.')">Revoke</button></form>
+              <form method="post" action="{% url 'patient:revoke' row.request_id %}">{% csrf_token %}{% if acting_for %}<input type="hidden" name="for" value="{{ acting_for.subject_id }}">{% endif %}<button class="btn btn-strong btn-sm" onclick="return confirm('Revoke {{ row.requester_id|escapejs }}\'s access? The facility will refuse their grant from now on.')">Revoke</button></form>
             {% endif %}
           </td>
         </tr>

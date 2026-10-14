@@ -148,3 +148,21 @@ class PatientRepresentative(models.Model):
                 name="unique_patient_representative",
             )
         ]
+
+
+def minors_represented_by(representative_id: str) -> list[PatientDirectory]:
+    """Minors whose consent this subject may decide (ADR-0061).
+
+    Only a live, verified guardian or parent link counts, and only while the
+    patient's recorded date of birth makes them a minor. Next of kin, an
+    unknown date of birth, a revoked or an expired link: no authority.
+    """
+    from django.utils import timezone
+
+    links = PatientRepresentative.objects.filter(
+        representative_id=representative_id,
+        relationship__in=("guardian", "parent"),
+        revoked_at__isnull=True,
+        expires_at__gt=timezone.now(),
+    ).select_related("patient")
+    return [link.patient for link in links if link.patient.is_minor]

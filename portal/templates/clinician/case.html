@@ -51,22 +51,16 @@
   </section>
 </div>
 
-{% if plaintext %}
+{% if plaintext or record_uri %}
 <section class="card card-frame" aria-labelledby="pt-h">
   <div class="subhead">
     <h2 class="card-title" id="pt-h">Decrypted record</h2>
-    <span class="tag tag-emergency">This response only</span>
+    <span class="tag tag-emergency">Not stored</span>
   </div>
-  <p class="mb-0">The portal stores nothing. While the window is open, <strong>View record again</strong> brings it back; each view is logged before the key is released.</p>
-  <pre class="plaintext">{{ plaintext }}</pre>
+  <p class="mb-0">Shown whenever you open this case while the window is open. The portal stores nothing; each time the page loads, the access is logged before the key is released.</p>
+  {% include "clinician/_record_body.html" %}
   <p class="basis">Your key agent recovered the record key from the PRE delivery package and decrypted the ciphertext for this response. Rotation at expiry makes the emergency wrapping useless.</p>
 </section>
-{% elif case.status == "open" %}
-<form method="post" action="{% url 'clinician:case_detail' case.pk %}">
-  {% csrf_token %}
-  <button class="btn btn-emergency" name="action" value="view">View record again</button>
-  <span class="tiny text-muted">Inside the current window · logged before release · does not extend the window</span>
-</form>
 {% endif %}
 
 <div class="grid-2">
@@ -80,21 +74,22 @@
       {% csrf_token %}
       <fieldset class="flex" {% if case.status != "open" %}disabled{% endif %}>
         <label for="es-term" class="sr-only">Search term</label>
-        <input class="input grow" id="es-term" type="text" name="search_term" value="{{ search_term|default:'' }}" placeholder="e.g. anticoagulant" style="min-width:200px">
+        <input class="input grow" id="es-term" type="text" name="search_term" value="{{ search_term|default:'' }}" placeholder="e.g. anticoagulant" list="search-vocabulary" style="min-width:200px">
         <button class="btn btn-primary nowrap">Search this record</button>
       </fieldset>
       {% if case.status != "open" %}<p class="tiny text-muted mt-2 mb-0">Search closed with the window: the key that derives tokens was rotated away.</p>{% endif %}
     </form>
+    <datalist id="search-vocabulary">{% for t in search_vocabulary %}<option value="{{ t }}">{% endfor %}</datalist>
     {% if case.status == "open" %}<form method="post" action="{% url 'clinician:federated_search' case.pk %}">{% csrf_token %}
-      <label>Search term across this patient's records<input class="input" name="search_term" required></label>
-      <p class="hint">This explicitly authorizes audited break-glass for each discovered general record under this case's clinical reason, without extending its deadline. Restricted records require a separate selection and necessity statement. Indexed terms are case-insensitive; this is not full-text or semantic search.</p>
-      <button class="btn btn-emergency">Authorize and search general records across the federation</button>
+      <label>Search term across this patient's open records<input class="input" name="search_term" list="search-vocabulary" required></label>
+      <p class="hint">Searches every record you currently hold open for this patient, at any facility. It opens nothing new: records not yet opened are listed as unsearched. Close misspellings and listed synonyms are searched too; this is not full-text or semantic search.</p>
+      <button class="btn btn-primary">Search all open records</button>
     </form>{% endif %}
     {% if search_error %}<div class="notice notice-error small" role="alert">{% include "_icon.html" with name="x" %}<div>{{ search_error }}</div></div>{% endif %}
     {% if search_results is not None %}
       <div class="table-wrap"><table class="table">
         <thead><tr><th>Record</th><th>Matched on</th><th>How</th></tr></thead>
-        <tbody>{% for rid in search_results %}<tr><td class="mono">{{ rid }}</td><td class="mono small">HKDF(emergency key, "{{ search_term }}")</td><td class="small">Coded-index equality; the store never reads contents</td></tr>
+        <tbody>{% for rid in search_results %}<tr><td class="mono">{{ rid }}</td><td class="mono small">HKDF(emergency key, term) for {{ search_terms|join:", " }}</td><td class="small">Coded-index equality; the store never reads contents</td></tr>
         {% empty %}<tr><td colspan="3" class="empty">No indexed record matches this term.</td></tr>{% endfor %}</tbody></table></div>
     {% endif %}
   </section>

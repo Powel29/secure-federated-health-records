@@ -1,2 +1,4 @@
-{% extends "base.html" %}{% block content %}<section class="card"><h1>Downtime reconciliation</h1>{% if error %}<p role="alert">{{ error }}</p>{% endif %}
+{% extends "base.html" %}
+{% block title %}Downtime reconciliation · {{ product_name }}{% endblock %}
+{% block content %}<section class="card"><h1>Downtime reconciliation</h1>{% if error %}<p role="alert">{{ error }}</p>{% endif %}
 {% for e in events %}<article><p>{{ e.created_at }} · {{ e.clinician_id }} · {{ e.procedure }} · encounter {{ e.episode_id }}</p>{% if e.reconciled_at %}<p>Reconciled {{ e.reconciled_at }} · audit {{ e.audit_seq }}</p>{% else %}<form method="post">{% csrf_token %}<input type="hidden" name="event_id" value="{{ e.pk }}"><button class="btn">Commit recovery review</button></form>{% endif %}</article>{% empty %}<p>No downtime events.</p>{% endfor %}</section>{% endblock %}
