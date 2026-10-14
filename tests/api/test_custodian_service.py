@@ -28,6 +28,7 @@ import pytest
 from api.authority_service import create_authority_app
 from api.custodian_service import (
     CustodianEndpoints,
+    CustodianVault,
     create_custodian_app,
 )
 from api.hospital import FacilityTrust, create_hospital_app
@@ -69,12 +70,17 @@ PLAINTEXT = b'{"diagnosis": "Acute MI", "allergies": ["Penicillin"]}'
 
 
 def _audit_stub(
-    shares: dict[str, tuple[int, bytes]], *, commit_ok: bool = True
+    shares: dict[str, tuple[int, bytes]],
+    *,
+    commit_ok: bool = True,
+    deposit_ok: bool = True,
 ) -> FastAPI:
     """Stand-in for ``api.audit_service`` without Postgres.
 
-    Honours the one property the custodian relies on: the share is released
-    only when the commit succeeded (``commit_ok``), otherwise 503 and nothing.
+    Honours the properties the custodian relies on: the share is released
+    only when the commit succeeded (``commit_ok``), otherwise 503 and nothing;
+    a share is never overwritten (409, review F4); ``deposit_ok=False`` makes
+    every deposit fail with 503.
     """
     app = FastAPI()
     signing_key, public_key = generate_ec_keypair()
@@ -103,6 +109,10 @@ def _audit_stub(
 
     @app.post("/breakglass/shares")
     def deposit(payload: dict[str, Any]) -> dict[str, Any]:
+        if not deposit_ok:
+            raise HTTPException(status_code=503, detail="audit service unavailable")
+        if payload["share_key"] in shares:
+            raise HTTPException(status_code=409, detail="share already held")
         shares[payload["share_key"]] = (
             payload["x"],
             bytes.fromhex(payload["share_hex"]),
@@ -305,10 +315,15 @@ def federation():
 
 
 def _custodian(
-    federation: dict[str, Any], *, audit_commit_ok: bool = True
+    federation: dict[str, Any],
+    *,
+    audit_commit_ok: bool = True,
+    audit_deposit_ok: bool = True,
 ) -> TestClient:
     audit = _audit_stub(
-        {RECORD: federation["shares"]["share3"]}, commit_ok=audit_commit_ok
+        {RECORD: federation["shares"]["share3"]},
+        commit_ok=audit_commit_ok,
+        deposit_ok=audit_deposit_ok,
     )
     http = _router({**federation["apps"], "audit": audit})
     app = create_custodian_app(
@@ -776,6 +791,24 @@ def test_ingest_with_existing_record_id_leaves_shares_intact(federation):
     assert base64.b64decode(r.json()["plaintext_b64"]) == b"Original report"
 
 
+def test_failed_share_deposit_stores_no_record(federation):
+    """Review F4: shares are deposited before ingest, so an audit outage leaves
+    no record behind that break-glass could never open; a retry succeeds."""
+    client = _custodian(federation, audit_deposit_ok=False)
+    _deposit_all(client, federation)
+    before = set(federation["repo"].records)
+
+    r = _upload(client, b"Report during an audit outage")
+    assert r.status_code == 503, r.text
+    assert set(federation["repo"].records) == before  # nothing ingested
+
+    # Setup was valid: the same upload works once the audit service is back.
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    r = _upload(client, b"Report during an audit outage")
+    assert r.status_code == 201, r.text
+
+
 def test_share_deposit_never_overwrites(federation):
     """Review F4: a second share for the same record is refused (409)."""
     client = _custodian(federation)
@@ -859,3 +892,17 @@ def test_breakglass_refuses_an_audit_seq_that_goes_backwards(federation):
     )
     assert r.status_code == 502
     assert "truncated or replayed" in r.json()["detail"]
+
+
+def test_concurrent_releases_finishing_out_of_order_are_accepted():
+    """Review F31: two break-glasses requested together may see their release
+    entries (seq 50 and 51) in either order; only a seq at or below what was
+    seen before the request is refused."""
+    vault = CustodianVault()
+    before_a = vault.audit_seq_before_release()
+    before_b = vault.audit_seq_before_release()
+    vault.advance_audit_seq(51, before_b)
+    vault.advance_audit_seq(50, before_a)  # answered later, committed earlier
+
+    with pytest.raises(ValueError, match="truncated or replayed"):
+        vault.advance_audit_seq(50, vault.audit_seq_before_release())

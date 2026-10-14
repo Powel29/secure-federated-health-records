@@ -189,6 +189,12 @@ class CustodianVault:
         with self._lock:
             return self._shares.get(record_id)
 
+    def drop_share(self, record_id: str, share: tuple[int, bytes]) -> None:
+        """Release share 1 for a record whose upload failed; only if it is ``share``."""
+        with self._lock:
+            if self._shares.get(record_id) == share:
+                del self._shares[record_id]
+
     def set_trust(
         self,
         root_pem: str,
@@ -201,19 +207,28 @@ class CustodianVault:
             if audit_public_key_pem is not None:
                 self.audit_public_key_pem = audit_public_key_pem
 
-    def advance_audit_seq(self, seq: int) -> None:
+    def audit_seq_before_release(self) -> int:
+        """The highest release seq seen before a new release is requested."""
+        with self._lock:
+            return self.last_audit_seq
+
+    def advance_audit_seq(self, seq: int, before: int) -> None:
         """Record a release entry's seq; refuse one that goes backwards (F31).
 
+        Every release seen before this one was requested was committed first,
+        so ``seq`` must be after ``before``. Concurrent break-glasses may finish
+        out of order, so later releases do not count against it.
+
         Raises:
-            ValueError: ``seq`` is not higher than every seq seen before.
+            ValueError: ``seq`` is not higher than ``before``.
         """
         with self._lock:
-            if seq <= self.last_audit_seq:
+            if seq <= before:
                 raise ValueError(
                     f"audit entry seq {seq} is not after the last seen "
-                    f"{self.last_audit_seq}: the chain was truncated or replayed"
+                    f"{before}: the chain was truncated or replayed"
                 )
-            self.last_audit_seq = seq
+            self.last_audit_seq = max(seq, self.last_audit_seq)
 
     def __len__(self) -> int:
         with self._lock:
@@ -295,7 +310,10 @@ def _raise_upstream(resp: httpx.Response, *, what: str) -> None:
 
 
 def _check_release_entry(
-    vault: CustodianVault, raw_entry: dict[str, Any], correlation_id: str
+    vault: CustodianVault,
+    raw_entry: dict[str, Any],
+    correlation_id: str,
+    seq_before: int,
 ) -> None:
     """Fail closed unless the audit service really signed this release (F31).
 
@@ -315,7 +333,7 @@ def _check_release_entry(
         )
         if entry.correlation_id != correlation_id:
             raise ValueError("release entry belongs to another flow")
-        vault.advance_audit_seq(entry.seq)
+        vault.advance_audit_seq(entry.seq, seq_before)
     except (ValidationError, CryptoError, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -838,46 +856,47 @@ def create_custodian_app(
         emergency = provision_emergency_key()
         share1, share3 = emergency.clinician_share, emergency.audit_share
 
-        # Ingest first (review F4): a duplicate record_id is refused by the
-        # facility (409) before any share is deposited, so an existing
-        # record's shares can never be replaced by a failed upload.
-        data = _post(
+        # Shares first, ingest second (review F4): a record must never exist
+        # without its break-glass shares, because the emergency key is gone
+        # once this request ends. Neither holder overwrites an existing share,
+        # so a duplicate record_id is refused (409) before anything is stored.
+        _post(
             http,
-            f"{facility_url}/records/ingest",
-            {
-                "plaintext_b64": payload.content_b64,
-                "patient_id": subject_id,
-                "owner_authority_id": owner_authority_id,
-                "clinical_policy": payload.clinical_policy.model_dump(mode="json"),
-                "attribute_keyring": keyring,
-                "search_terms": payload.search_terms or None,
-                "emergency_key_b64": base64.b64encode(emergency.key).decode("ascii"),
-                "content_type": payload.content_type,
-                "record_id": record_id,
-            },
-            what="record ingest",
+            f"{endpoints.audit}/breakglass/shares",
+            {"share_key": record_id, "x": share3[0], "share_hex": share3[1].hex()},
+            what="audit share deposit",
         )
         try:
-            _post(
-                http,
-                f"{endpoints.audit}/breakglass/shares",
-                {"share_key": record_id, "x": share3[0], "share_hex": share3[1].hex()},
-                what="audit share deposit",
-            )
             vault.put_share(record_id, share1)
-        except (HTTPException, ValueError) as exc:
-            # The record exists but cannot be opened by break-glass. Say so
-            # loudly instead of reporting success (review F4).
-            _logger.error(
-                "record %s ingested but break-glass shares not provisioned", record_id
-            )
+        except ValueError as exc:
             raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=(
-                    f"record {record_id!r} ingested but break-glass is not "
-                    f"provisioned (breakglass_provisioned=false): {exc}"
-                ),
+                status_code=status.HTTP_409_CONFLICT, detail=str(exc)
             ) from exc
+        try:
+            data = _post(
+                http,
+                f"{facility_url}/records/ingest",
+                {
+                    "plaintext_b64": payload.content_b64,
+                    "patient_id": subject_id,
+                    "owner_authority_id": owner_authority_id,
+                    "clinical_policy": payload.clinical_policy.model_dump(mode="json"),
+                    "attribute_keyring": keyring,
+                    "search_terms": payload.search_terms or None,
+                    "emergency_key_b64": base64.b64encode(emergency.key).decode(
+                        "ascii"
+                    ),
+                    "content_type": payload.content_type,
+                    "record_id": record_id,
+                },
+                what="record ingest",
+            )
+        except HTTPException:
+            # No record was stored. Share 1 is released here; share 3 stays
+            # with the audit service under an id no record uses, a share of a
+            # key that protects nothing. A retry gets a fresh record_id.
+            vault.drop_share(record_id, share1)
+            raise
         return IngestResult(
             record_id=data["record_id"],
             facility_id=payload.facility_id,
@@ -967,6 +986,7 @@ def create_custodian_app(
         assertion = unlock_material.assertion
 
         # 2. Share 3: the audit service commits first, releases second.
+        seq_before = vault.audit_seq_before_release()
         release = _post(
             http,
             f"{endpoints.audit}/breakglass/release",
@@ -986,7 +1006,7 @@ def create_custodian_app(
             },
             what="audit share release",
         )
-        _check_release_entry(vault, release["entry"], corr_id)
+        _check_release_entry(vault, release["entry"], corr_id, seq_before)
         shares_presented = [
             SharePresented(holder=SHARE_HOLDER_CLINICIAN, x=share1[0]),
             SharePresented(

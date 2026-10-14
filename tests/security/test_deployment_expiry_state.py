@@ -129,33 +129,39 @@ def test_expiry_retries_after_second_append_fails(signing_key):
         manager.get_active_emergency_key(RECORD)
 
 
-def test_store_write_failure_is_retried_not_lost(signing_key):
-    """A store error after the audit append is retried, never silently dropped."""
+@pytest.mark.parametrize("failing_write", ["expired", "granted"])
+def test_store_write_failure_is_retried_not_lost(signing_key, failing_write):
+    """A store error after the audit append is retried, never silently dropped,
+    and the retry does not append the already-logged transition again."""
     clock = _FakeClock(FAKE_START)
     repo = InMemoryStorageRepository()
     repo.upsert_lifecycle_state(RECORD, LifecycleState.EMERGENCY_OPEN)
-    calls = {"n": 0}
+    audit = _FlakyAudit()
+    failed = {"done": False}
 
     def flaky_writer(record_id, expected, new, last_event_id):
-        calls["n"] += 1
-        if calls["n"] == 1:
+        if new.value == failing_write and not failed["done"]:
+            failed["done"] = True
             raise RuntimeError("store down")
         repo.transition_lifecycle_state(record_id, expected, new, last_event_id)
 
     manager = EmergencyExpiryManager(
         signing_key=signing_key,
-        audit_logger=lambda entry: None,
+        audit_logger=audit,
         state_writer=flaky_writer,
         clock=clock,
     )
     _register(manager, _build_scenario(RECORD), duration_seconds=10)
     clock.advance(10)
-    manager.check_and_expire_due()
-    assert repo.get_lifecycle_state(RECORD) is LifecycleState.EMERGENCY_OPEN
+    assert manager.check_and_expire_due() == []  # the store write failed
+    assert failed["done"]
 
     clock.advance(5)
-    manager.check_and_expire_due()
+    assert len(manager.check_and_expire_due()) == 1
     assert repo.get_lifecycle_state(RECORD) is LifecycleState.GRANTED
+    # Each transition is in the chain exactly once, under one event id.
+    assert [e["to_state"] for e in audit.entries] == ["expired", "granted"]
+    assert len({e["event_id"] for e in audit.entries}) == 2
 
 
 def test_timer_mirror_does_not_overwrite_a_changed_state(signing_key, caplog):

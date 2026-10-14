@@ -10,6 +10,8 @@ rather than being swallowed.
 
 from __future__ import annotations
 
+import threading
+
 import httpx
 import pytest
 from api import audit_client
@@ -174,3 +176,54 @@ def test_append_refuses_a_chain_that_goes_backwards(monkeypatch):
     append_entry("http://audit:8020", **kwargs)
     with pytest.raises(AuditServiceError, match="went backwards"):
         append_entry("http://audit:8020", **kwargs)
+
+
+def test_concurrent_appends_answered_out_of_order_are_accepted(monkeypatch):
+    """Two appends in flight together may come back in either order: A is
+    committed at seq 40 but answered after B (seq 41). Neither is refused; a
+    later entry below what was seen is still refused (review F31)."""
+    both_sent = threading.Barrier(2)
+    b_answered = threading.Event()
+
+    def fake_post(url, *, json, timeout, verify=True):
+        if json["correlation_id"] == "late":
+            return _FakeResponse(200, {"entry": {"seq": 39}})
+        both_sent.wait(timeout=5)
+        if json["correlation_id"] == "a":
+            b_answered.wait(timeout=5)
+            return _FakeResponse(200, {"entry": {"seq": 40}})
+        return _FakeResponse(200, {"entry": {"seq": 41}})
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    errors: list[Exception] = []
+
+    def run(correlation_id: str) -> None:
+        try:
+            append_entry(
+                "http://audit:8020",
+                event_type="t",
+                event_data={},
+                actor_id="a",
+                correlation_id=correlation_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - collected and asserted below
+            errors.append(exc)
+        finally:
+            if correlation_id == "b":
+                b_answered.set()
+
+    threads = [threading.Thread(target=run, args=(c,)) for c in ("a", "b")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+    assert errors == []
+
+    with pytest.raises(AuditServiceError, match="went backwards"):
+        append_entry(
+            "http://audit:8020",
+            event_type="t",
+            event_data={},
+            actor_id="a",
+            correlation_id="late",
+        )

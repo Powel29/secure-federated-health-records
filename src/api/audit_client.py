@@ -27,21 +27,32 @@ import httpx
 DEFAULT_TIMEOUT_SECONDS = 5.0
 
 # Highest seq each audit service has returned to this process (review F31).
-# A lower one means the chain was truncated or swapped; refuse it. In memory
-# only: a restarted process starts trusting again from the next entry.
+# In memory only: a restarted process starts trusting again from the next entry.
 _last_seq: dict[str, int] = {}
 _last_seq_lock = threading.Lock()
 
 
-def _check_seq_advances(audit_service_url: str, seq: int) -> None:
+def _seq_before_send(audit_service_url: str) -> int:
+    """The highest seq seen before this append was sent."""
     with _last_seq_lock:
-        last = _last_seq.get(audit_service_url, -1)
-        if seq <= last:
+        return _last_seq.get(audit_service_url, -1)
+
+
+def _check_seq_advances(audit_service_url: str, seq: int, before: int) -> None:
+    """Refuse an entry that is not after every entry seen before it was sent.
+
+    Every entry already returned was committed before this append was sent, so
+    this one must come after it; a lower seq means a truncated or replaced
+    chain. Concurrent appends may return out of order, so the check is against
+    ``before``, not the latest seq seen since.
+    """
+    with _last_seq_lock:
+        if seq <= before:
             raise AuditServiceError(
-                f"audit chain went backwards: seq {seq} after {last} "
+                f"audit chain went backwards: seq {seq} after {before} "
                 "(truncated or replaced chain)"
             )
-        _last_seq[audit_service_url] = seq
+        _last_seq[audit_service_url] = max(seq, _last_seq.get(audit_service_url, -1))
 
 
 _DISABLE_VALUES = {"0", "false", "no"}
@@ -105,6 +116,7 @@ def append_entry(
         transition should be tamper-evident) finds out immediately if it
         was not.
     """
+    before = _seq_before_send(audit_service_url)
     try:
         resp = httpx.post(
             f"{audit_service_url}/entries",
@@ -123,7 +135,7 @@ def append_entry(
             f"audit service append failed for correlation_id={correlation_id!r}: {exc}"
         ) from exc
     entry = resp.json()["entry"]
-    _check_seq_advances(audit_service_url, int(entry["seq"]))
+    _check_seq_advances(audit_service_url, int(entry["seq"]), before)
     return entry
 
 

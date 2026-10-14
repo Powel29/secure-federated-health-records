@@ -932,19 +932,31 @@ def create_hospital_app(
                 detail=f"Revocation refused: {exc}",
             ) from exc
 
+        record_replaced = False
         try:
             repo.insert_record(rev_result.rotated_record)
+            record_replaced = True
             repo.insert_dek_wrapping(rev_result.rotated_wrapping)
             repo.store_compiled_policy(
                 rev_result.rotated_record.policy_id, rev_result.compiled_policy
             )
             repo.insert_transition_event(event)
         except Exception as exc:
-            # Undo the claim so a failed write cannot leave the record
-            # REVOKED without its rotated ciphertext.
-            repo.transition_lifecycle_state(
-                record_id, expected=event.to_state, new=event.from_state
-            )
+            # Undo the claim, and put the old ciphertext back if the rotated
+            # one already replaced it, so a failed write cannot leave the
+            # record under a DEK its stored wrapping does not open.
+            if record_replaced:
+                repo.insert_record(record)
+            try:
+                repo.transition_lifecycle_state(
+                    record_id, expected=event.to_state, new=event.from_state
+                )
+            except StateConflictError:
+                # Keep the original error; the state moved underneath us.
+                _logger.error(
+                    "could not roll back the revocation claim on record %s",
+                    record_id,
+                )
             if isinstance(exc, RecordExistsError):
                 # The Postgres store has no in-place record rotation yet
                 # (review F10, blocked on D3/D4); refuse instead of a 500.

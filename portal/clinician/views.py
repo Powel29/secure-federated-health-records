@@ -460,7 +460,11 @@ def case_detail(request: Any, pk: int) -> HttpResponse:
         else:
             try:
                 hits = services.facility_emergency_search(
-                    case.facility_id, case.record_id, term, case.clinician_id
+                    case.facility_id,
+                    case.record_id,
+                    term,
+                    case.clinician_id,
+                    case.correlation_id,
                 )
                 ctx["search_results"] = hits
                 ctx["search_state"] = "TOKEN LIVE" if case.status == CaseStatus.OPEN else "TOKEN DEAD"
