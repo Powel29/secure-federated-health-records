@@ -1,7 +1,9 @@
 {% extends "base.html" %}
 {% block title %}{{ case.case_number }} · Emergency session · {{ product_name }}{% endblock %}
 {% block content %}
-{% if case.status == "open" %}<script>document.body.setAttribute("data-reload-on-expiry", "1");</script>{% endif %}
+{# At expiry, navigate (GET) to this case -- never reload: a reload of the declare response would re-POST it and declare again. #}
+{% if case.status == "open" %}<script>document.body.setAttribute("data-reload-on-expiry", "{% url 'clinician:case_detail' case.pk %}");</script>{% endif %}
+{% if just_opened %}<script>history.replaceState(null, "", "{% url 'clinician:case_detail' case.pk %}");</script>{% endif %}
 <div><a class="btn btn-ghost btn-sm" href="{% url 'clinician:cases' %}">← All emergency sessions</a></div>
 
 {% if just_opened %}
@@ -56,25 +58,7 @@
 {% endif %}
 
 <div class="grid-2">
-  <div class="card" {% if case.status != "open" %}style="opacity:.7"{% endif %}>
-    <div class="subhead">
-      <h3 class="card-title">Emergency search</h3>
-      <span class="tag {% if case.status == 'open' %}tag-accent{% else %}tag-neutral{% endif %}">{{ search_state|default:"" }}{% if not search_state %}{% if case.status == "open" %}token live{% else %}token dead{% endif %}{% endif %}</span>
-    </div>
-    <div class="small text-muted">Tokens derive from the emergency key via HKDF; they exist only while the record is EMERGENCY-OPEN and die at expiry.</div>
-    <form method="post" action="{% url 'clinician:case_detail' case.pk %}" class="flex mt-2">
-      {% csrf_token %}
-      <input class="input grow" type="text" name="search_term" value="{{ search_term|default:'' }}" placeholder="anticoagulant" style="min-width:200px">
-      <button class="btn btn-primary nowrap">Derive token and search</button>
-    </form>
-    {% if search_error %}<div class="notice notice-error small">{{ search_error }}</div>{% endif %}
-    {% if search_results is not None %}
-      <div class="table-wrap"><table class="table">
-        <thead><tr><th>Record</th><th>Matched on</th><th>Key path</th></tr></thead>
-        <tbody>{% for rid in search_results %}<tr><td class="mono">{{ rid }}</td><td class="mono small">HKDF(emergency key, "{{ search_term }}")</td><td class="small">Coded-index equality; contents never read by the store</td></tr>
-        {% empty %}<tr><td colspan="3" class="empty">No indexed record matches this term.</td></tr>{% endfor %}</tbody></table></div>
-    {% endif %}
-  </div>
+  {% include "clinician/_search_card.html" %}
 
   <div class="card">
     <div class="subhead">
@@ -95,4 +79,34 @@
     </div>
   </div>
 </div>
+
+<script>
+// In-page search: swap only the search card, so a search never reloads the
+// page and never drops a decrypted record shown above it. Without JS the
+// form still posts and the page re-renders as before.
+document.addEventListener("submit", function (ev) {
+  var form = ev.target;
+  if (!form.hasAttribute("data-inplace-search")) return;
+  ev.preventDefault();
+  var button = form.querySelector("button");
+  if (button) button.disabled = true;
+  fetch(form.action, {
+    method: "POST",
+    body: new FormData(form),
+    headers: { "X-Requested-With": "fetch" },
+    credentials: "same-origin",
+  })
+    .then(function (resp) {
+      if (!resp.ok) throw new Error(resp.status);
+      return resp.text();
+    })
+    .then(function (html) {
+      var card = document.getElementById("emergency-search");
+      card.outerHTML = html;
+      var input = document.querySelector("#emergency-search input[name=search_term]");
+      if (input) input.focus();
+    })
+    .catch(function () { form.submit(); });
+});
+</script>
 {% endblock %}

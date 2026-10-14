@@ -40,6 +40,7 @@
     <form method="post" class="stack">
       {% csrf_token %}
       <input type="hidden" name="patient_id" value="{{ patient_id }}">
+      <input type="hidden" name="declare_token" value="{{ declare_token }}">
       <div class="field">
         <label>Target record</label>
         {% if discovered %}

@@ -60,6 +60,7 @@ Each row links to a one-file ADR with the full context.
 | [0045](0045-p5-5-wire-claim-checks.md) | P5-5 wire-claim checks: scenario canary manifest searched in every encoding over reassembled TCP; claim-1 scope switch (`all` default, fails today per F18; `tls` = D6-b); claim 2 proven by the Postgres COMMIT preceding the release response; claim-4 metadata pick validated on plain | Proposed | 2026-10-07 | Powel (P5-5 handover from Nandini to confirm) → all four | P5-5, F18, D6 |
 | [0046](0046-p5-1-claim-registry-and-strict-xfail.md) | P5-1 evidence rules: `claim(id, level)` marker + registry meta-test; only system-level tests decide a claim; known-false claims kept at full strength as `xfail(strict=True)` citing a review finding; mutation check per control; CI fails instead of skipping without Postgres | Proposed | 2026-10-07 | Powel (P5-1 is Ojas's) → Ojas review → all four | P5-1, F34, F42 |
 | [0047](0047-local-deployment-state-and-tls.md) | Shared encrypted policy and signed consent storage; verified bootstrap completion; loopback Compose portal and verified TLS | Proposed | 2026-10-09 | Avaneeth → Ojas (deploy, wire) → all four | deployment review |
+| [0048](0048-one-time-breakglass-declaration-token.md) | Clinician portal: one-time declaration token (replayed or token-less declare → 409, nothing signed); expiry refresh is a GET of the case URL, never a reload; emergency search swaps only its card | Proposed | 2026-10-14 | Powel (P4-8 is Nandini's) → Nandini review → all four | P4-8, live demo 120 s loop |
 
 ## Owed, not yet written
 

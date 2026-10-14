@@ -140,6 +140,68 @@ class BreakglassTests(TestCase):
             self.client.post("/clinician/identify/", {"family_name": "Vance", "date_of_birth": "1982-04-15", "given_name": "Alice"})
             self.client.post("/clinician/identify/select/", {"patient_id": "pat-101"})
 
+    def _token(self) -> str:
+        return self.client.session["clinician.declare_token"]
+
+    def _declare_mocks(self, audit: AuditLog, unlock: mock.Mock) -> object:
+        return patched(
+            facility_discover=mock.Mock(return_value=["rec-001"]),
+            custodian_breakglass=unlock,
+            audit_append=audit,
+            custodian_subject=mock.Mock(return_value=SUBJECT_CLINICIAN),
+        )
+
+    def test_resubmitted_declaration_does_not_declare_again(self) -> None:
+        """A replayed declare POST (reload, Back, expiry refresh) signs nothing and opens no second case."""
+        audit = AuditLog()
+        self._identify(audit)
+        unlock = mock.Mock(return_value=UNLOCK)
+        with self._declare_mocks(audit, unlock), mock.patch(
+            "portal_core.store_reader.record_meta", return_value=RECORD_META
+        ), mock.patch("portal_core.store_reader.audit_by_correlation", return_value=[]):
+            self.client.post("/clinician/breakglass/", {"action": "discover", "patient_id": "pat-101"})
+            form = {"action": "declare", "patient_id": "pat-101", "record_id": "rec-001",
+                    "reason_code": "stroke", "declare_token": self._token()}
+            first = self.client.post("/clinician/breakglass/", form)
+            again = self.client.post("/clinician/breakglass/", form)
+        # Setup was valid: the first declaration went through.
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(again.status_code, 409)
+        self.assertContains(again, "already submitted", status_code=409)
+        unlock.assert_called_once()
+        self.assertEqual(BreakglassCase.objects.filter(record_id="rec-001").count(), 1)
+        self.assertEqual(PatientNotification.objects.filter(kind=NotificationKind.BREAKGLASS).count(), 1)
+
+    def test_declaration_without_a_form_token_is_refused(self) -> None:
+        audit = AuditLog()
+        self._identify(audit)
+        unlock = mock.Mock(return_value=UNLOCK)
+        with self._declare_mocks(audit, unlock), mock.patch(
+            "portal_core.store_reader.record_meta", return_value=RECORD_META
+        ):
+            self.client.post("/clinician/breakglass/", {"action": "discover", "patient_id": "pat-101"})
+            resp = self.client.post(
+                "/clinician/breakglass/",
+                {"action": "declare", "patient_id": "pat-101", "record_id": "rec-001", "reason_code": "stroke"},
+            )
+        self.assertEqual(resp.status_code, 409)
+        unlock.assert_not_called()
+        self.assertFalse(BreakglassCase.objects.exists())
+
+    def test_case_page_refreshes_to_its_own_url_at_expiry(self) -> None:
+        """The expiry refresh is a GET of the case, never a reload of the declare POST."""
+        case = BreakglassCase.objects.create(
+            correlation_id="lookup-z", record_id="rec-001", patient_id="pat-101", clinician_id="doc-201",
+            facility_id="facility-b", reason_code="stroke", status=CaseStatus.OPEN,
+            opened_at=timezone.now(), expires_at=timezone.now() + timedelta(minutes=2),
+        )
+        with patched(custodian_subject=mock.Mock(return_value=SUBJECT_CLINICIAN)), mock.patch(
+            "portal_core.store_reader.audit_by_correlation", return_value=[]
+        ):
+            resp = self.client.get(f"/clinician/cases/{case.pk}/")
+        self.assertContains(resp, f'setAttribute("data-reload-on-expiry", "/clinician/cases/{case.pk}/")')
+        self.assertNotContains(resp, "location.reload()")
+
     def test_declaration_without_identification_is_refused(self) -> None:
         with patched(custodian_breakglass=mock.Mock(), custodian_subject=mock.Mock(return_value=SUBJECT_CLINICIAN)) as m:
             resp = self.client.post("/clinician/breakglass/", {"action": "declare", "reason_code": "stroke"})
@@ -162,7 +224,8 @@ class BreakglassTests(TestCase):
             resp = self.client.post(
                 "/clinician/breakglass/",
                 {"action": "declare", "patient_id": "pat-101", "record_id": "rec-001",
-                 "reason_code": "unconscious_patient", "justification": "Unresponsive on arrival."},
+                 "reason_code": "unconscious_patient", "justification": "Unresponsive on arrival.",
+                 "declare_token": self._token()},
             )
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, "Penicillin")  # shown on this response only
@@ -201,7 +264,8 @@ class BreakglassTests(TestCase):
             self.client.post("/clinician/breakglass/", {"action": "discover", "patient_id": "pat-101"})
             resp = self.client.post(
                 "/clinician/breakglass/",
-                {"action": "declare", "patient_id": "pat-101", "record_id": "rec-001", "reason_code": "stroke"},
+                {"action": "declare", "patient_id": "pat-101", "record_id": "rec-001", "reason_code": "stroke",
+                 "declare_token": self._token()},
             )
         self.assertEqual(resp.status_code, 503)
         self.assertContains(resp, "share was not released", status_code=503)
@@ -223,6 +287,25 @@ class BreakglassTests(TestCase):
         self.assertContains(resp, "expired")
         case.refresh_from_db()
         self.assertEqual(case.status, CaseStatus.EXPIRED)
+
+    def test_in_page_search_returns_only_the_search_card(self) -> None:
+        case = BreakglassCase.objects.create(
+            correlation_id="lookup-y", record_id="rec-001", patient_id="pat-101", clinician_id="doc-201",
+            facility_id="facility-b", reason_code="stroke", status=CaseStatus.OPEN,
+            opened_at=timezone.now(), expires_at=timezone.now() + timedelta(minutes=2),
+        )
+        with patched(
+            facility_emergency_search=mock.Mock(return_value=["rec-001"]),
+            custodian_subject=mock.Mock(return_value=SUBJECT_CLINICIAN),
+        ), mock.patch("portal_core.store_reader.audit_by_correlation", return_value=[]):
+            resp = self.client.post(
+                f"/clinician/cases/{case.pk}/", {"search_term": "cardiac"}, HTTP_X_REQUESTED_WITH="fetch"
+            )
+        self.assertContains(resp, 'id="emergency-search"')
+        self.assertContains(resp, 'HKDF(emergency key, "cardiac")')
+        # Only the card: the page around it (and any record shown there) is untouched.
+        self.assertNotContains(resp, "Threshold collection")
+        self.assertNotContains(resp, "<html")
 
 
 class ConsentReadTests(TestCase):

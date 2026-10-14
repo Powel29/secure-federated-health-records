@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import json
+import secrets
 from datetime import date
 from typing import Any
 from uuid import uuid4
@@ -50,6 +51,7 @@ REASON_CODES = [
 ]
 REQUEST_TTL_DAYS = 7
 _DISCOVERY_SESSION_KEY = "clinician.discovery"
+_DECLARE_TOKEN_KEY = "clinician.declare_token"
 
 
 def _session_safe(meta: dict[str, Any]) -> dict[str, Any]:
@@ -239,6 +241,19 @@ def _identified(request: Any, patient_id: str) -> dict[str, Any]:
     return {"patient_id": patient_id, "correlation_id": f"bg-{uuid4()}"}
 
 
+def _render_breakglass(request: Any, ctx: dict[str, Any], status: int = 200) -> HttpResponse:
+    """Render the break-glass form with a fresh one-time declaration token.
+
+    A declare POST must carry the token of the form it came from, and the token
+    is spent on first use: a reload, Back, or the page's own expiry refresh of a
+    declare response cannot re-declare (the 120 s re-declare loop).
+    """
+    token = secrets.token_urlsafe(16)
+    request.session[_DECLARE_TOKEN_KEY] = token
+    ctx["declare_token"] = token
+    return render(request, "clinician/breakglass.html", ctx, status=status)
+
+
 @role_required(Role.CLINICIAN)
 def breakglass(request: Any) -> HttpResponse:
     ctx = _base_ctx(request, "Emergency break-glass")
@@ -256,33 +271,43 @@ def breakglass(request: Any) -> HttpResponse:
         }
     )
     if request.method != "POST":
-        return render(request, "clinician/breakglass.html", ctx)
+        return _render_breakglass(request, ctx)
 
     action = request.POST.get("action")
     if not patient_id:
         ctx["error"] = "Identify the patient first — an assertion is bound to a patient_id."
-        return render(request, "clinician/breakglass.html", ctx, status=400)
+        return _render_breakglass(request, ctx, status=400)
 
     if action == "discover":
         try:
             found = _discover(ctx["facility_id"], patient_id)
         except ServiceError as exc:
             ctx["error"] = f"Discovery refused — {exc.service}: {exc.detail}"
-            return render(request, "clinician/breakglass.html", ctx, status=502)
+            return _render_breakglass(request, ctx, status=502)
         session = request.session.get(_DISCOVERY_SESSION_KEY) or {}
         session[patient_id] = found
         request.session[_DISCOVERY_SESSION_KEY] = session
         ctx["discovered"] = found
-        return render(request, "clinician/breakglass.html", ctx)
+        return _render_breakglass(request, ctx)
 
     # action == "declare"
+    # Spend the form's one-time token before anything is signed or requested.
+    submitted = request.POST.get("declare_token", "")
+    expected = request.session.pop(_DECLARE_TOKEN_KEY, None)
+    if not expected or not secrets.compare_digest(submitted, expected):
+        ctx["error"] = (
+            "This declaration was already submitted or the form is stale — nothing was "
+            "signed and no share was requested. Check Emergency sessions before declaring again."
+        )
+        return _render_breakglass(request, ctx, status=409)
+
     record_id = request.POST.get("record_id", "").strip()
     reason_code = request.POST.get("reason_code", "")
     justification = request.POST.get("justification", "").strip()
     ctx.update({"reason_code": reason_code, "justification": justification, "record_id": record_id})
     if not record_id or reason_code not in dict(REASON_CODES):
         ctx["error"] = "Choose a discovered record and a reason code."
-        return render(request, "clinician/breakglass.html", ctx, status=400)
+        return _render_breakglass(request, ctx, status=400)
 
     ident = _identified(request, patient_id)
     correlation_id = ident["correlation_id"]
@@ -309,9 +334,7 @@ def breakglass(request: Any) -> HttpResponse:
             failure_reason=f"{exc.service}: {exc.detail}",
         )
         ctx.update({"error": f"Break-glass refused — {exc.service}: {exc.detail}", "failed_case": case})
-        return render(
-            request, "clinician/breakglass.html", ctx, status=403 if exc.is_denial else 503
-        )
+        return _render_breakglass(request, ctx, status=403 if exc.is_denial else 503)
 
     case = BreakglassCase.objects.create(
         correlation_id=result["correlation_id"],
@@ -458,6 +481,10 @@ def case_detail(request: Any, pk: int) -> HttpResponse:
                 if exc.status == 403 and case.status == CaseStatus.OPEN:
                     case.status = CaseStatus.EXPIRED
                     case.save(update_fields=["status"])
+        # In-page search swaps only the search card, so a decrypted record
+        # already on screen is not lost to a full re-render.
+        if request.headers.get("X-Requested-With") == "fetch":
+            return render(request, "clinician/_search_card.html", ctx)
     return render(request, "clinician/case.html", ctx)
 
 
