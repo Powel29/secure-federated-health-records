@@ -116,3 +116,48 @@ class TestHospitalRevocationEndpoint:
 
         assert response.status_code == 400
         assert "Revocation failed" in response.json()["detail"]
+
+    def test_failed_write_after_claim_restores_the_record(
+        self, test_setup, monkeypatch
+    ):
+        """A write failing after the rotated ciphertext was stored puts the old
+        ciphertext back with the state, so the record still opens under its
+        stored wrapping (no record left under a DEK nothing unwraps)."""
+        import pytest
+        from policy.engine import decrypt_record_via_policy, unwrap_dek_via_policy
+
+        client = test_setup["client"]
+        repo = test_setup["repo"]
+        attrs = test_setup["attrs"]
+        original = repo.get_record("rec-001")
+        compiled = repo.get_compiled_policy(original.policy_id)
+        old_dek = unwrap_dek_via_policy(
+            compiled, attrs["attr_keyring"], test_setup["wrapping"]
+        )
+
+        def store_down(wrapping):
+            raise RuntimeError("store down")
+
+        monkeypatch.setattr(repo, "insert_dek_wrapping", store_down)
+        with pytest.raises(RuntimeError, match="store down"):
+            client.post(
+                "/records/rec-001/revoke",
+                json={
+                    "actor_id": "patient-001",
+                    "actor_signing_key_pem": private_key_to_pem(
+                        test_setup["pki"]["pat_priv"]
+                    ).decode("ascii"),
+                    "old_dek_b64": base64.b64encode(old_dek).decode("ascii"),
+                    "new_clinical_policy": attrs["clinical_policy"].model_dump(
+                        mode="json"
+                    ),
+                    "owner_authority_id": "authority-net",
+                    "attribute_keyring": attrs["b64_keyring"],
+                },
+            )
+
+        assert repo.get_lifecycle_state("rec-001") == LifecycleState.GRANTED
+        assert repo.get_record("rec-001") == original
+        assert decrypt_record_via_policy(
+            compiled, attrs["attr_keyring"], test_setup["wrapping"], original
+        )
