@@ -13,6 +13,12 @@ Two views :mod:`wire.analyze_search_leakage` adds to its HTTP view (ADR-0070):
   are visible. Paired with the token lookups by time, they give a per-search
   size and latency the observer can measure without a key.
 
+When the store link is encrypted (the TLS profile since ADR-0071) the first
+view is empty -- :func:`pg_link_status` says so -- and the TLS exchanges are
+labelled from the workload's own search manifest instead
+(:func:`label_tls_exchanges`): the labels say which exchange was which search,
+while every size and time measured still comes off the wire.
+
 Both are pure functions over reassembled flows (:mod:`wire.streams`), so they
 run in tests without tshark. A flow with a lost segment is read only up to the
 gap: parsing across it could invent messages that never crossed the wire.
@@ -78,6 +84,37 @@ def _usable(flow: Flow) -> bytes:
 def _cstring(buf: bytes, pos: int) -> tuple[str, int]:
     end = buf.index(b"\x00", pos)
     return buf[pos:end].decode("utf-8", "replace"), end + 1
+
+
+def pg_link_status(flows: dict[FlowKey, Flow], db_port: int) -> dict[str, int]:
+    """How many store connections ran in the clear and how many over TLS.
+
+    A connection is TLS when the client opened with an SSLRequest the server
+    accepted (``S``), or -- for a pooled connection opened before the capture
+    started -- when its first captured bytes are already TLS records. A plain
+    startup, a refused SSLRequest (``N``) or Postgres messages are plaintext;
+    anything else is counted as unknown rather than guessed.
+    """
+    status = {"connections": 0, "tls": 0, "plaintext": 0, "unknown": 0}
+    for key, flow in flows.items():
+        data = _usable(flow)
+        if key.dst_port != db_port or len(data) < 8:
+            continue
+        status["connections"] += 1
+        _length, code = struct.unpack("!II", data[:8])
+        reverse = flows.get(FlowKey(key.stream, key.dst_port, key.src_port))
+        answer = reverse.data[:1] if reverse else b""
+        if code == _PG_SSL_REQUEST:
+            status["tls" if answer == b"S" else "plaintext"] += 1
+        elif code == _PG_PROTOCOL_3:
+            status["plaintext"] += 1
+        elif data[0] in _TLS_RECORD_TYPES and data[1] == 3:
+            status["tls"] += 1
+        elif data[0] in _PG_FRONTEND_TYPES:
+            status["plaintext"] += 1
+        else:
+            status["unknown"] += 1
+    return status
 
 
 def pg_messages(flow: Flow, *, frontend: bool) -> list[PgMessage]:
@@ -240,7 +277,10 @@ class TlsMessage:
 
     An HTTP/1.1 message over TLS is a short burst of records -- here the
     headers, then the body -- so the burst, not one record, is the unit an
-    observer sizes.
+    observer sizes. On a fresh TLS 1.3 connection the server's session
+    tickets (also application-data records) can open the burst that carries
+    the response, so the body is the burst's last record and latency is
+    measured to ``last_timestamp``, never to the first record.
     """
 
     stream: int
@@ -248,6 +288,7 @@ class TlsMessage:
     dst_port: int
     timestamp: float
     record_lengths: tuple[int, ...]
+    last_timestamp: float
 
 
 def tls_messages(flows: dict[FlowKey, Flow]) -> list[TlsMessage]:
@@ -270,6 +311,7 @@ def tls_messages(flows: dict[FlowKey, Flow]) -> list[TlsMessage]:
                         dst_port=run[0].dst_port,
                         timestamp=run[0].timestamp,
                         record_lengths=tuple(r.length for r in run),
+                        last_timestamp=run[-1].timestamp,
                     )
                 )
                 run = []
@@ -288,8 +330,8 @@ def tls_exchanges_for_lookups(
     The request is the last message sent to a facility before the lookup; the
     response is the facility's first message after it on the same connection.
     Their record lengths are what TLS leaves visible -- the last record of
-    each is the HTTP body -- and the gap between them is the observer's
-    latency measurement.
+    each is the HTTP body -- and the gap between their last records is the
+    observer's latency measurement.
     """
     messages = tls_messages(flows)
     to_facility = [m for m in messages if m.dst_port in facility_ports]
@@ -326,10 +368,71 @@ def tls_exchanges_for_lookups(
                     list(response.record_lengths) if response else None
                 ),
                 "latency_seconds": (
-                    response.timestamp - request.timestamp
+                    response.last_timestamp - request.last_timestamp
                     if request and response
                     else None
                 ),
             }
         )
     return exchanges
+
+
+def label_tls_exchanges(
+    flows: dict[FlowKey, Flow],
+    searches: list[dict[str, object]],
+    facility_ports: set[int],
+    *,
+    lead: float = 0.001,
+    slack: float = 0.05,
+) -> list[dict[str, object]]:
+    """Find each known search's TLS request and response in the capture.
+
+    ``searches`` is the workload's manifest (``sent_at``/``answered_at`` from
+    the client's clock, the capture's clock on loopback). The client stamps
+    ``sent_at`` before it writes, so the request is the first message to a
+    facility from ``lead`` seconds before that on; reaching further back
+    picks up the previous request (the lifecycle poll before the refused
+    search did exactly that). The response is the facility's first message
+    back on the same connection by ``answered_at`` + ``slack``. A search with
+    no matching exchange keeps ``None`` sizes rather than borrowing a
+    neighbour's.
+    """
+    messages = tls_messages(flows)
+    to_facility = [m for m in messages if m.dst_port in facility_ports]
+    from_facility = [m for m in messages if m.src_port in facility_ports]
+    labelled: list[dict[str, object]] = []
+    for search in searches:
+        start = float(search["sent_at"]) - lead  # type: ignore[arg-type]
+        end = float(search["answered_at"]) + slack  # type: ignore[arg-type]
+        request = next((m for m in to_facility if start <= m.timestamp <= end), None)
+        response = (
+            next(
+                (
+                    m
+                    for m in from_facility
+                    if request.timestamp <= m.timestamp <= end
+                    and m.stream == request.stream
+                    and m.dst_port == request.src_port
+                ),
+                None,
+            )
+            if request
+            else None
+        )
+        labelled.append(
+            {
+                **search,
+                "request_record_lengths": (
+                    list(request.record_lengths) if request else None
+                ),
+                "response_record_lengths": (
+                    list(response.record_lengths) if response else None
+                ),
+                "latency_seconds": (
+                    response.last_timestamp - request.last_timestamp
+                    if request and response
+                    else None
+                ),
+            }
+        )
+    return labelled

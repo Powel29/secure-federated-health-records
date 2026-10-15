@@ -198,6 +198,7 @@ def run_scenario(
     client: httpx.Client | None = None,
     search_workload: bool = False,
     search_spacing_seconds: float | None = None,
+    searches_out: Path | None = None,
 ) -> bool:
     """Execute the full cross-hospital break-glass scenario.
 
@@ -217,6 +218,10 @@ def run_scenario(
             emergency window long enough for the first batch of searches.
         search_spacing_seconds: Gap between workload searches; defaults to
             :data:`SEARCH_SPACING_SECONDS`.
+        searches_out: With ``search_workload``, write every workload search
+            (term, outcome, send and answer time) here: the ground truth that
+            labels captured exchanges once the store link is encrypted
+            (ADR-0071). Synthetic terms only; keep it under ``wire/captures/``.
 
     Returns:
         True if all scenario steps succeed and all invariants hold.
@@ -655,7 +660,7 @@ def run_scenario(
     if search_workload:
         if not config or "root_certificate_pem" not in config:
             raise RuntimeError("the search workload needs deploy/pki/federation.json")
-        run_search_workload(
+        workload = run_search_workload(
             client,
             endpoints,
             record_id=record_id,
@@ -674,6 +679,15 @@ def run_scenario(
             ),
             log=log,
         )
+        if searches_out is not None:
+            searches_out.parent.mkdir(parents=True, exist_ok=True)
+            searches_out.write_text(
+                json.dumps(
+                    {"run_id": run_id, "searches": workload["searches"]}, indent=2
+                ),
+                encoding="utf-8",
+            )
+            log(f"  * Search manifest written to {searches_out}")
 
     if canaries_out is not None:
         _write_canaries(
@@ -748,12 +762,38 @@ class SearchClinician:
 
 
 def _emergency_search(
-    client: httpx.Client, facility_url: str, record_id: str, term: str, who: str
+    client: httpx.Client,
+    facility_url: str,
+    record_id: str,
+    term: str,
+    who: str,
+    *,
+    phase: str,
+    searches: list[dict[str, Any]],
 ) -> httpx.Response:
-    return client.post(
+    """One search, recorded in ``searches`` with when it left and was answered.
+
+    The record is ground truth for labelling captured exchanges (ADR-0071),
+    never an observation: what the observer learns still comes off the wire.
+    """
+    sent_at = time.time()
+    res = client.post(
         f"{facility_url}/records/{record_id}/emergency-search",
         json={"search_term": term, "requester_id": who},
     )
+    searches.append(
+        {
+            "phase": phase,
+            "term": term,
+            "status": res.status_code,
+            "record_count": (
+                res.json()["record_count"] if res.status_code == 200 else None
+            ),
+            "sent_at": sent_at,
+            "answered_at": time.time(),
+        }
+    )
+    return res
 
 
 def _search_batch(
@@ -763,11 +803,22 @@ def _search_batch(
     clinician_id: str,
     terms: tuple[str, ...],
     spacing: float,
+    *,
+    phase: str,
+    searches: list[dict[str, Any]],
 ) -> list[tuple[str, int]]:
     """Run ``terms`` in order, ``spacing`` apart; any non-200 is a failure."""
     results: list[tuple[str, int]] = []
     for term in terms:
-        res = _emergency_search(client, facility_url, record_id, term, clinician_id)
+        res = _emergency_search(
+            client,
+            facility_url,
+            record_id,
+            term,
+            clinician_id,
+            phase=phase,
+            searches=searches,
+        )
         if res.status_code != 200:
             raise RuntimeError(
                 f"workload search {term!r} failed: {res.status_code} {res.text}"
@@ -806,7 +857,7 @@ def run_search_workload(
     log: Callable[[str], None] = print,
     spacing: float = SEARCH_SPACING_SECONDS,
     rotation_timeout: float = 60.0,
-) -> dict[str, list[tuple[str, int]]]:
+) -> dict[str, list[Any]]:
     """Drive the P5-3 search workload against a running federation (ADR-0070).
 
     Opt-in and synthetic: it only searches the scenario's own record. Phases:
@@ -822,7 +873,9 @@ def run_search_workload(
 
     Every request crosses the wire, so the capture -- not this function's
     return value -- is the evidence; the return value lets a test check the
-    workload did what it says.
+    workload did what it says. Its ``searches`` list (term, outcome and
+    timing of every search, the refused one included) is what
+    ``--searches-out`` writes, to label the captured exchanges (ADR-0071).
     """
     if not endpoints.custodian:
         raise RuntimeError("the search workload needs the custodian (rotated share 1)")
@@ -831,6 +884,7 @@ def run_search_workload(
         "facility-b": endpoints.facility_b,
     }
     open_url = facility_urls[clinician.facility_id]
+    searches: list[dict[str, Any]] = []
 
     log("[P5-3] Search workload: repeated and distinct emergency searches...")
     opened = _search_batch(
@@ -840,6 +894,8 @@ def run_search_workload(
         clinician.clinician_id,
         SEARCH_WORKLOAD_OPEN,
         spacing,
+        phase="open",
+        searches=searches,
     )
     log(f"  * {len(opened)} searches under the first session: {opened}")
 
@@ -848,7 +904,13 @@ def run_search_workload(
         client, open_url, record_id, LifecycleState.GRANTED, rotation_timeout
     )
     refused = _emergency_search(
-        client, open_url, record_id, SEARCH_WORKLOAD_OPEN[0], clinician.clinician_id
+        client,
+        open_url,
+        record_id,
+        SEARCH_WORKLOAD_OPEN[0],
+        clinician.clinician_id,
+        phase="expired",
+        searches=searches,
     )
     if refused.status_code != 403:
         raise RuntimeError(
@@ -911,9 +973,11 @@ def run_search_workload(
         clinician.clinician_id,
         SEARCH_WORKLOAD_REOPENED,
         spacing,
+        phase="reopened",
+        searches=searches,
     )
     log(f"  * {len(reopened)} searches under the second session: {reopened}")
-    return {"open": opened, "reopened": reopened}
+    return {"open": opened, "reopened": reopened, "searches": searches}
 
 
 def _write_canaries(
@@ -977,6 +1041,13 @@ def main() -> int:
         "distinct searches, one after expiry, more after a second break-glass "
         "(ADR-0070).",
     )
+    parser.add_argument(
+        "--searches-out",
+        type=Path,
+        default=None,
+        help="With --search-workload, write each search's term, outcome and "
+        "timing here to label the capture (ADR-0071; keep under wire/captures/).",
+    )
     args = parser.parse_args()
     duration = args.duration
     if duration is None:
@@ -1011,6 +1082,7 @@ def main() -> int:
             verbose=True,
             canaries_out=args.canaries_out,
             search_workload=args.search_workload,
+            searches_out=args.searches_out,
         )
         return 0 if success else 1
     except Exception as exc:

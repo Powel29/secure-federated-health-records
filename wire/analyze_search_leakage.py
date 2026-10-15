@@ -15,7 +15,10 @@ application arguments or source-code assumptions.
 Beyond the HTTP view, the database link and the TLS record sizes are read
 too (:mod:`wire.search_wire`, ADR-0070): the token each search looks up, its
 row count, and -- over TLS, where the HTTP view is empty -- the size and
-latency of each search exchange.
+latency of each search exchange. Once the store link is encrypted too
+(ADR-0071) the database view is empty; ``--searches`` then names which TLS
+exchange was which search, so the sizes can still be measured against the
+truth.
 """
 
 from __future__ import annotations
@@ -34,6 +37,8 @@ import pyshark
 from wire.capture import default_db_port
 from wire.search_wire import (
     TokenLookup,
+    label_tls_exchanges,
+    pg_link_status,
     search_token_lookups,
     tls_exchanges_for_lookups,
 )
@@ -385,8 +390,79 @@ def summarize_tls_exchanges(
     }
 
 
-def analyze_search_capture(path: Path, *, db_port: int) -> dict[str, Any]:
-    """Analyze search-related traffic in one real PCAP."""
+def _outcome(search: dict[str, Any]) -> str:
+    if search["status"] != 200:
+        return "refused"
+    return "hit" if (search["record_count"] or 0) > 0 else "miss"
+
+
+def summarize_labelled_tls(labelled: list[dict[str, Any]]) -> dict[str, Any]:
+    """What TLS sizes and times give away, checked against the known searches.
+
+    Each figure is measured on the wire; the labels only say which exchange
+    was which search. ``request_body_minus_term_length`` with one value means
+    the request size gives the term's length exactly; the observer then sees
+    term frequency only up to terms of equal length
+    (``observable_request_size_frequency``).
+    """
+    matched = [x for x in labelled if x["request_record_lengths"]]
+    response_body: dict[str, set[int]] = {}
+    latency: dict[str, list[float]] = {}
+    by_term: dict[str, set[int]] = {}
+    overhead: set[int] = set()
+    for x in matched:
+        outcome = _outcome(x)
+        if x["response_record_lengths"]:
+            response_body.setdefault(outcome, set()).add(
+                x["response_record_lengths"][-1]
+            )
+        if x["latency_seconds"] is not None:
+            latency.setdefault(outcome, []).append(float(x["latency_seconds"]))
+        body = x["request_record_lengths"][-1]
+        by_term.setdefault(x["term"], set()).add(body)
+        overhead.add(body - len(x["term"]))
+    sizes_separate = all(
+        not (response_body.get(a, set()) & response_body.get(b, set()))
+        for a, b in (("hit", "miss"), ("hit", "refused"), ("miss", "refused"))
+    )
+    return {
+        "labelled_searches": len(labelled),
+        "matched_exchanges": len(matched),
+        "exchanges": labelled,
+        "response_body_record_bytes_by_outcome": {
+            k: sorted(v) for k, v in sorted(response_body.items())
+        },
+        "outcomes_separable_by_response_size": sizes_separate,
+        "request_body_record_bytes_by_term": {
+            k: sorted(v) for k, v in sorted(by_term.items())
+        },
+        "request_body_minus_term_length": sorted(overhead),
+        "observable_request_size_frequency": dict(
+            sorted(
+                Counter(
+                    x["request_record_lengths"][-1]
+                    for x in matched
+                    if x["status"] == 200
+                ).items()
+            )
+        ),
+        "mean_latency_seconds_by_outcome": {
+            k: _mean(v) for k, v in sorted(latency.items())
+        },
+        "median_latency_seconds_by_outcome": {
+            k: _median(v) for k, v in sorted(latency.items())
+        },
+    }
+
+
+def analyze_search_capture(
+    path: Path, *, db_port: int, searches: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """Analyze search-related traffic in one real PCAP.
+
+    ``searches`` is the workload's manifest (ADR-0071); it only labels TLS
+    exchanges and is never counted as an observation.
+    """
     if not path.exists():
         raise FileNotFoundError(f"Capture not found: {path}")
 
@@ -416,7 +492,12 @@ def analyze_search_capture(path: Path, *, db_port: int) -> dict[str, Any]:
         summarize_tls_exchanges(
             tls_exchanges_for_lookups(flows, lookups, FACILITY_PORTS), lookups
         )
-        if tls_packets
+        if tls_packets and lookups
+        else None
+    )
+    labelled_tls = (
+        summarize_labelled_tls(label_tls_exchanges(flows, searches, FACILITY_PORTS))
+        if tls_packets and searches
         else None
     )
     return {
@@ -430,9 +511,11 @@ def analyze_search_capture(path: Path, *, db_port: int) -> dict[str, Any]:
         "uris_observable": bool(events),
         "db_port": db_port,
         **summary,
+        "database_link_connections": pg_link_status(flows, db_port),
         "database_link": summarize_token_leakage(lookups, summary["queries"]),
         "http_timing": summarize_timing(summary["queries"]),
         "tls_view": tls_view,
+        "labelled_tls_view": labelled_tls,
     }
 
 
@@ -454,9 +537,23 @@ def main() -> int:
         help="Postgres port whose link carries the token lookups "
         "(default: DATABASE_URL's port)",
     )
+    parser.add_argument(
+        "--searches",
+        type=Path,
+        default=None,
+        help="the workload's search manifest (<mode>-search.searches.json) to "
+        "label TLS exchanges when the store link is encrypted (ADR-0071)",
+    )
     args = parser.parse_args()
 
-    result = analyze_search_capture(args.capture, db_port=args.db_port)
+    searches = (
+        json.loads(args.searches.read_text(encoding="utf-8"))["searches"]
+        if args.searches
+        else None
+    )
+    result = analyze_search_capture(
+        args.capture, db_port=args.db_port, searches=searches
+    )
 
     print("P5-3 Search Leakage Analysis")
     print("=" * 40)
@@ -499,7 +596,12 @@ def main() -> int:
     )
 
     db = result["database_link"]
+    link = result["database_link_connections"]
     print("\n[Database link (token lookups)]")
+    print(
+        f"  connections: {link['connections']} "
+        f"(tls {link['tls']}, plaintext {link['plaintext']})"
+    )
     print(f"  lookups: {db['token_lookups']}, distinct: {db['distinct_tokens']}")
     print(f"  token frequency: {list(db['token_frequency'].values())}")
     print(f"  lookups by visible row count: {db['lookups_by_row_count']}")
@@ -527,12 +629,37 @@ def main() -> int:
             median = tls_view["median_latency_seconds_by_db_rows"][rows]
             print(f"  db rows={rows}: latency mean={mean} median={median}")
 
+    if result["labelled_tls_view"] is not None:
+        lab = result["labelled_tls_view"]
+        print("\n[TLS view (exchanges labelled by the search manifest)]")
+        print(
+            f"  matched {lab['matched_exchanges']} of "
+            f"{lab['labelled_searches']} searches"
+        )
+        for outcome, sizes in lab["response_body_record_bytes_by_outcome"].items():
+            print(f"  {outcome}: response body record bytes={sizes}")
+        print(
+            "  request body record - term length: "
+            f"{lab['request_body_minus_term_length']}"
+        )
+        print(
+            "  request size frequency seen: "
+            f"{lab['observable_request_size_frequency']}"
+        )
+        for outcome, median in lab["median_latency_seconds_by_outcome"].items():
+            print(f"  {outcome}: median latency={median}")
+
     if args.json:
         args.json.parent.mkdir(parents=True, exist_ok=True)
         args.json.write_text(json.dumps(result, indent=2), encoding="utf-8")
         print(f"\nJSON report written to: {args.json}")
 
-    if result["query_volume"] == 0 and not result["database_link"]["token_lookups"]:
+    labelled = result["labelled_tls_view"]
+    if (
+        result["query_volume"] == 0
+        and not result["database_link"]["token_lookups"]
+        and not (labelled and labelled["matched_exchanges"])
+    ):
         print(
             "\nERROR: no search traffic was found in this capture. "
             "P5-3 evidence requires a capture containing real searches."

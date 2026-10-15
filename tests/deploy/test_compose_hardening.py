@@ -122,3 +122,35 @@ def test_portal_takes_the_store_password_from_deploy_env(monkeypatch, tmp_path):
     import os
 
     assert os.environ["PGPASSWORD"] == store_password
+
+
+def test_store_serves_tls_only_in_the_tls_profile(compose):
+    """ADR-0071: the store wraps its entrypoint to serve TLS and refuse plaintext."""
+    store = compose["services"]["store"]
+    assert store["entrypoint"] == ["sh", "/store-entrypoint.sh"]
+    assert store["environment"]["TLS_ENABLED"] == "${TLS_ENABLED:-false}"
+    assert "./store-entrypoint.sh:/store-entrypoint.sh:ro" in store["volumes"]
+    # Only the store's own key directory, never the whole certs tree (ADR-0047).
+    assert "../wire/certs/store:/tls/store:ro" in store["volumes"]
+    script = (DEPLOY / "store-entrypoint.sh").read_bytes()
+    assert b"\r\n" not in script  # runs under sh in a Linux container
+    text = script.decode("utf-8")
+    assert "hostnossl all all all reject" in text
+    assert "-c ssl=on" in text
+
+
+def test_every_store_client_follows_the_tls_profile(compose):
+    """Each service that dials the store gets the flag and the store's cert."""
+    for name, service in compose["services"].items():
+        env = service.get("environment", {})
+        if "DATABASE_URL" not in env:
+            continue
+        assert "sslmode" not in env["DATABASE_URL"], name
+        assert env.get("TLS_ENABLED") == "${TLS_ENABLED:-false}", name
+        assert "../wire/certs/trust:/tls/trust:ro" in service.get("volumes", []), name
+    # The migrate job applies the profile before connecting (deploy.migrate).
+    assert compose["services"]["migrate"]["entrypoint"] == [
+        "python",
+        "-m",
+        "deploy.migrate",
+    ]
