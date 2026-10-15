@@ -1,4 +1,4 @@
-"""Unit tests for the P5-3 database-link and TLS-size views (ADR-0070).
+"""Unit tests for the P5-3 database-link and TLS-size views (ADR-0070, 0071).
 
 Postgres and TLS bytes are built by hand, so the parsers run without tshark;
 each control is driven both ways (holding and violated).
@@ -11,12 +11,15 @@ import struct
 from wire.analyze_search_leakage import (
     _body_text,
     link_queries_to_lookups,
+    summarize_labelled_tls,
     summarize_search_leakage,
     summarize_token_leakage,
 )
 from wire.search_wire import (
     TokenLookup,
     fingerprint,
+    label_tls_exchanges,
+    pg_link_status,
     search_token_lookups,
     tls_exchanges_for_lookups,
     tls_messages,
@@ -143,6 +146,34 @@ def _record(content_type: int, length: int) -> bytes:
     return bytes([content_type, 3, 3]) + struct.pack("!H", length) + b"\x00" * length
 
 
+class TestLinkStatus:
+    def test_plaintext_and_tls_connections_are_told_apart(self):
+        ssl_request = struct.pack("!II", 8, 80877103)
+        segments = [
+            # stream 3: plaintext startup
+            Segment(1, 1.0, 3, CLIENT, DB, 1, _startup()),
+            Segment(2, 1.1, 3, DB, CLIENT, 1, _msg(b"R", b"\x00" * 4)),
+            # stream 4: SSLRequest accepted ("S"), then TLS bytes
+            Segment(3, 2.0, 4, CLIENT + 1, DB, 1, ssl_request),
+            Segment(4, 2.1, 4, DB, CLIENT + 1, 1, b"S"),
+            # stream 5: SSLRequest refused ("N") -- the client went on in clear
+            Segment(5, 3.0, 5, CLIENT + 2, DB, 1, ssl_request + _startup()),
+            Segment(6, 3.1, 5, DB, CLIENT + 2, 1, b"N"),
+        ]
+        status = pg_link_status(reassemble(segments), DB)
+        assert status == {"connections": 3, "tls": 1, "plaintext": 2, "unknown": 0}
+
+    def test_connections_opened_before_the_capture_are_classified(self):
+        """Pooled connections show no startup; their first bytes decide."""
+        segments = [
+            Segment(1, 1.0, 3, CLIENT, DB, 1, _record(23, 40)),  # TLS records
+            Segment(2, 2.0, 4, CLIENT + 1, DB, 1, _parse("", SQL)),  # plain SQL
+            Segment(3, 3.0, 5, CLIENT + 2, DB, 1, b"\xff" * 12),  # neither
+        ]
+        status = pg_link_status(reassemble(segments), DB)
+        assert status == {"connections": 3, "tls": 1, "plaintext": 1, "unknown": 1}
+
+
 class TestTlsView:
     def _tls_flows(self):
         facility, client = 8002, 51000
@@ -267,3 +298,109 @@ class TestBodyText:
             )
         result = summarize_search_leakage(events)
         assert result["term_frequency"] == {"cardiac": 2, "aspirin": 1}
+
+
+class TestLabelledTls:
+    """Over an encrypted store link the manifest names which exchange is which."""
+
+    def _flows(self):
+        facility, client = 8002, 51000
+        up = [
+            (1.00, _record(23, 1535) + _record(23, 70)),  # cardiac (7)
+            (2.00, _record(23, 1535) + _record(23, 72)),  # pneumonia (9)
+            (3.00, _record(23, 1535) + _record(23, 70)),  # cardiac, refused
+        ]
+        down = [
+            (1.10, _record(23, 142) + _record(23, 60)),
+            (2.10, _record(23, 142) + _record(23, 51)),
+            (3.10, _record(23, 142) + _record(23, 95)),
+        ]
+        segments: list[Segment] = []
+        frame = 1
+        for src, dst, chunks in ((client, facility, up), (facility, client, down)):
+            seq = 1
+            for ts, payload in chunks:
+                segments.append(Segment(frame, ts, 9, src, dst, seq, payload))
+                seq += len(payload)
+                frame += 1
+        return reassemble(segments)
+
+    @staticmethod
+    def _search(term, sent, status=200, count=1):
+        return {
+            "phase": "open",
+            "term": term,
+            "status": status,
+            "record_count": count if status == 200 else None,
+            "sent_at": sent,
+            "answered_at": sent + 0.12,
+        }
+
+    def test_sizes_are_measured_against_the_labels(self):
+        searches = [
+            self._search("cardiac", 0.99),
+            self._search("pneumonia", 1.99, count=0),
+            self._search("cardiac", 2.99, status=403),
+        ]
+        labelled = label_tls_exchanges(self._flows(), searches, {8002})
+        result = summarize_labelled_tls(labelled)
+        assert result["matched_exchanges"] == 3
+        assert result["response_body_record_bytes_by_outcome"] == {
+            "hit": [60],
+            "miss": [51],
+            "refused": [95],
+        }
+        assert result["outcomes_separable_by_response_size"] is True
+        # One constant overhead: the request size gives the term length exactly.
+        assert result["request_body_minus_term_length"] == [63]
+        assert result["observable_request_size_frequency"] == {70: 1, 72: 1}
+
+    def test_equal_sizes_are_not_called_separable(self):
+        """Mutation: padded responses must not be reported as a leak."""
+        flows = self._flows()
+        searches = [
+            self._search("cardiac", 0.99),
+            self._search("pneumonia", 1.99, count=0),
+        ]
+        labelled = label_tls_exchanges(flows, searches, {8002})
+        labelled[1]["response_record_lengths"] = [142, 60]  # as if padded
+        result = summarize_labelled_tls(labelled)
+        assert result["outcomes_separable_by_response_size"] is False
+
+    def test_the_previous_request_is_not_borrowed(self):
+        """A request just before ``sent_at`` belongs to the previous search."""
+        searches = [self._search("cardiac", 2.99, status=403)]
+        flows = self._flows()
+        [only] = label_tls_exchanges(flows, searches, {8002})
+        assert only["response_record_lengths"] == [142, 95]
+        # Sent 10 ms late: the pneumonia exchange at 2.00 is not taken.
+        late = [self._search("cardiac", 2.01, status=403)]
+        [other] = label_tls_exchanges(flows, late, {8002})
+        assert other["request_record_lengths"] != [1535, 72]
+
+    def test_session_tickets_do_not_shorten_the_latency(self):
+        """TLS 1.3 tickets can open the response burst on a fresh connection."""
+        facility, client = 8001, 52000
+        up = [(5.000, 69), (5.001, 1535), (5.001, 70)]  # Finished, headers, body
+        down = [(5.002, 250), (5.002, 250), (5.050, 142), (5.051, 60)]  # tickets
+        segments: list[Segment] = []
+        frame = 1
+        for src, dst, records in ((client, facility, up), (facility, client, down)):
+            seq = 1
+            for ts, length in records:
+                payload = _record(23, length)
+                segments.append(Segment(frame, ts, 12, src, dst, seq, payload))
+                seq += len(payload)
+                frame += 1
+        [exchange] = label_tls_exchanges(
+            reassemble(segments), [self._search("cardiac", 5.0)], {8001}
+        )
+        assert exchange["response_record_lengths"][-1] == 60
+        assert abs(exchange["latency_seconds"] - 0.050) < 1e-9
+
+    def test_a_search_with_no_exchange_borrows_nothing(self):
+        searches = [self._search("cardiac", 9.0)]  # nothing on the wire then
+        [only] = label_tls_exchanges(self._flows(), searches, {8002})
+        assert only["request_record_lengths"] is None
+        assert only["response_record_lengths"] is None
+        assert summarize_labelled_tls([only])["matched_exchanges"] == 0

@@ -225,6 +225,10 @@ def _run_scenario_via_subprocess(
             cmd += ["--canaries-out", str(canaries_out)]
         if search_workload:
             cmd.append("--search-workload")
+            if canaries_out is not None:
+                # Ground truth for labelling the search exchanges (ADR-0071).
+                searches = canaries_out.name.replace(".canaries.", ".searches.")
+                cmd += ["--searches-out", str(canaries_out.with_name(searches))]
         subprocess.run(cmd, check=True)
 
     return _run

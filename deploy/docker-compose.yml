@@ -21,13 +21,20 @@
 # the stack starts (ADR-0039): the store lives in tmpfs and is empty on each
 # start, and `bootstrap` seeds the synthetic dataset into it (SEED_DATA=false
 # skips that). Re-running `up` on a running stack leaves it alone.
+#
+# With TLS_ENABLED=true the store serves TLS only (deploy/store-entrypoint.sh)
+# and every client verifies it (sslmode=verify-full against
+# wire/certs/trust/store.crt), so the facility-store link is encrypted too
+# (ADR-0071).
 
 services:
   store:
     image: postgres:16-alpine
+    entrypoint: ["sh", "/store-entrypoint.sh"]
     environment:
       POSTGRES_DB: ehr
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env, see deploy/README.md}"
+      TLS_ENABLED: "${TLS_ENABLED:-false}"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d ehr"]
       interval: 2s
@@ -37,6 +44,9 @@ services:
       - "127.0.0.1:55433:5432"
     tmpfs:
       - /var/lib/postgresql/data
+    volumes:
+      - ./store-entrypoint.sh:/store-entrypoint.sh:ro
+      - ../wire/certs/store:/tls/store:ro
     networks: [federation]
 
   migrate:
@@ -49,7 +59,10 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres@store:5432/ehr
       PGPASSWORD: "${POSTGRES_PASSWORD}"
-    entrypoint: ["python", "-m", "storage.migrate"]
+      TLS_ENABLED: "${TLS_ENABLED:-false}"
+    entrypoint: ["python", "-m", "deploy.migrate"]
+    volumes:
+      - ../wire/certs/trust:/tls/trust:ro
     networks: [federation]
 
   # Generates the federation PKI before any facility starts: facilities load

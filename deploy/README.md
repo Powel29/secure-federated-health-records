@@ -159,6 +159,27 @@ trust bundle. As before, start a fresh federation with `SEED_DATA=false` when
 using a scenario/driver that seeds its own records; under Compose, see
 "Running the scenario against Compose" above.
 
+### The store link is TLS too (ADR-0071)
+
+In the TLS profile every connection to Postgres uses `sslmode=verify-full`
+against `wire/certs/trust/store.crt` (set by `deploy.config.configure_transport`),
+so a store without TLS, or with any other certificate, is refused. A
+`DATABASE_URL` carrying a weaker `?sslmode=` is refused too. Compose's `store`
+does this itself (`deploy/store-entrypoint.sh`): with `TLS_ENABLED=true` it
+serves only TLS 1.3 and its `pg_hba` rejects every non-TLS connection. The
+plain profile is unchanged, so P5-5 claim 2 can still read the audit `COMMIT`
+off the plain capture.
+
+For Path A, start the throwaway store through the same script (after
+`python -m wire.tls`, from the repository root):
+
+```bash
+docker run -d --name p08pg -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_DB=ehr -e TLS_ENABLED=true -p 127.0.0.1:55433:5432 -v "$PWD/wire/certs/store:/tls/store:ro" -v "$PWD/deploy/store-entrypoint.sh:/store-entrypoint.sh:ro" --entrypoint sh postgres:16-alpine /store-entrypoint.sh
+```
+
+In Git Bash, prefix it with `MSYS_NO_PATHCONV=1` so the container paths are not
+rewritten. Regenerating certificates means restarting the store as well.
+
 ## Restarts and recovery
 
 Compiled policies and signed consent artifacts are shared through PostgreSQL,

@@ -1,9 +1,12 @@
 # P5-3 search leakage: measured from real captures
 
-Source data: `p53_search_leakage.json` (plain) and `p53_search_leakage_tls.json`
-(TLS), written by `python -m wire.analyze_search_leakage`. Method and
-decisions: ADR-0070. Every number below comes from those files; nothing comes
-from the application's own logs.
+Source data: `p53_search_leakage.json` (plain profile) and
+`p53_search_leakage_tls.json` (TLS profile, store link encrypted), written by
+`python -m wire.analyze_search_leakage`. Method and decisions: ADR-0070 (the
+workload and observer views) and ADR-0071 (TLS on the store link). Every
+number below comes from those files; nothing comes from the application's
+own logs. The "TLS before ADR-0071" column is from the same file at commit
+`aae1c3b`, captured before the store link was encrypted.
 
 ## How the captures were taken
 
@@ -19,26 +22,30 @@ from the application's own logs.
 - Capture: dumpcap on `\Device\NPF_Loopback`, BPF pinned to the six
   federation ports plus Postgres (55433). Only our own synthetic federation
   was captured.
+- TLS profile with ADR-0071: the throwaway store was started through
+  `deploy/store-entrypoint.sh` (TLS 1.3 only, `hostnossl … reject`), and the
+  analysis ran with `--searches wire/captures/tls-search.searches.json` to
+  label the exchanges. The labels only say which exchange was which search;
+  every size and time comes off the wire.
 - Environment: Windows 11 (10.0.26300), Intel64 Family 6 Model 186, Python
-  3.11.9, TShark 4.6.9, Postgres 16 (throwaway container), code at `532e57a`
-  plus this change.
-  The plain and TLS runs are separate runs, so their tokens differ: each run
-  generates fresh keys.
+  3.11.9, TShark 4.6.9, Postgres 16 (throwaway container). Plain run at
+  `532e57a` plus ADR-0070; TLS run at `aae1c3b` plus ADR-0071. Every run
+  generates fresh keys, so tokens differ between runs.
 
 ## What an observer learns
 
 The observer is on loopback, seeing the HTTP links (clinician → facility)
 and the facility's link to Postgres.
 
-| Leak | Plain HTTP profile | TLS profile |
-|---|---|---|
-| Query term | **In the clear**: 16/16 search bodies readable | Hidden on the HTTP link |
-| Query length | Exact | **Exact**: request body record = body + 17 B (70 B for 7-letter terms, 71/72/73 B for 8/9/10) |
-| Query volume | 16 searches | 15 search exchanges (the refused one makes no lookup) |
-| Frequency (per key epoch) | `cardiac` 5, `aspirin` 2, others 1; again `cardiac` 2 after rotation | **Same histogram** from the database link: tokens seen 5, 2, 2, 1, 1, 1, 1, 1, 1 times |
-| Search token | Database link: 15 lookups, 9 distinct tokens | **Same**: the database link is not TLS |
-| Hit or miss | Response body 43 B (1 result) vs 34 B (0 results); refused 95 B | Response body record **60 B vs 51 B**; the database link also shows `SELECT 1` vs `SELECT 0` for all 15 |
-| Timing | Every search timestamped; median latency hit 0.788 s, miss 0.799 s | Median latency hit 0.065 s, miss 0.076 s |
+| Leak | Plain profile | TLS before ADR-0071 | TLS with ADR-0071 |
+|---|---|---|---|
+| Query term | **In the clear**: 16/16 bodies readable | Hidden | Hidden |
+| Query length | Exact | **Exact** (request body record = term + 63 B) | **Exact**: same; 15/15 requests are term length + 63 B |
+| Store link | Plaintext | **Plaintext** | **TLS**: 4/4 connections, 0 readable lookups |
+| Search token | 15 lookups, 9 distinct tokens | Same, from the store link | **Hidden** |
+| Frequency (per key epoch) | `cardiac` 5, `aspirin` 2, others 1; `cardiac` 2 after rotation | **Same histogram** from the store link (5, 2, 2, 1, …) | **Only per term length**: request sizes 70 B ×9, 71 B ×3, 72 B ×1, 73 B ×1 |
+| Hit or miss | Response body 43 B vs 34 B; refused 95 B | Response body record 60 B vs 51 B; the store link also shows `SELECT 1`/`SELECT 0` | Response body record **60 B vs 51 B; refused 112 B** (fully separable) |
+| Timing | Median latency hit 0.788 s, miss 0.799 s | Median hit 0.065 s, miss 0.076 s | Median hit 0.072 s, miss 0.054 s, refused 0.070 s |
 
 ### Re-keying at expiry (ADR-0069), measured
 
@@ -56,29 +63,39 @@ All 3 terms searched in both epochs got a new token after rotation
 (`same_term_same_token_within_epoch: true`). No token was shared by two terms.
 So an observer can link repeated searches **within** one emergency
 session, but not across sessions. The deterministic-token leakage of ADR-0027
-is bounded by the emergency window, not removed.
+is bounded by the emergency window, not removed. With ADR-0071 the TLS
+profile no longer shows tokens at all, so this linkage is visible only in
+the plain profile or to someone who can read the store.
 
 ## What this means for the paper
 
 1. **Deterministic tokens leak search frequency within a session, by design.**
    ADR-0027 says so; the capture measures it. Expiry ends the linkability:
    tokens from different sessions do not match.
-2. **TLS on the federation's HTTP links is not enough.** The facility↔Postgres
-   link is plaintext in both profiles, so the token, its frequency and the
-   result count reach any observer of that link. Even on the HTTP link, TLS
-   leaves response size (hit vs miss) and request size (term length) exactly
-   measurable. Closing this needs Postgres TLS (`sslmode=verify-full`) and
-   padding of search requests and responses. Neither is implemented.
-3. **Misses still leak.** A term that matches nothing still produces a
-   distinct, repeatable token on the database link (`pneumonia`, `warfarin`).
-   An observer learns that it was searched and that it missed.
-4. **Timing shows no hit/miss signal at this sample size** (4 misses, 11 hits;
-   medians within 11 ms over TLS). Latency is dominated by the per-search audit
-   append (log-before-release), not by the index lookup. One TLS outlier
-   (0.617 s) is the first search after the second break-glass. The plain run's
-   latencies (~0.8 s) are about 10× the TLS run's on the same machine. That is
-   a property of this Windows loopback run, not of the protocol; do not quote
-   it as overhead.
+2. **TLS has to cover the store link, or it hides little.** Before ADR-0071
+   the facility↔Postgres link was plaintext in the TLS profile, so tokens,
+   their frequency and row counts reached any observer of it. With
+   `verify-full` on that link (ADR-0071), the token and the row count are
+   gone from the wire, and frequency is visible only by term length.
+3. **Sizes are the residual leak, and they are exact.** Over TLS the response
+   body record still separates hit (60 B), miss (51 B) and refused (112 B)
+   every time. The request body record is always the term's length + 63 B,
+   so the observer learns each query's length and how often each length is
+   searched (`cardiac` and `aspirin` share 70 B). Closing this needs fixed-size
+   padding of search requests and responses, which is not implemented.
+4. **Misses still leak.** A term that matches nothing is still a separate,
+   sized exchange (51 B), and in the plain profile a distinct, repeatable
+   token on the store link (`pneumonia`, `warfarin`).
+5. **Timing shows no hit/miss signal at this sample size** (4 misses, 10-11 hits
+   per TLS run). The direction of the median difference flips between the two
+   TLS runs (hit 65 vs miss 76 ms, then 72 vs 54 ms), which is what noise
+   looks like. Latency is dominated by the per-search audit append
+   (log-before-release), not by the index lookup. The plain run's latencies
+   (~0.8 s) are about 10× the TLS runs' on the same machine. That is a
+   property of this Windows loopback run, not of the protocol; do not quote it
+   as overhead. The 0.617 s outlier in the pre-ADR-0071 run came from timing
+   from a burst's first record, where TLS 1.3 session tickets can sit ahead
+   of the response. Latency is now measured last record to last record.
 
 ## Limitations of this measurement
 
@@ -87,5 +104,10 @@ is bounded by the emergency window, not removed.
   the same key, which this design does not have.
 - 16 searches is enough to show each leak, not to estimate a timing
   distribution.
-- TLS exchanges are paired to lookups by time. That is valid because the
-  workload searches one at a time; concurrent load could mispair them.
+- TLS exchanges are paired by time, to token lookups (store link readable)
+  or to the workload's manifest (store link encrypted). That is valid
+  because the workload searches one at a time; concurrent load could mispair
+  them.
+- The labelled view uses the client's clock against the capture's. On
+  loopback both are the same host clock; every request landed 1–22 ms after
+  its `sent_at`.

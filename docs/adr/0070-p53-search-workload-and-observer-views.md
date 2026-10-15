@@ -65,7 +65,7 @@ different token after expiry.
   and the TLS record sizes separate hits from misses and leak the query's
   length.
   Closing the database link (Postgres `sslmode=verify-full`) is a deployment
-  decision for Avaneeth and is not taken here.
+  decision for Avaneeth and is not taken here; ADR-0071 proposes it.
 - In the plain workload capture the custodian deposit puts a clinician signing
   key on the wire, the same as the existing scenario canaries. This capture is
   P5-3 evidence only; the P5-5 claims still run on `plain.pcap`/`tls.pcap`
