@@ -39,6 +39,7 @@ from records.service import encrypt_record, wrap_dek
 
 if TYPE_CHECKING:
     from policy.engine import AttributeKeyring, CompiledPolicy
+    from search.service import SealedSearchTerms
 
 # Re-export the type alias at module level for callers that only need the name.
 AttributeKeyring = Mapping[tuple[str, str, str], bytes]
@@ -63,6 +64,9 @@ class IngestResult:
     lifecycle_state: LifecycleState
     search_tokens: dict[str, bytes] = field(repr=False)  # {term: coded_token}
     emergency_dek_wrapping: DEKWrapping | None = None
+    # The term list sealed under the DEK, so expiry can re-index under a new
+    # emergency key (ADR-0069). ``None`` when no terms were indexed.
+    sealed_search_terms: SealedSearchTerms | None = None
 
 
 def ingest_record(
@@ -130,7 +134,7 @@ def ingest_record(
     # it at module level from inside the records package creates a circular
     # import chain.  Deferring to call time breaks the cycle cleanly.
     from policy.engine import author_policy_with_owner, compile_policy
-    from search.service import derive_search_token
+    from search.service import derive_search_token, seal_search_terms
 
     if created_at is None:
         created_at = datetime.datetime.now(datetime.timezone.utc)
@@ -203,9 +207,11 @@ def ingest_record(
 
     # --- Step 5: Derive search tokens for each term ---
     search_tokens: dict[str, bytes] = {}
+    sealed_terms = None
     if search_terms and emergency_key:
         for term in search_terms:
             search_tokens[term] = derive_search_token(emergency_key, term)
+        sealed_terms = seal_search_terms(list(search_terms), dek, record.record_id)
 
     # Wrap DEK for emergency recovery if emergency_key is provided
     em_wrapping: DEKWrapping | None = None
@@ -229,4 +235,5 @@ def ingest_record(
         lifecycle_state=LifecycleState.GRANTED,
         search_tokens=search_tokens,
         emergency_dek_wrapping=em_wrapping,
+        sealed_search_terms=sealed_terms,
     )

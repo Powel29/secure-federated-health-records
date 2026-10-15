@@ -369,6 +369,27 @@ def has_consumed_id(conn: psycopg.Connection, kind: str, item_id: UUID) -> bool:
         return cur.fetchone() is not None
 
 
+class ConsumedIdTable:
+    """``consumed_ids`` as a one-time-id backend, optionally under a fixed kind.
+
+    ``kind_override`` lets a second holder of the same ids keep its own set:
+    the audit service consumes emergency assertions as ``release_assertion``
+    while the facility consumes them as ``assertion`` (ADR-0067).
+    """
+
+    def __init__(
+        self, conn: psycopg.Connection, kind_override: str | None = None
+    ) -> None:
+        self._conn = conn
+        self._kind = kind_override
+
+    def consume_once(self, kind: str, item_id: UUID) -> bool:
+        return consume_id(self._conn, self._kind or kind, item_id)
+
+    def has_consumed(self, kind: str, item_id: UUID) -> bool:
+        return has_consumed_id(self._conn, self._kind or kind, item_id)
+
+
 def insert_search_term(
     conn: psycopg.Connection, record_id: str, coded_term: bytes
 ) -> None:
@@ -408,3 +429,53 @@ def find_records_by_search_term(
         rows = cur.fetchall()
 
     return [row[0] for row in rows]
+
+
+# --- sealed search terms (ADR-0069) -------------------------------------------
+
+
+def put_sealed_search_terms(
+    conn: psycopg.Connection, record_id: str, ciphertext: bytes, nonce: bytes
+) -> None:
+    """Store (or replace) a record's search terms, sealed under its DEK."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO record_search_terms (record_id, ciphertext, nonce)"
+            " VALUES (%s, %s, %s) ON CONFLICT (record_id) DO UPDATE"
+            " SET ciphertext = EXCLUDED.ciphertext, nonce = EXCLUDED.nonce",
+            (record_id, ciphertext, nonce),
+        )
+
+
+def get_sealed_search_terms(
+    conn: psycopg.Connection, record_id: str
+) -> tuple[bytes, bytes] | None:
+    """``(ciphertext, nonce)`` of a record's sealed search terms, or ``None``."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT ciphertext, nonce FROM record_search_terms WHERE record_id = %s",
+            (record_id,),
+        )
+        row = cur.fetchone()
+    return (bytes(row[0]), bytes(row[1])) if row else None
+
+
+# --- rotation at expiry (ADR-0069) --------------------------------------------
+
+
+def rotate_record_ciphertext(
+    conn: psycopg.Connection, rec: Record, *, expected_nonce: bytes
+) -> bool:
+    """Replace a record's ciphertext and policy id as a compare-and-set.
+
+    The record's GCM nonce identifies the ciphertext it belongs to, so the
+    update applies only if the stored ciphertext is still the one being
+    rotated. Returns ``False`` if it has moved.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE records SET policy_id = %s, ciphertext = %s, nonce = %s"
+            " WHERE record_id = %s AND nonce = %s",
+            (rec.policy_id, rec.ciphertext, rec.nonce, rec.record_id, expected_nonce),
+        )
+        return cur.rowcount == 1

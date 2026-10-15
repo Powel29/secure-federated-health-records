@@ -14,7 +14,6 @@ committed.
 from __future__ import annotations
 
 import argparse
-import base64
 import csv
 import ctypes
 import datetime as dt
@@ -33,7 +32,6 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import psycopg
 from audit.chain import verify_full_chain
-from breakglass import create_emergency_assertion
 from contracts.enums import ReasonCode
 from crypto_core import (
     generate_ec_keypair,
@@ -49,6 +47,7 @@ from shamir.split import combine_shares, split_secret
 
 from demo.driver import standalone_federation
 from demo.seed_data import create_synthetic_dataset, seed_synthetic_data
+from deploy.run_scenario import emergency_open
 
 DEFAULT_ITERATIONS = 30
 DEFAULT_WARMUP = 5
@@ -412,15 +411,23 @@ def run_db_benchmarks(iterations: int, database_url: str) -> list[Row]:
 
         print("Seeding synthetic federation data...")
 
+        # Every request is signed as bootstrap (ADR-0066).
+        client: httpx.Client = federation["client"]
         seeded = seed_synthetic_data(
             endpoints=endpoints,
             config=config,
             dataset=create_synthetic_dataset(),
+            client=client,
             database_url=database_url,
             verbose=False,
         )
-
-        client = httpx.Client(timeout=15.0)
+        # Share 1 in clinician custody, so an expiry can rotate it (ADR-0069).
+        for record_id, meta in seeded["records"].items():
+            x, share_bytes = meta["share1"]
+            client.post(
+                f"{endpoints.custodian}/records/{record_id}/shares",
+                json={"x": x, "share_hex": share_bytes.hex()},
+            ).raise_for_status()
 
         # ---------------------------------------------------------------
         # Cross-facility latency
@@ -460,12 +467,23 @@ def run_db_benchmarks(iterations: int, database_url: str) -> list[Row]:
         record_info = seeded["records"]["rec-001"]
         clinician = seeded["clinicians"]["doc-201"]
 
-        assertion = create_emergency_assertion(
+        # rec-001 carries patient-signed "hospital" labels, so the facility
+        # needs a clinical justification bound into the signed assertion
+        # (ADR-0064), and the open transition signed by the clinician
+        # (ADR-0068).
+        justification = (
+            "Unconscious patient requires urgent allergy and medication review."
+        )
+        assertion, transition_event = emergency_open(
+            client,
+            facility_url=endpoints.facility_b,
+            record_id="rec-001",
             patient_id="pat-101",
             clinician_id="doc-201",
             facility_id="facility-b",
+            clinician_key=clinician["private_key"],
             reason_code=ReasonCode.UNCONSCIOUS_PATIENT,
-            signing_key=clinician["private_key"],
+            justification=justification,
             ttl=dt.timedelta(minutes=5),
         )
 
@@ -481,16 +499,14 @@ def run_db_benchmarks(iterations: int, database_url: str) -> list[Row]:
             ),
         ]
 
-        k_physician = seeded["attribute_keys"]["authority-med:role:physician"]
-
         unlock_payload = {
             "assertion": assertion.model_dump(mode="json"),
             "clinician_certificate_pem": clinician["certificate_pem"],
             "shares": shares_payload,
             "pre_rewrap_key": clinician["pre_public_key"],
-            "lifecycle_signing_key_pem": clinician["private_key_pem"],
+            "transition_event": transition_event.model_dump(mode="json"),
             "correlation_id": "bench-emergency-search",
-            "baseline_wrapping_key_b64": base64.b64encode(k_physician).decode("ascii"),
+            "justification": justification,
             "emergency_duration_seconds": 60.0,
         }
 
@@ -539,8 +555,6 @@ def run_db_benchmarks(iterations: int, database_url: str) -> list[Row]:
             public_key = public_key_from_pem(
                 resp.json()["public_key_pem"].encode("ascii")
             )
-
-        client.close()
 
         db_conn = psycopg.connect(database_url)
 

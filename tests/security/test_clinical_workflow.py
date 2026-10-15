@@ -14,7 +14,6 @@ from breakglass.assertion import (
 from contracts.clinical import ClinicalMetadata
 from contracts.enums import LifecycleState, ReasonCode
 from crypto_core import generate_ec_keypair
-from fastapi.testclient import TestClient
 from pre.elgamal import generate_keypair
 from pydantic import ValidationError
 
@@ -61,7 +60,9 @@ def test_revoked_episode_cannot_be_reopened_with_the_old_grant(federation):
     revoked = client.post(
         f"/subjects/{PATIENT}/consent/revoke", json={"prior_grant": signed["grant"]}
     ).json()
-    other_facility = TestClient(federation["apps"]["facility-b"])
+    other_facility = federation["services"].client(
+        federation["apps"]["facility-b"], "facility-b", caller="portal"
+    )
     assert other_facility.post("/consent/grants", json=revoked).status_code == 200
     # Re-submitting the old grant cannot remove the separate revocation artifact.
     assert other_facility.post("/consent/grants", json=signed).status_code == 200

@@ -12,6 +12,11 @@ Environment:
         reports the recovered DEK only.
     TLS_VERIFY / CAPTURE_TLS: Same double-gated escape hatch as
         ``api.audit_client`` (ADR-0042) for the ``capture-tls`` profile.
+    SERVICE_KEY_FILE / SERVICE_CERT_FILE / FEDERATION_ROOT_CERT: The
+        custodian's root-issued identity, which signs every call it makes,
+        and the root its callers must chain to (ADR-0066). With
+        ``DATABASE_URL`` set, a facility may replace share 1 while the store
+        shows the record ``expired`` (ADR-0069).
 """
 
 from __future__ import annotations
@@ -25,7 +30,9 @@ from api.custodian_service import (
     CustodianEndpoints,
     create_custodian_app,
 )
+from api.service_auth import load_service_identity, load_trusted_root
 from contracts import Record
+from contracts.enums import LifecycleState
 from fastapi import FastAPI
 
 
@@ -51,10 +58,11 @@ def app() -> FastAPI:
     )
 
     record_loader = None
+    state_loader = None
     database_url = os.environ.get("DATABASE_URL")
     if database_url:
         import psycopg
-        from storage.repositories import get_record
+        from storage.repositories import get_lifecycle_state, get_record
 
         conn = psycopg.connect(database_url)
         conn.autocommit = True
@@ -62,8 +70,15 @@ def app() -> FastAPI:
         def record_loader(record_id: str) -> Record | None:  # type: ignore[no-redef]
             return get_record(conn, record_id)
 
+        def state_loader(record_id: str) -> LifecycleState | None:  # type: ignore[no-redef]
+            row = get_lifecycle_state(conn, record_id)
+            return LifecycleState(row["state"]) if row else None
+
     return create_custodian_app(
         endpoints=endpoints,
         record_loader=record_loader,
         http_client=httpx.Client(timeout=DEFAULT_TIMEOUT_SECONDS, verify=_tls_verify()),
+        identity=load_service_identity(),
+        service_root=load_trusted_root(),
+        state_loader=state_loader,
     )

@@ -212,9 +212,9 @@ adopted and what was rejected, so neither is re-litigated later.
 | Emergency assertion undefined | T48 — signed, bound, expiring assertion (`ARCHITECTURE.md` §8) |
 | Break-glass replay | T49 — one-time IDs + consumed-ID store |
 | Revocation not bound to record ownership | T50 |
-| Object-level authorization missing | folded into P5-1 as a test, not middleware (ADR-0015) |
+| Object-level authorization missing | folded into P5-1 as a test (ADR-0015); since ADR-0066 a keyless read is refused before storage, claim C9 |
 | Credential lifecycle incomplete | T52 |
-| Service identity unspecified | ~~T53~~ — **cut on strictness pass** (redundant with existing PKI; ADR-0015) |
+| Service identity unspecified | cut on the strictness pass (ADR-0015), **reinstated by ADR-0066**: root-certified service identities and signed one-time requests on every call (review D5-a) |
 | `capture-plain` could become default | ~~T54~~ — **cut on strictness pass** (guards a failure a lab project can't hit; ADR-0015) |
 | PRE properties overclaimed | T42 — security-properties table marking PRE unproven |
 | Threat model conflates adversaries | T04 — four adversaries modelled separately |
@@ -284,14 +284,15 @@ than this is the fastest way to lose credibility in the viva.
    This simplification does not weaken the threshold property (the custodian
    holds share 1 only; the audit service still commits before releasing share
    3; the policy engine still gates every read), but it must be stated.
-6. **Deployed expiry does not persist its rotation (ADR-0043/0044/0047).** The
-   timer invalidates emergency search and mirrors its audited state
-   transitions into the store (as a compare-and-set, review N1). Its rotated
-   ciphertext and baseline wrapping are still not persisted: the custodian
-   supplies a throwaway baseline key. Consequently the deployed demo must not
-   claim persisted post-expiry DEK rotation or forward secrecy from that
-   rotation. The unit-tested rotation primitive is distinct from this open
-   storage integration gap (review F9, decision D3).
+6. **Expiry rotation survives everything but a crash mid-rotation (ADR-0069).**
+   At expiry the facility re-keys the record in full -- new DEK, policy root,
+   emergency key and shares, search index -- stores it atomically and hands
+   the new shares to the custodian and the audit service before the record
+   returns to baseline (review F9, D3-a). If the facility process dies between
+   the store commit and both share deposits, no holder set matches the stored
+   emergency wrapping and that record cannot be broken into until it is
+   re-provisioned (access stays closed). Plaintext a clinician already decrypted
+   is not retractable (ADR-0035), and share 2 is still discarded (D2).
 7. **Unidentified patients get no history (ADR-0033, ADR-0059, ADR-0060).**
    Break-glass is bound to a `patient_id` chosen from a logged directory
    lookup by name (date of birth optional; close spellings and aliases are

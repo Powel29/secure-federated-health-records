@@ -30,6 +30,7 @@ from deploy.run_scenario import ScenarioEndpoints
 
 FEDERATION_CONFIG_PATH = Path("/pki/federation.json")
 FEDERATION_PKI_PATH = Path("/pki/federation-pki.json")
+SERVICES_DIR = Path("/pki/services")
 
 
 def main() -> int:
@@ -86,6 +87,14 @@ def main() -> int:
         # Generated before the facilities started, which loaded its trust
         # anchors at startup (review F1); see deploy/compose_pki.py.
         root, pki = bootstrap.load_federation_pki(FEDERATION_PKI_PATH)
+        # Every call below is signed as bootstrap (ADR-0066).
+        client = bootstrap.bootstrap_client(
+            bootstrap.load_service_identity_dir(SERVICES_DIR, "bootstrap"),
+            authorities=authority_urls,
+            facilities=facility_urls,
+            audit=audit_url,
+            custodian=custodian_url,
+        )
 
         print("[3/7] waiting for authority services and registering them...")
         authority_certificates: dict[str, str] = {}
@@ -96,6 +105,7 @@ def main() -> int:
                 base_url,
                 root,
                 authority_id,
+                client=client,
             )
 
         print("[4/7] waiting for the audit service...")
@@ -122,8 +132,11 @@ def main() -> int:
                 audit=audit_url,
                 facility_a=facility_urls["facility-a"],
                 facility_b=facility_urls["facility-b"],
+                custodian=custodian_url,
             )
-            summary = bootstrap.seed_federation(endpoints, config, custodian_url)
+            summary = bootstrap.seed_federation(
+                endpoints, config, custodian_url, client=client
+            )
             print(f"      {summary}")
         else:
             print("      SEED_DATA=false -- seeding skipped")

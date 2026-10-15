@@ -20,11 +20,21 @@ from contracts import RequestEnvelope
 from crypto_core import sign, verify
 from crypto_core.types import ECPrivateKey, ECPublicKey
 
-from breakglass.exceptions import EnvelopeRecipientMismatchError
+from breakglass.exceptions import (
+    EnvelopeExpiredError,
+    EnvelopeOperationMismatchError,
+    EnvelopeRecipientMismatchError,
+)
 from breakglass.replay import ConsumedRequestIds
 
 _FIELD_SEPARATOR = b"\x1f"
 _NONCE_BYTES = 16
+
+# How long a signed request stays acceptable, and how far its issued_at may
+# run ahead of the callee's clock (ADR-0066). Replay is stopped by the
+# consumed-id store; this bounds the window if that store is lost.
+MAX_ENVELOPE_AGE = datetime.timedelta(seconds=120)
+ENVELOPE_CLOCK_SKEW = datetime.timedelta(seconds=30)
 
 
 # ---------------------------------------------------------------------------
@@ -178,3 +188,49 @@ def verify_request_envelope(
 
     # 3. Replay (last)
     consumed_store.consume(envelope.request_id)
+
+
+# ---------------------------------------------------------------------------
+# Binding to the HTTP request (ADR-0066)
+# ---------------------------------------------------------------------------
+
+
+def check_envelope_binding(
+    envelope: RequestEnvelope,
+    *,
+    expected_operation: str,
+    now: datetime.datetime,
+    max_age: datetime.timedelta = MAX_ENVELOPE_AGE,
+    clock_skew: datetime.timedelta = ENVELOPE_CLOCK_SKEW,
+) -> None:
+    """Refuse an envelope signed for another request, or outside its window.
+
+    Run before :func:`verify_request_envelope`; it has no side effects, so a
+    mismatched envelope never burns its ``request_id``.
+
+    Args:
+        envelope: The envelope presented with the request.
+        expected_operation: ``"<METHOD> <path>[?<query>]"`` of the request
+            actually received.
+        now: The callee's current time.
+        max_age: Oldest ``issued_at`` accepted.
+        clock_skew: How far ``issued_at`` may lie in the future.
+
+    Raises:
+        EnvelopeOperationMismatchError: The envelope names another operation.
+        EnvelopeExpiredError: ``issued_at`` is outside the window.
+    """
+    if envelope.operation != expected_operation:
+        raise EnvelopeOperationMismatchError(
+            f"envelope was signed for {envelope.operation!r}, "
+            f"not {expected_operation!r}"
+        )
+    if envelope.issued_at < now - max_age:
+        raise EnvelopeExpiredError(
+            f"envelope issued at {envelope.issued_at.isoformat()} is older "
+            f"than {max_age}"
+        )
+    if envelope.issued_at > now + clock_skew:
+        raise EnvelopeExpiredError(
+            f"envelope issued at {envelope.issued_at.isoformat()} is in the future"
+        )

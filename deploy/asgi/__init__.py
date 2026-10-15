@@ -14,6 +14,7 @@ import importlib
 import os
 from uuid import uuid4
 
+from api.service_auth import add_public_route
 from fastapi import FastAPI
 
 
@@ -29,4 +30,6 @@ def app() -> FastAPI:
     def instance() -> dict[str, str]:
         return {"instance_id": instance_id}
 
+    # A random process id, not a secret: bootstrap reads it unauthenticated.
+    add_public_route(application, "GET", "/deployment/instance")
     return application

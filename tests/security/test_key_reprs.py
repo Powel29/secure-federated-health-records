@@ -12,6 +12,7 @@ import dataclasses
 import pytest
 from breakglass.gate import EmergencyUnlockResult
 from lifecycle.expiry import EmergencySession
+from lifecycle.rotation import RotationPlan
 from records.ingest import IngestResult
 from records.revocation import RevocationResult
 
@@ -19,7 +20,10 @@ _KEY_FIELDS = [
     (EmergencyUnlockResult, "emergency_key"),
     (EmergencyUnlockResult, "rewrapped_dek"),
     (EmergencySession, "emergency_key"),
-    (EmergencySession, "baseline_wrapping_key"),
+    (EmergencySession, "rotation_plan"),
+    (RotationPlan, "shares"),
+    (RotationPlan, "search_tokens"),
+    (RotationPlan, "compiled_policy"),
     (IngestResult, "root_secret"),
     (IngestResult, "search_tokens"),
     (RevocationResult, "new_root_secret"),

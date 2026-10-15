@@ -1,6 +1,6 @@
 # ADR-0052: Interim address allowlist on `/attribute-keys/author`
 
-- **Status:** Proposed (exit-plan item F14-i lists the trust boundary as Ojas's decision; this records the interim chosen so the hole is not left open)
+- **Status:** Superseded by ADR-0066 (signed service requests replace the address allowlist)
 - **Date:** 2026-10-11
 - **Deciders:** Avaneeth (implementer) → Ojas (authority, deploy trust boundary) → all four
 - **Task / source:** Review F14 (interim), exit plan F14-i; ADR-0026 (one key per attribute)

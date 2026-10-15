@@ -13,6 +13,13 @@ Environment:
         certificates, one ``<facility_id>.crt`` (PEM) per facility.
     REVOKED_CLINICIAN_SERIALS: Optional comma-separated decimal serial
         numbers of revoked clinician certificates.
+    SERVICE_KEY_FILE / SERVICE_CERT_FILE: This facility's root-issued
+        identity (id ``FACILITY_ID``); it signs every call it makes and callers
+        must name it as recipient (ADR-0066).
+    AUTHORITY_URLS: Comma-separated ``authority_id=url`` pairs; the forced
+        rotation at expiry fetches authoring keys there (ADR-0069).
+    CUSTODIAN_URL: Where the rotation hands the new share 1 (share 3 goes to
+        ``AUDIT_SERVICE_URL``).
     EMERGENCY_DURATION_SECONDS: Default break-glass time-box length in
         seconds (ARCHITECTURE.md §7 "Configuration": short for demos,
         realistic for the paper). Defaults to 14400 (4 hours, an emergency
@@ -30,13 +37,17 @@ import os
 from pathlib import Path
 
 import psycopg
-from api.audit_client import make_lifecycle_audit_logger
-from api.hospital import FacilityTrust, create_hospital_app
+from api.audit_client import _tls_verify, make_lifecycle_audit_logger
+from api.hospital import AUDIT_SERVICE_ID, FacilityTrust, create_hospital_app
 from api.repository import PostgresStorageRepository
+from api.rotation import http_rotation_ports
+from api.service_auth import SignedRequestAuth, load_service_identity, signed_client
 from crypto_core import certificate_from_pem, generate_ec_keypair
 from fastapi import FastAPI
 from lifecycle.expiry import EmergencyExpiryManager
 from lifecycle.state_machine import ConsumedEventIds, LifecycleStateMachine
+
+from deploy.asgi.custodian import _parse_pairs
 
 _DEFAULT_EMERGENCY_DURATION_SECONDS = 14400.0
 
@@ -87,6 +98,29 @@ def app() -> FastAPI:
         )
     )
     trust = load_trust()
+    identity = load_service_identity()
+    if identity.service_id != facility_id:
+        raise RuntimeError(
+            f"service identity is {identity.service_id!r}, not {facility_id!r}"
+        )
+    authorities = _parse_pairs(os.environ.get("AUTHORITY_URLS", ""))
+    custodian_url = os.environ.get("CUSTODIAN_URL", "").rstrip("/")
+    if not authorities or not custodian_url:
+        raise RuntimeError(
+            "AUTHORITY_URLS and CUSTODIAN_URL must be set: the rotation at "
+            "expiry re-authors the policy and hands out new shares (ADR-0069)"
+        )
+    audit_auth = SignedRequestAuth(identity, {audit_service_url: AUDIT_SERVICE_ID})
+    rotation_http = signed_client(
+        identity,
+        {
+            **{url: aid for aid, url in authorities.items()},
+            custodian_url: "custodian",
+            audit_service_url: AUDIT_SERVICE_ID,
+        },
+        timeout=10.0,
+        verify=_tls_verify(),
+    )
 
     conn = psycopg.connect(database_url)
     conn.autocommit = True
@@ -101,7 +135,7 @@ def app() -> FastAPI:
         signing_key=timer_private_key,
         timer_actor_id=f"system:hsm-timer:{facility_id}",
         default_duration_seconds=duration,
-        audit_logger=make_lifecycle_audit_logger(audit_service_url),
+        audit_logger=make_lifecycle_audit_logger(audit_service_url, auth=audit_auth),
         # Transition-event ids persist in the store, so a restart cannot
         # replay a consumed expiry event (review F22).
         state_machine=LifecycleStateMachine(ConsumedEventIds(backend=repo)),
@@ -114,4 +148,11 @@ def app() -> FastAPI:
         expiry_manager=expiry_manager,
         audit_service_url=audit_service_url,
         trust=trust,
+        identity=identity,
+        rotation_ports=http_rotation_ports(
+            rotation_http,
+            authorities=authorities,
+            custodian_url=custodian_url,
+            audit_url=audit_service_url,
+        ),
     )

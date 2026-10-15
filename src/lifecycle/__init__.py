@@ -6,6 +6,7 @@ from lifecycle.exceptions import (
     LifecycleError,
     MissingReasonCodeError,
     ReplayedEventError,
+    RotationNotConfiguredError,
     SessionNotExpiredError,
     SessionNotFoundError,
     StateMismatchError,
@@ -14,6 +15,8 @@ from lifecycle.expiry import (
     EmergencyExpiryManager,
     EmergencySession,
     ExpiryResult,
+    RotationOutcome,
+    Rotator,
 )
 from lifecycle.state_machine import (
     LEGAL_TRANSITIONS,
@@ -36,6 +39,9 @@ __all__ = [
     "LifecycleStateMachine",
     "MissingReasonCodeError",
     "ReplayedEventError",
+    "RotationNotConfiguredError",
+    "RotationOutcome",
+    "Rotator",
     "SessionNotExpiredError",
     "SessionNotFoundError",
     "StateMismatchError",

@@ -84,3 +84,11 @@ class SessionNotExpiredError(LifecycleError):
     This guards the manual/administrative path from short-circuiting the
     time-box a clinician was granted.
     """
+
+
+class RotationNotConfiguredError(LifecycleError):
+    """Expiry has no rotator to run the forced rotation (ADR-0069).
+
+    The session stays closed and is retried; nothing returns to baseline
+    without a real rotation.
+    """

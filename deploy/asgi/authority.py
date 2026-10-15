@@ -5,16 +5,19 @@ Environment:
     OWNED_ATTRIBUTES: Comma-separated attribute names this authority may
         issue, e.g. ``"role"`` or ``"specialty,facility,owner"``
         (ADR-0019 namespace assignment).
-    AUTHORING_CALLERS: Optional comma-separated addresses or hostnames
-        allowed to fetch authoring keys (review F14 interim). Defaults to
-        loopback; Compose names its custodian and bootstrap containers.
+    SERVICE_KEY_FILE / SERVICE_CERT_FILE: This service's root-issued
+        identity, whose id must be ``AUTHORITY_ID`` (ADR-0066).
+    FEDERATION_ROOT_CERT: The federation root callers must chain to. Only a
+        signed request from a facility, the custodian or bootstrap gets an
+        authoring key (replacing the review F14 address allowlist).
 """
 
 from __future__ import annotations
 
 import os
 
-from api.authority_service import DEFAULT_AUTHORING_CALLERS, create_authority_app
+from api.authority_service import create_authority_app
+from api.service_auth import load_service_identity, load_trusted_root
 from fastapi import FastAPI
 
 
@@ -26,12 +29,11 @@ def app() -> FastAPI:
         for name in os.environ["OWNED_ATTRIBUTES"].split(",")
         if name.strip()
     )
-    callers = os.environ.get("AUTHORING_CALLERS")
-    authoring_callers = (
-        frozenset(c.strip() for c in callers.split(",") if c.strip())
-        if callers
-        else DEFAULT_AUTHORING_CALLERS
-    )
+    identity = load_service_identity()
+    if identity.service_id != authority_id:
+        raise RuntimeError(
+            f"service identity is {identity.service_id!r}, not {authority_id!r}"
+        )
     return create_authority_app(
-        authority_id, owned_attribute_names, authoring_callers=authoring_callers
+        authority_id, owned_attribute_names, service_root=load_trusted_root()
     )

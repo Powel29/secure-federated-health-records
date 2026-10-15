@@ -155,3 +155,66 @@ class HygieneTests(TestCase):
         # No consecutive pair: nothing was checked, so it is not "intact".
         self.assertIsNone(_links_intact([a, gap]))
         self.assertIsNone(_links_intact([a]))
+
+
+class ServiceSigningTests(TestCase):
+    """ADR-0066: every portal call is signed as the portal's service identity."""
+
+    def setUp(self) -> None:
+        from portal_core import services
+
+        services._service_auth.cache_clear()
+        self.addCleanup(services._service_auth.cache_clear)
+
+    def _identity_files(self, directory: str) -> tuple[str, str]:
+        from pathlib import Path
+
+        from crypto_core import certificate_to_pem, generate_ec_keypair, private_key_to_pem
+        from identity.certificates import issue_service_certificate
+        from identity.root_anchor import generate_root_anchor
+
+        key, public_key = generate_ec_keypair()
+        cert = issue_service_certificate(generate_root_anchor(), "portal", "portal", public_key)
+        key_file = Path(directory) / "service.key"
+        cert_file = Path(directory) / "service.crt"
+        key_file.write_bytes(private_key_to_pem(key))
+        cert_file.write_bytes(certificate_to_pem(cert))
+        return str(key_file), str(cert_file)
+
+    def test_calls_carry_the_portal_envelope_and_certificate(self) -> None:
+        import tempfile
+
+        from django.conf import settings
+        from django.test import override_settings
+        from portal_core import services
+
+        with tempfile.TemporaryDirectory() as tmp:
+            key_file, cert_file = self._identity_files(tmp)
+            with override_settings(SERVICE_KEY_FILE=key_file, SERVICE_CERT_FILE=cert_file):
+                client = services._client()
+                request = client.build_request("GET", f"{settings.CUSTODIAN_URL}/subjects/x")
+                signed = next(client.auth.auth_flow(request))
+        self.assertIn("X-Request-Envelope", signed.headers)
+        self.assertIn("X-Service-Certificate", signed.headers)
+
+    def test_a_url_outside_the_allowlist_is_never_sent(self) -> None:
+        import tempfile
+
+        import httpx
+        from django.test import override_settings
+        from portal_core import services
+
+        with tempfile.TemporaryDirectory() as tmp:
+            key_file, cert_file = self._identity_files(tmp)
+            with override_settings(SERVICE_KEY_FILE=key_file, SERVICE_CERT_FILE=cert_file):
+                client = services._client()
+                request = client.build_request("GET", "http://elsewhere.example/x")
+                with self.assertRaises(httpx.RequestError):
+                    next(client.auth.auth_flow(request))
+
+    def test_without_an_identity_nothing_is_signed(self) -> None:
+        from django.test import override_settings
+        from portal_core import services
+
+        with override_settings(SERVICE_KEY_FILE="", SERVICE_CERT_FILE=""):
+            self.assertIsNone(services._service_auth())

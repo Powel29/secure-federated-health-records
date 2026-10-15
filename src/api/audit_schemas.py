@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from contracts import AuditEntry
-from pydantic import BaseModel, Field
+from contracts import AuditEntry, EmergencyAssertion
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class HealthResponse(BaseModel):
@@ -80,6 +80,17 @@ class RegisterShareResponse(BaseModel):
     share_key: str
 
 
+class ReplaceShareRequest(BaseModel):
+    """Replace a held share with the next generation's (ADR-0069).
+
+    Sent by the facility that ran a record's forced rotation at expiry.
+    """
+
+    x: int
+    share_hex: str
+    generation: int = Field(..., ge=1)
+
+
 class ReleaseShareRequest(BaseModel):
     """Request the audit service's share, gated on a durable log commit first.
 
@@ -89,9 +100,22 @@ class ReleaseShareRequest(BaseModel):
     closed." This is that request, made over the network so the precondition
     is enforced by a genuinely separate process rather than an in-process
     function call (ARCHITECTURE.md §7).
+
+    Before any of that, the audit service validates the clinician's signed
+    ``EmergencyAssertion`` itself (ADR-0067, D1-a): a share holder that
+    releases without checking anything is a single party able to open a
+    record together with share 1. ``justification`` texts are only checked
+    against the assertion's signed digest, which binds the record; they are
+    never logged.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     share_key: str
+    assertion: EmergencyAssertion
+    clinician_certificate_pem: str
+    justification: str = Field(default="", max_length=2000)
+    sensitive_justification: str = Field(default="", max_length=2000)
     event_type: str = "breakglass_share_release"
     event_data: dict[str, Any] = Field(default_factory=dict)
     actor_id: str

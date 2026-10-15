@@ -93,6 +93,21 @@ class EnvelopeRecipientMismatchError(BreakglassError):
     """
 
 
+class EnvelopeOperationMismatchError(BreakglassError):
+    """``envelope.operation`` names another method or path than the request's.
+
+    An envelope signed for one endpoint must not authorize another (ADR-0066).
+    """
+
+
+class EnvelopeExpiredError(BreakglassError):
+    """``envelope.issued_at`` is too old, or too far in the future (ADR-0066).
+
+    Bounds how long a captured request stays usable if a callee's
+    consumed-id store is lost, e.g. on a restart of an in-memory store.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Emergency unlock gate (P3-5)
 # ---------------------------------------------------------------------------

@@ -3,7 +3,9 @@
 {% block flow_marker %}<div class="flow-marker">{% include "_icon.html" with name="route" %}<span>Following flow <span class="cid" title="{{ case.correlation_id }}">{{ case.correlation_id|truncatechars:28 }}</span></span></div>{% endblock %}
 {% block content %}
 <p><a href="{% url 'clinician:breakglass' %}">Open another record for this patient</a> · <a href="{% url 'clinician:note' case.pk %}">Write clinical note</a> · <a href="{% url 'clinician:encounter' %}">Manage encounter</a></p>
-{% if case.status == "open" %}<script>document.body.setAttribute("data-reload-on-expiry", "1");</script>{% endif %}
+{% url 'clinician:case_detail' case.pk as case_url %}
+{% if case.status == "open" %}<script>document.body.setAttribute("data-reload-on-expiry", "{{ case_url|escapejs }}");</script>{% endif %}
+{% if just_opened %}<script>if (window.history && history.replaceState) { history.replaceState(null, "", "{{ case_url|escapejs }}"); }</script>{% endif %}
 <div><a class="btn btn-ghost btn-sm" href="{% url 'clinician:cases' %}">{% include "_icon.html" with name="back" %}All emergency sessions</a></div>
 
 {% if just_opened and unlock.joined %}

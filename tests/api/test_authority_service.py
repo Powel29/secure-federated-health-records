@@ -10,45 +10,68 @@ from __future__ import annotations
 import pytest
 from api.authority_service import create_authority_app
 from fastapi.testclient import TestClient
+from identity.root_anchor import generate_root_anchor
 
-from tests.api.conftest import FromHost
+from tests.service_pki import ServicePKI
 
 
 @pytest.fixture()
-def client() -> TestClient:
-    # The test client is the allowlisted authoring service here (F14 interim).
-    app = create_authority_app(
-        "authority-med",
-        frozenset({"role"}),
-        authoring_callers=frozenset({"testclient"}),
+def services() -> ServicePKI:
+    return ServicePKI(generate_root_anchor())
+
+
+@pytest.fixture()
+def app(services):
+    return create_authority_app(
+        "authority-med", frozenset({"role"}), service_root=services.root.certificate
     )
-    return TestClient(FromHost(app))
 
 
-def test_author_endpoint_refuses_unauthenticated_caller() -> None:
-    """Review F14 (interim): a caller outside the allowlist gets no authoring key.
+@pytest.fixture()
+def client(app, services) -> TestClient:
+    """Signed as bootstrap, which issues credentials and registers certificates."""
+    return services.client(app, "authority-med")
+
+
+@pytest.mark.parametrize("caller", ["custodian", "facility-a", "bootstrap"])
+def test_policy_sealing_services_get_authoring_keys(app, services, caller) -> None:
+    """ADR-0066: authoring keys go to the services that seal policies -- the
+    custodian and bootstrap at ingest, a facility at its expiry rotation."""
+    body = {"name": "role", "value": "physician"}
+    signed = services.client(app, "authority-med", caller=caller)
+    assert signed.post("/attribute-keys/author", json=body).status_code == 200
+
+
+def test_author_endpoint_refuses_unauthenticated_caller(app, services) -> None:
+    """Review F14: no authoring key without a signed request from a sealing
+    service (ADR-0066 replaces the interim address allowlist).
 
     The authoring key is the very key /attribute-keys/release gates behind a
     credential, so an open authoring endpoint bypassed the credential check.
     """
-    allowed = TestClient(
-        FromHost(
-            create_authority_app(
-                "authority-med",
-                frozenset({"role"}),
-                authoring_callers=frozenset({"testclient"}),
-            )
-        )
-    )
     body = {"name": "role", "value": "physician"}
-    assert allowed.post("/attribute-keys/author", json=body).status_code == 200
+    # Positive control: the same request, signed by the custodian, succeeds.
+    custodian = services.client(app, "authority-med", caller="custodian")
+    assert custodian.post("/attribute-keys/author", json=body).status_code == 200
 
-    outsider = TestClient(
-        FromHost(create_authority_app("authority-med", frozenset({"role"})), "10.0.0.9")
-    )
-    refused = outsider.post("/attribute-keys/author", json=body)
+    unsigned = TestClient(app).post("/attribute-keys/author", json=body)
+    assert unsigned.status_code == 401
+    assert "key_b64" not in unsigned.text
+
+    portal = services.client(app, "authority-med", caller="portal")
+    refused = portal.post("/attribute-keys/author", json=body)
     assert refused.status_code == 403
     assert "key_b64" not in refused.text
+
+
+def test_a_service_from_another_root_is_refused(app) -> None:
+    """A certificate the federation root did not issue authenticates nothing."""
+    rogue = ServicePKI(generate_root_anchor())
+    response = rogue.client(app, "authority-med", caller="custodian").post(
+        "/attribute-keys/author", json={"name": "role", "value": "physician"}
+    )
+    assert response.status_code == 401
+    assert "key_b64" not in response.text
 
 
 def test_health(client: TestClient) -> None:

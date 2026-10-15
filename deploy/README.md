@@ -103,18 +103,14 @@ Path A does not:
 - **`SEED_DATA=false`.** The scenario ingests `rec-001`, which the seed data
   already uses. Shares are never overwritten (review F4), so a seeded stack
   answers the scenario's share deposit with 409.
-- **The bridge gateway in `AUTHORING_CALLERS`.** Only the `custodian` and
-  `bootstrap` containers may fetch authoring keys (review F14, ADR-0052).
-  Host traffic reaches the authorities from the Docker bridge gateway, so
-  without it the scenario gets 403 on `/attribute-keys/author`.
-
-The gateway address is only known once the network exists, so start the stack,
-read it, then recreate the stack with it:
+- **The bootstrap identity.** Every service accepts only signed requests
+  from a root-certified service (ADR-0066). The `pki` job writes every
+  service's key and certificate to `deploy/pki/services/<id>/` (git-ignored);
+  the scenario signs as `deploy/pki/services/bootstrap`, so run it from the
+  repository root on the machine that ran Compose.
 
 ```bash
 SEED_DATA=false docker compose -f deploy/docker-compose.yml up --build -d
-GW=$(docker network inspect deploy_federation --format '{{(index .IPAM.Config 0).Gateway}}')
-SEED_DATA=false AUTHORING_CALLERS="custodian,bootstrap,$GW" docker compose -f deploy/docker-compose.yml up -d --force-recreate
 python -m deploy.run_scenario
 ```
 
@@ -186,7 +182,14 @@ ports only on `127.0.0.1`; its trusted-local custodian API and throwaway databas
 must not be exposed to a shared network. This setup does not provide persistent
 key custody or internet-facing authentication.
 
-The timer now mirrors its audited expiry states into the store automatically.
-The existing ADR-0043/0044 limitation remains: rotated ciphertext is not persisted
-because the caller supplies a throwaway re-baseline key. Search expiry is enforced;
-persisted post-expiry DEK rotation is not demonstrated by this deployment.
+The timer mirrors its audited expiry states into the store and, at every
+expiry, runs the full rotation (ADR-0069): a new DEK, policy root, emergency key
+and shares, and a re-derived search index, stored before the record returns to
+baseline. The facility needs `AUTHORITY_URLS` and `CUSTODIAN_URL` for that, and
+the custodian and audit service accept the new shares only while the store shows
+the record `expired`.
+
+Every process has its own service identity (`deploy/pki/services/<id>/`,
+ADR-0066), issued fresh with the rest of the PKI on each run. Each Compose
+container mounts only its own directory; the keys are owner-only and belong to
+the containers' `app` user.

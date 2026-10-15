@@ -40,11 +40,13 @@ from typing import Any
 
 import httpx
 from api.audit_client import _tls_verify
+from api.service_auth import ServiceIdentity, signed_client
 from breakglass import create_emergency_assertion
+from breakglass.assertion import clinical_context_digest
 from breakglass.emergency_key import generate_emergency_key, split_emergency_key
 from contracts.base import GCM_NONCE_BYTES
 from contracts.clinical import ClinicalMetadata
-from contracts.enums import PolicyNodeType, ReasonCode
+from contracts.enums import LifecycleState, PolicyNodeType, ReasonCode
 from contracts.policy import Attribute, PolicyTree
 from crypto_core import (
     certificate_from_pem,
@@ -58,6 +60,7 @@ from identity.certificates import (
     issue_clinician_certificate,
     issue_patient_certificate,
 )
+from lifecycle.state_machine import create_transition_event
 from pre.elgamal import decapsulate_key
 from pre.elgamal import generate_keypair as generate_pre_keypair
 from records.labels import sign_clinical_labels
@@ -66,6 +69,10 @@ from deploy.config import configure_transport, tls_enabled
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = REPO_ROOT / "deploy" / "pki" / "federation.json"
+# Where run_local writes every service's identity; the scenario signs as
+# bootstrap (ADR-0066).
+DEFAULT_SERVICES_DIR = REPO_ROOT / "deploy" / "pki" / "services"
+AUDIT_SERVICE_ID = "audit-service"
 
 
 def _unwrap_rewrapped_dek(rewrapped_dek: bytes, pre_priv: int, record_id: str) -> bytes:
@@ -101,13 +108,83 @@ def _parse_ca_credentials(ca_data: object) -> tuple[object, object]:
 
 @dataclass
 class ScenarioEndpoints:
-    """Base URLs for the five federated service processes."""
+    """Base URLs for the federated service processes.
+
+    ``custodian`` holds share 1 of every record (ADR-0043); a script that
+    ingests records deposits share 1 there so the forced rotation at expiry
+    can replace it (ADR-0069).
+    """
 
     authority_med: str = "http://127.0.0.1:8010"
     authority_net: str = "http://127.0.0.1:8011"
     audit: str = "http://127.0.0.1:8020"
     facility_a: str = "http://127.0.0.1:8001"
     facility_b: str = "http://127.0.0.1:8002"
+    custodian: str | None = None
+
+    def recipients(self) -> dict[str, str]:
+        """``{base_url: service_id}`` for a signed client (ADR-0066)."""
+        recipients = {
+            self.authority_med: "authority-med",
+            self.authority_net: "authority-net",
+            self.audit: AUDIT_SERVICE_ID,
+            self.facility_a: "facility-a",
+            self.facility_b: "facility-b",
+        }
+        if self.custodian:
+            recipients[self.custodian] = "custodian"
+        return recipients
+
+
+def signed_scenario_client(
+    endpoints: ScenarioEndpoints, identity: ServiceIdentity, *, timeout: float = 10.0
+) -> httpx.Client:
+    """A client that signs every request to these services as ``identity``."""
+    return signed_client(
+        identity, endpoints.recipients(), timeout=timeout, verify=_tls_verify()
+    )
+
+
+def emergency_open(
+    client: httpx.Client,
+    *,
+    facility_url: str,
+    record_id: str,
+    patient_id: str,
+    clinician_id: str,
+    facility_id: str,
+    clinician_key: object,
+    reason_code: ReasonCode,
+    justification: str,
+    ttl: datetime.timedelta = datetime.timedelta(seconds=300),
+) -> tuple[Any, Any]:
+    """Sign the assertion and the clinician's open transition for one record.
+
+    The assertion's context digest binds the record and justification
+    (the audit service refuses one that does not, ADR-0067); the transition is
+    signed by the clinician from the record's current state (ADR-0068).
+    Returns ``(assertion, transition_event)``.
+    """
+    state = client.get(f"{facility_url}/records/{record_id}/lifecycle")
+    state.raise_for_status()
+    assertion = create_emergency_assertion(
+        patient_id=patient_id,
+        clinician_id=clinician_id,
+        facility_id=facility_id,
+        reason_code=reason_code,
+        signing_key=clinician_key,  # type: ignore[arg-type]
+        ttl=ttl,
+        clinical_context_digest=clinical_context_digest(record_id, justification, ""),
+    )
+    event = create_transition_event(
+        record_id=record_id,
+        from_state=LifecycleState(state.json()["state"]),
+        to_state=LifecycleState.EMERGENCY_OPEN,
+        actor_id=clinician_id,
+        signing_key=clinician_key,  # type: ignore[arg-type]
+        reason_code=reason_code,
+    )
+    return assertion, event
 
 
 def run_scenario(
@@ -117,6 +194,7 @@ def run_scenario(
     emergency_duration_seconds: float = 3.0,
     verbose: bool = True,
     canaries_out: Path | None = None,
+    client: httpx.Client | None = None,
 ) -> bool:
     """Execute the full cross-hospital break-glass scenario.
 
@@ -129,6 +207,8 @@ def run_scenario(
             file so the P5-5 wire analyser can search the capture for them
             (ADR-0045). Synthetic, throwaway values -- the file belongs under
             the gitignored ``wire/captures/`` and must never be committed.
+        client: Signs every request as bootstrap (ADR-0066); defaults to the
+            identity ``deploy/run_local.py`` wrote.
 
     Returns:
         True if all scenario steps succeed and all invariants hold.
@@ -141,7 +221,12 @@ def run_scenario(
                 for line in detail.strip().splitlines():
                     print(f"    {line}")
 
-    client = httpx.Client(timeout=10.0, verify=_tls_verify())
+    if client is None:
+        from deploy.bootstrap import load_service_identity_dir
+
+        client = signed_scenario_client(
+            endpoints, load_service_identity_dir(DEFAULT_SERVICES_DIR, "bootstrap")
+        )
     # Stamped into the canary manifest so the analyser can refuse a pcap that
     # predates this run (review N5).
     started_at = time.time()
@@ -203,10 +288,6 @@ def run_scenario(
     pat_cert_pem = certificate_to_pem(
         issue_patient_certificate(fa_ca_priv, fa_ca_cert, "pat-101", pat_pub)
     ).decode("ascii")
-
-    # Lifecycle signing key for Facility B
-    life_priv, life_pub = generate_ec_keypair()
-    life_priv_pem = private_key_to_pem(life_priv).decode("ascii")
 
     # Issue credentials from Authorities
     # 1. Dr. Bob: role:physician (authority-med) & specialty:cardiology (authority-net)
@@ -328,6 +409,13 @@ def run_scenario(
     )
     audit_reg_res.raise_for_status()
     log(f"  * Share 3 deposited in Audit Service custody for record {record_id}")
+    if endpoints.custodian:
+        # Share 1 in clinician custody, so expiry can rotate it (ADR-0069).
+        client.post(
+            f"{endpoints.custodian}/records/{record_id}/shares",
+            json={"x": share1[0], "share_hex": share1[1].hex()},
+        ).raise_for_status()
+        log(f"  * Share 1 deposited in clinician custody for record {record_id}")
 
     # Ingest record via Facility A
     ingest_res = client.post(
@@ -421,14 +509,18 @@ def run_scenario(
     assert record_id in discovered_ids
     log(f"  * Discovery located records for patient pat-101: {discovered_ids}")
 
-    # Dr. Carol signs EmergencyAssertion
-    assertion = create_emergency_assertion(
+    # Dr. Carol signs the EmergencyAssertion and the open transition
+    justification = "Unconscious on arrival; medication history needed now."
+    assertion, transition_event = emergency_open(
+        client,
+        facility_url=endpoints.facility_b,
+        record_id=record_id,
         patient_id="pat-101",
         clinician_id="doc-301",
         facility_id="facility-b",
+        clinician_key=carol_priv,
         reason_code=ReasonCode.UNCONSCIOUS_PATIENT,
-        signing_key=carol_priv,
-        ttl=datetime.timedelta(seconds=300),
+        justification=justification,
     )
     log("  * Signed EmergencyAssertion generated for pat-101 (UNCONSCIOUS_PATIENT)")
 
@@ -451,6 +543,10 @@ def run_scenario(
             },
             "actor_id": "audit-service",
             "correlation_id": corr_id,
+            # The audit service validates the assertion itself (ADR-0067).
+            "assertion": assertion.model_dump(mode="json"),
+            "clinician_certificate_pem": carol_cert_pem,
+            "justification": justification,
         },
     )
     release_res.raise_for_status()
@@ -469,8 +565,8 @@ def run_scenario(
         (rel_x, rel_share_hex),
     ]
 
-    # Baseline wrapping key (the policy root secret) allows EmergencyExpiryManager
-    # to register the active session and re-baseline at expiry.
+    # Carol's own signed transition, not a private key, goes on the wire
+    # (ADR-0068); expiry rotates every key itself (ADR-0069).
     unlock_res = client.post(
         f"{endpoints.facility_b}/records/{record_id}/breakglass",
         json={
@@ -478,9 +574,9 @@ def run_scenario(
             "clinician_certificate_pem": carol_cert_pem,
             "shares": shares_payload,
             "pre_rewrap_key": carol_pre_pub,
-            "lifecycle_signing_key_pem": life_priv_pem,
+            "transition_event": transition_event.model_dump(mode="json"),
             "correlation_id": corr_id,
-            "baseline_wrapping_key_b64": base64.b64encode(k_physician).decode("ascii"),
+            "justification": justification,
             "emergency_duration_seconds": emergency_duration_seconds,
         },
     )
@@ -573,10 +669,6 @@ def run_scenario(
                     k_cardio,
                 ),
                 "attr_key:authority-net:owner:pat-101": ("attribute_key", k_owner),
-                "lifecycle_signing_key_pem": (
-                    "private_key",
-                    life_priv_pem.encode("ascii"),
-                ),
                 "clinician_signing_key_pem": (
                     "private_key",
                     private_key_to_pem(carol_priv),
@@ -663,16 +755,8 @@ def main() -> int:
         audit=f"{scheme}://127.0.0.1:8020",
         facility_a=f"{scheme}://127.0.0.1:8001",
         facility_b=f"{scheme}://127.0.0.1:8002",
+        custodian=f"{scheme}://127.0.0.1:8030",
     )
-
-    if config_data:
-        endpoints = ScenarioEndpoints(
-            authority_med=f"{scheme}://127.0.0.1:8010",
-            authority_net=f"{scheme}://127.0.0.1:8011",
-            audit=f"{scheme}://127.0.0.1:8020",
-            facility_a=f"{scheme}://127.0.0.1:8001",
-            facility_b=f"{scheme}://127.0.0.1:8002",
-        )
 
     print("Executing Cross-Hospital Break-Glass Scenario (P4-4)...")
     try:

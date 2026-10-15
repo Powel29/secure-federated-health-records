@@ -53,6 +53,8 @@ if TYPE_CHECKING:
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PORTAL_DIR = REPO_ROOT / "portal"
 ROLES_SQL = PORTAL_DIR / "sql" / "roles.sql"
+# Every service's identity, as run_local and the in-process demo write it.
+SERVICES_DIR = REPO_ROOT / "deploy" / "pki" / "services"
 
 STORE_RO_USER = "portal_ro"
 # Django's own role: owns the portal schema, no store privileges (review F36).
@@ -154,49 +156,26 @@ def main(argv: list[str] | None = None) -> int:
 
 def _run_in_process(args: argparse.Namespace, database_url: str) -> int:
     """The old single-process path: services as threads (tests only)."""
-    from api.custodian_service import CustodianEndpoints, create_custodian_app
-    from storage.repositories import get_record
-
-    from demo.driver import _LiveServer, standalone_federation
+    from demo.driver import standalone_federation
     from demo.seed_data import seed_synthetic_data
     from deploy.seed_portal import deposit_custodian
 
     print("[1/6] resetting the store and starting the services in-process...")
     with standalone_federation(database_url, default_duration=args.duration) as fed:
         endpoints = fed["endpoints"]
-        store_conn = psycopg.connect(database_url)
-        store_conn.autocommit = True
-        custodian = _LiveServer(
-            create_custodian_app(
-                endpoints=CustodianEndpoints(
-                    authorities={
-                        "authority-med": endpoints.authority_med,
-                        "authority-net": endpoints.authority_net,
-                    },
-                    facilities={
-                        "facility-a": endpoints.facility_a,
-                        "facility-b": endpoints.facility_b,
-                    },
-                    audit=endpoints.audit,
-                ),
-                record_loader=lambda rid: get_record(store_conn, rid),
-            )
+        custodian_url = endpoints.custodian
+        print("[3/6] seeding synthetic patients, clinicians and records (P4-5)...")
+        seed = seed_synthetic_data(endpoints, fed["config"], client=fed["client"])
+        counts = deposit_custodian(
+            custodian_url, seed, audit_url=endpoints.audit, client=fed["client"]
         )
-        custodian_url = custodian.start()
-        try:
-            print("[3/6] seeding synthetic patients, clinicians and records (P4-5)...")
-            seed = seed_synthetic_data(endpoints, fed["config"])
-            counts = deposit_custodian(custodian_url, seed, audit_url=endpoints.audit)
-            print(
-                f"      {len(seed['records'])} records ingested; custodian holds "
-                f"{counts['subjects']} subjects and {counts['shares']} clinician shares"
-            )
-            return _serve_portal(
-                args, database_url, endpoints, custodian_url, seed["dataset"]
-            )
-        finally:
-            custodian.stop()
-            store_conn.close()
+        print(
+            f"      {len(seed['records'])} records ingested; custodian holds "
+            f"{counts['subjects']} subjects and {counts['shares']} clinician shares"
+        )
+        return _serve_portal(
+            args, database_url, endpoints, custodian_url, seed["dataset"]
+        )
 
 
 def _serve_portal(
@@ -238,6 +217,10 @@ def _serve_portal(
         "DJANGO_SETTINGS_MODULE": "config.settings",
         # Loopback developer demo: debug pages on, explicitly (F42).
         "DJANGO_DEBUG": "1",
+        # The portal signs its calls with its own service identity, written
+        # next to every other service's at bootstrap (ADR-0066).
+        "SERVICE_KEY_FILE": str(SERVICES_DIR / "portal" / "service.key"),
+        "SERVICE_CERT_FILE": str(SERVICES_DIR / "portal" / "service.crt"),
     }
     django_setup(env)
     from django.core.management import call_command

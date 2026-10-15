@@ -103,14 +103,15 @@
         if (!warned) { warned = true; say("Emergency window closes in 30 seconds."); }
       }
     });
-    var reload = document.body.hasAttribute("data-reload-on-expiry");
+    // The case page's own URL: a GET, never a re-sent declaration (ADR-0065).
+    var reload = document.body.getAttribute("data-reload-on-expiry");
     if (anyDead && !closed) {
       closed = true;
       var banner = document.getElementById("expiry-banner");
       if (reload) {
         if (banner) banner.hidden = false;
         say("Emergency window closed. The key was rotated. The page reloads in 5 seconds.");
-        setTimeout(function () { window.location.reload(); }, 5000);
+        setTimeout(function () { window.location.replace(reload); }, 5000);
       } else {
         say("Emergency window closed.");
       }

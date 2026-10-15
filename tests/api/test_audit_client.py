@@ -40,14 +40,18 @@ class _FakeResponse:
         return self._payload
 
 
+AUTH = httpx.Auth()
+
+
 def test_append_entry_posts_expected_shape_and_returns_entry(monkeypatch):
     captured: dict = {}
 
-    def fake_post(url, *, json, timeout, verify=True):
+    def fake_post(url, *, json, timeout, verify=True, auth=None):
         captured["url"] = url
         captured["json"] = json
         captured["timeout"] = timeout
         captured["verify"] = verify
+        captured["auth"] = auth
         return _FakeResponse(
             200, {"entry": {"seq": 1, "event_type": json["event_type"]}}
         )
@@ -56,6 +60,7 @@ def test_append_entry_posts_expected_shape_and_returns_entry(monkeypatch):
 
     entry = append_entry(
         "http://audit:8020",
+        auth=AUTH,
         event_type="lifecycle_transition",
         event_data={"record_id": "rec-1"},
         actor_id="system:hsm-timer",
@@ -70,6 +75,8 @@ def test_append_entry_posts_expected_shape_and_returns_entry(monkeypatch):
         "correlation_id": "corr-1",
     }
     assert entry == {"seq": 1, "event_type": "lifecycle_transition"}
+    # Every append is signed as the calling service (ADR-0066).
+    assert captured["auth"] is AUTH
 
 
 def test_append_entry_raises_audit_service_error_on_transport_failure(monkeypatch):
@@ -81,6 +88,7 @@ def test_append_entry_raises_audit_service_error_on_transport_failure(monkeypatc
     with pytest.raises(AuditServiceError):
         append_entry(
             "http://audit:8020",
+            auth=AUTH,
             event_type="lifecycle_transition",
             event_data={},
             actor_id="system:hsm-timer",
@@ -97,6 +105,7 @@ def test_append_entry_raises_on_non_2xx_status(monkeypatch):
     with pytest.raises(AuditServiceError):
         append_entry(
             "http://audit:8020",
+            auth=AUTH,
             event_type="lifecycle_transition",
             event_data={},
             actor_id="system:hsm-timer",
@@ -131,13 +140,13 @@ def test_tls_verify_disabled_only_under_capture_double_gate(monkeypatch):
 def test_lifecycle_audit_logger_uses_entrys_own_actor_and_correlation(monkeypatch):
     captured: dict = {}
 
-    def fake_post(url, *, json, timeout, verify=True):
+    def fake_post(url, *, json, timeout, verify=True, auth=None):
         captured.update(json)
         return _FakeResponse(200, {"entry": {"seq": 1}})
 
     monkeypatch.setattr(httpx, "post", fake_post)
 
-    logger = make_lifecycle_audit_logger("http://audit:8020")
+    logger = make_lifecycle_audit_logger("http://audit:8020", auth=AUTH)
     logger(
         {
             "event_id": "evt-1",
@@ -167,15 +176,15 @@ def test_append_refuses_a_chain_that_goes_backwards(monkeypatch):
     truncated or replaced, so the caller is told the entry is not trustworthy."""
     seqs = iter([5, 6, 3])
 
-    def fake_post(url, *, json, timeout, verify=True):
+    def fake_post(url, *, json, timeout, verify=True, auth=None):
         return _FakeResponse(200, {"entry": {"seq": next(seqs)}})
 
     monkeypatch.setattr(httpx, "post", fake_post)
     kwargs = dict(event_type="t", event_data={}, actor_id="a", correlation_id="c")
-    append_entry("http://audit:8020", **kwargs)
-    append_entry("http://audit:8020", **kwargs)
+    append_entry("http://audit:8020", auth=AUTH, **kwargs)
+    append_entry("http://audit:8020", auth=AUTH, **kwargs)
     with pytest.raises(AuditServiceError, match="went backwards"):
-        append_entry("http://audit:8020", **kwargs)
+        append_entry("http://audit:8020", auth=AUTH, **kwargs)
 
 
 def test_concurrent_appends_answered_out_of_order_are_accepted(monkeypatch):
@@ -185,7 +194,7 @@ def test_concurrent_appends_answered_out_of_order_are_accepted(monkeypatch):
     both_sent = threading.Barrier(2)
     b_answered = threading.Event()
 
-    def fake_post(url, *, json, timeout, verify=True):
+    def fake_post(url, *, json, timeout, verify=True, auth=None):
         if json["correlation_id"] == "late":
             return _FakeResponse(200, {"entry": {"seq": 39}})
         both_sent.wait(timeout=5)
@@ -201,6 +210,7 @@ def test_concurrent_appends_answered_out_of_order_are_accepted(monkeypatch):
         try:
             append_entry(
                 "http://audit:8020",
+                auth=AUTH,
                 event_type="t",
                 event_data={},
                 actor_id="a",
@@ -222,6 +232,7 @@ def test_concurrent_appends_answered_out_of_order_are_accepted(monkeypatch):
     with pytest.raises(AuditServiceError, match="went backwards"):
         append_entry(
             "http://audit:8020",
+            auth=AUTH,
             event_type="t",
             event_data={},
             actor_id="a",

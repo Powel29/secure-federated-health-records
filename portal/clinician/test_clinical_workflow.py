@@ -13,6 +13,7 @@ from portal_core.testing import (
     AuditLog,
     SUBJECT_CLINICIAN,
     admin,
+    arm_declare,
     clinician,
     patched,
     refuse,
@@ -167,6 +168,7 @@ class ClinicalWorkflowTests(TestCase):
         }
         session["clinician.discovery"] = {"pat-101": records}
         session.save()
+        token = arm_declare(self.client)
         opened = mock.Mock(side_effect=self._opened)
         with (
             patched(
@@ -179,6 +181,7 @@ class ClinicalWorkflowTests(TestCase):
                 "/clinician/breakglass/",
                 {
                     "action": "declare",
+                    "declare_token": token,
                     "record_ids": ["rec-001", "rec-002"],
                     "reason_code": "sepsis",
                     "justification": "Septic shock; need allergies and medications now.",

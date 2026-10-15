@@ -18,6 +18,7 @@ from breakglass.emergency_key import (
     split_emergency_key,
 )
 from breakglass.envelopes import (
+    check_envelope_binding,
     create_request_envelope,
     verify_request_envelope,
 )
@@ -55,7 +56,8 @@ __all__ = [
     "join_emergency_access",
     "open_emergency_access",
     "split_emergency_key",
-    # Envelope (P3-11)
+    # Envelope (P3-11, ADR-0066)
+    "check_envelope_binding",
     "create_request_envelope",
     "verify_request_envelope",
     # Replay stores (P3-11)

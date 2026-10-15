@@ -27,20 +27,20 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from breakglass import create_emergency_assertion
-from breakglass.assertion import clinical_context_digest
 from contracts.enums import ReasonCode
 from crypto_core import (
     generate_ec_keypair,
-    private_key_to_pem,
     sha256_digest,
 )
 
 from demo.seed_data import seed_synthetic_data
 from deploy.run_scenario import (
     DEFAULT_CONFIG_PATH,
+    DEFAULT_SERVICES_DIR,
     ScenarioEndpoints,
     _unwrap_rewrapped_dek,
+    emergency_open,
+    signed_scenario_client,
 )
 
 # -----------------------------------------------------------------------------
@@ -148,6 +148,15 @@ def _step_pause(step_mode: bool, s: Style) -> None:
 # -----------------------------------------------------------------------------
 
 
+def _free_port() -> int:
+    """An unused loopback port, so every service's URL is known up front."""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
 class _LiveServer:
     """Ephemeral uvicorn server bound to 127.0.0.1 on an OS-assigned port."""
 
@@ -187,10 +196,13 @@ def standalone_federation(
     from api.audit_client import make_lifecycle_audit_logger
     from api.audit_service import create_audit_app
     from api.authority_service import create_authority_app
-    from api.hospital import create_hospital_app
+    from api.custodian_service import CustodianEndpoints, create_custodian_app
+    from api.hospital import AUDIT_SERVICE_ID, create_hospital_app
     from api.repository import PostgresStorageRepository
+    from api.rotation import http_rotation_ports
+    from api.service_auth import SignedRequestAuth, signed_client
     from contracts import Facility
-    from contracts.enums import FacilityStatus
+    from contracts.enums import FacilityStatus, LifecycleState
     from lifecycle.expiry import EmergencyExpiryManager
     from storage import repositories as repo_mod
     from storage.migrate import apply_migrations
@@ -260,61 +272,122 @@ def standalone_federation(
     timer_priv_a, _ = generate_ec_keypair()
     timer_priv_b, _ = generate_ec_keypair()
 
-    app_audit = create_audit_app(conn, actor_id="audit-service")
-    server_audit = _LiveServer(app_audit)
-    audit_url = server_audit.start()
-
-    exp_mgr_a = EmergencyExpiryManager(
-        signing_key=timer_priv_a,
-        timer_actor_id="system:hsm-timer:facility-a",
-        default_duration_seconds=default_duration,
-        audit_logger=make_lifecycle_audit_logger(audit_url),
-    )
-    exp_mgr_a.start_monitor(poll_interval=0.25)
-
-    exp_mgr_b = EmergencyExpiryManager(
-        signing_key=timer_priv_b,
-        timer_actor_id="system:hsm-timer:facility-b",
-        default_duration_seconds=default_duration,
-        audit_logger=make_lifecycle_audit_logger(audit_url),
-    )
-    exp_mgr_b.start_monitor(poll_interval=0.25)
-
-    # PKI first: the facilities are configured with its trust anchors (F1).
+    # PKI first: facilities and the audit service are configured with its
+    # trust anchors (F1, ADR-0067), and every service signs as itself (ADR-0066).
     root_anchor, pki = bootstrap.generate_federation_pki(["facility-a", "facility-b"])
     trust = bootstrap.facility_trust(pki)
+    root_cert = root_anchor.certificate
+    identities = bootstrap.issue_service_identities(root_anchor)
+    bootstrap.write_service_identities(DEFAULT_SERVICES_DIR, identities)
 
-    app_med = create_authority_app("authority-med", frozenset({"role"}))
+    # Every URL is fixed before any app is built, so each knows its peers.
+    url_med, url_net, audit_url, url_fa, url_fb, url_cust = (
+        f"http://127.0.0.1:{_free_port()}" for _ in range(6)
+    )
+    authorities = {"authority-med": url_med, "authority-net": url_net}
+    facilities = {"facility-a": url_fa, "facility-b": url_fb}
+
+    app_audit = create_audit_app(
+        conn, actor_id="audit-service", service_root=root_cert, trust=trust
+    )
+
+    def expiry(facility_id: str, timer_key: Any) -> EmergencyExpiryManager:
+        manager = EmergencyExpiryManager(
+            signing_key=timer_key,
+            timer_actor_id=f"system:hsm-timer:{facility_id}",
+            default_duration_seconds=default_duration,
+            audit_logger=make_lifecycle_audit_logger(
+                audit_url,
+                auth=SignedRequestAuth(
+                    identities[facility_id], {audit_url: AUDIT_SERVICE_ID}
+                ),
+            ),
+        )
+        manager.start_monitor(poll_interval=0.25)
+        return manager
+
+    exp_mgr_a = expiry("facility-a", timer_priv_a)
+    exp_mgr_b = expiry("facility-b", timer_priv_b)
+
+    def facility(facility_id: str, repo: Any, manager: Any) -> Any:
+        rotation_http = signed_client(
+            identities[facility_id],
+            {
+                **{url: aid for aid, url in authorities.items()},
+                url_cust: "custodian",
+                audit_url: AUDIT_SERVICE_ID,
+            },
+            timeout=10.0,
+        )
+        return create_hospital_app(
+            facility_id=facility_id,
+            repository=repo,
+            expiry_manager=manager,
+            audit_service_url=audit_url,
+            trust=trust,
+            identity=identities[facility_id],
+            rotation_ports=http_rotation_ports(
+                rotation_http,
+                authorities=authorities,
+                custodian_url=url_cust,
+                audit_url=audit_url,
+            ),
+        )
+
+    app_med = create_authority_app(
+        "authority-med", frozenset({"role"}), service_root=root_cert
+    )
     app_net = create_authority_app(
-        "authority-net", frozenset({"specialty", "facility", "owner"})
+        "authority-net",
+        frozenset({"specialty", "facility", "owner"}),
+        service_root=root_cert,
     )
-    app_fa = create_hospital_app(
-        facility_id="facility-a",
-        repository=repo_fa,
-        expiry_manager=exp_mgr_a,
-        audit_service_url=audit_url,
-        trust=trust,
-    )
-    app_fb = create_hospital_app(
-        facility_id="facility-b",
-        repository=repo_fb,
-        expiry_manager=exp_mgr_b,
-        audit_service_url=audit_url,
-        trust=trust,
+    app_fa = facility("facility-a", repo_fa, exp_mgr_a)
+    app_fb = facility("facility-b", repo_fb, exp_mgr_b)
+
+    store_conn = psycopg.connect(db_url)
+    store_conn.autocommit = True
+
+    def state_of(record_id: str) -> LifecycleState | None:
+        row = repo_mod.get_lifecycle_state(store_conn, record_id)
+        return LifecycleState(row["state"]) if row else None
+
+    app_cust = create_custodian_app(
+        endpoints=CustodianEndpoints(
+            authorities=authorities, facilities=facilities, audit=audit_url
+        ),
+        record_loader=lambda rid: repo_mod.get_record(store_conn, rid),
+        identity=identities["custodian"],
+        service_root=root_cert,
+        state_loader=state_of,
     )
 
-    server_med = _LiveServer(app_med)
-    server_net = _LiveServer(app_net)
-    server_fa = _LiveServer(app_fa)
-    server_fb = _LiveServer(app_fb)
+    def port_of(url: str) -> int:
+        return int(url.rsplit(":", 1)[1])
 
-    url_med = server_med.start()
-    url_net = server_net.start()
-    url_fa = server_fa.start()
-    url_fb = server_fb.start()
+    server_audit = _LiveServer(app_audit, port_of(audit_url))
+    server_med = _LiveServer(app_med, port_of(url_med))
+    server_net = _LiveServer(app_net, port_of(url_net))
+    server_fa = _LiveServer(app_fa, port_of(url_fa))
+    server_fb = _LiveServer(app_fb, port_of(url_fb))
+    server_cust = _LiveServer(app_cust, port_of(url_cust))
+    for server in (server_audit, server_med, server_net, server_fa, server_fb):
+        server.start()
+    server_cust.start()
 
-    cert_med = bootstrap.register_authority(url_med, root_anchor, "authority-med")
-    cert_net = bootstrap.register_authority(url_net, root_anchor, "authority-net")
+    client = bootstrap.bootstrap_client(
+        identities["bootstrap"],
+        authorities=authorities,
+        facilities=facilities,
+        audit=audit_url,
+        custodian=url_cust,
+    )
+    cert_med = bootstrap.register_authority(
+        url_med, root_anchor, "authority-med", client=client
+    )
+    cert_net = bootstrap.register_authority(
+        url_net, root_anchor, "authority-net", client=client
+    )
 
     endpoints = ScenarioEndpoints(
         authority_med=url_med,
@@ -322,6 +395,7 @@ def standalone_federation(
         audit=audit_url,
         facility_a=url_fa,
         facility_b=url_fb,
+        custodian=url_cust,
     )
 
     config = {
@@ -348,10 +422,14 @@ def standalone_federation(
             "endpoints": endpoints,
             "config": config,
             "expiry_manager_b": exp_mgr_b,
+            "client": client,
+            "identities": identities,
         }
     finally:
         exp_mgr_a.stop_monitor()
         exp_mgr_b.stop_monitor()
+        client.close()
+        server_cust.stop()
         server_fa.stop()
         server_fb.stop()
         server_audit.stop()
@@ -359,6 +437,7 @@ def standalone_federation(
         server_med.stop()
         conn_fa.close()
         conn_fb.close()
+        store_conn.close()
         conn.close()
 
 
@@ -376,6 +455,7 @@ def run_demo_scenario(
     step_mode: bool = False,
     no_color: bool = False,
     verbose: bool = True,
+    client: httpx.Client | None = None,
 ) -> bool:
     """Execute the full 8-Act examiner-ready demonstration scenario.
 
@@ -387,12 +467,21 @@ def run_demo_scenario(
         step_mode: If True, waits for user confirmation between acts.
         no_color: Disable ANSI color styling.
         verbose: Print detailed step information.
+        client: Signs every request as bootstrap (ADR-0066); defaults to the
+            identity ``deploy/run_local.py`` wrote.
 
     Returns:
         True if all scenario assertions pass and all invariants hold.
     """
     s = Style(not no_color)
-    client = httpx.Client(timeout=12.0)
+    if client is None:
+        from deploy.bootstrap import load_service_identity_dir
+
+        client = signed_scenario_client(
+            endpoints,
+            load_service_identity_dir(DEFAULT_SERVICES_DIR, "bootstrap"),
+            timeout=12.0,
+        )
 
     # =========================================================================
     # ACT 1: Federation Topology & Health Verification
@@ -443,6 +532,14 @@ def run_demo_scenario(
             client=client,
             verbose=False,
         )
+        if endpoints.custodian:
+            # Share 1 in clinician custody, so expiry can rotate it (ADR-0069).
+            for record_id, meta in seeded_data["records"].items():
+                x, share_bytes = meta["share1"]
+                client.post(
+                    f"{endpoints.custodian}/records/{record_id}/shares",
+                    json={"x": x, "share_hex": share_bytes.hex()},
+                ).raise_for_status()
 
     dataset = seeded_data["dataset"]
     print(f"  Successfully seeded {len(dataset.patients)} realistic patient records:")
@@ -563,14 +660,19 @@ def run_demo_scenario(
     justification = (
         "Unconscious patient requires urgent allergy and medication history review."
     )
-    assertion = create_emergency_assertion(
+    # The assertion binds the record; the open transition is signed with the
+    # clinician's own key (ADR-0067, ADR-0068).
+    assertion, transition_event = emergency_open(
+        client,
+        facility_url=endpoints.facility_b,
+        record_id="rec-001",
         patient_id="pat-101",
         clinician_id="doc-201",
         facility_id="facility-b",
+        clinician_key=house_info["private_key"],
         reason_code=ReasonCode.UNCONSCIOUS_PATIENT,
-        signing_key=house_info["private_key"],
+        justification=justification,
         ttl=datetime.timedelta(seconds=300),
-        clinical_context_digest=clinical_context_digest("rec-001", justification, ""),
     )
     print(
         f"     • Subject: {assertion.patient_id}  |  "
@@ -610,6 +712,9 @@ def run_demo_scenario(
             },
             "actor_id": "audit-service",
             "correlation_id": corr_id,
+            "assertion": assertion.model_dump(mode="json"),
+            "clinician_certificate_pem": house_info["certificate_pem"],
+            "justification": justification,
         },
     )
     release_res.raise_for_status()
@@ -626,10 +731,6 @@ def run_demo_scenario(
     )
 
     # 3. Unlock record at Facility B
-    life_priv, _ = generate_ec_keypair()
-    life_priv_pem = private_key_to_pem(life_priv).decode("ascii")
-    k_physician = seeded_data["attribute_keys"]["authority-med:role:physician"]
-
     unlock_res = client.post(
         f"{endpoints.facility_b}/records/rec-001/breakglass",
         json={
@@ -637,9 +738,8 @@ def run_demo_scenario(
             "clinician_certificate_pem": house_info["certificate_pem"],
             "shares": [(share1[0], share1[1].hex()), (rel_x, rel_share_hex)],
             "pre_rewrap_key": house_info["pre_public_key"],
-            "lifecycle_signing_key_pem": life_priv_pem,
+            "transition_event": transition_event.model_dump(mode="json"),
             "correlation_id": corr_id,
-            "baseline_wrapping_key_b64": base64.b64encode(k_physician).decode("ascii"),
             "emergency_duration_seconds": emergency_duration_seconds,
             "justification": justification,
         },
@@ -771,9 +871,27 @@ def run_demo_scenario(
     print(
         f"   {s.GREEN}[✓] DEAD-TOKEN CONFIRMED:{s.RESET} Search for 'cardiac' "
         f"returned {s.RED}HTTP 403 Forbidden{s.RESET} "
-        f"('Emergency search unavailable').\n"
-        f"   {s.DIM}Forward Secrecy:{s.RESET} Ephemeral session key zeroized; "
-        f"DEK rotated back to baseline."
+        f"('Emergency search unavailable')."
+    )
+
+    # The forced rotation (ADR-0069) re-keys the record and hands new shares
+    # to the custodian and the audit service; only then does it return to
+    # baseline. Wait for that, so the demo cannot pass on a stuck rotation.
+    deadline = time.monotonic() + 15.0
+    state = ""
+    while time.monotonic() < deadline:
+        state_res = client.get(f"{endpoints.facility_b}/records/rec-001/lifecycle")
+        state_res.raise_for_status()
+        state = state_res.json()["state"]
+        if state == "granted":
+            break
+        time.sleep(0.25)
+    assert state == "granted", f"rotation did not complete; record is {state!r}"
+    print(
+        f"   {s.GREEN}[✓] FORCED ROTATION COMPLETE:{s.RESET} new DEK, new policy "
+        f"root, new emergency key and shares, search index re-keyed.\n"
+        f"   {s.DIM}Forward Secrecy:{s.RESET} the shares presented above no longer "
+        f"open anything."
     )
 
     print(
@@ -935,7 +1053,9 @@ def main(argv: list[str] | None = None) -> int:
             config = fed["config"]
 
             if args.seed_only:
-                seed_synthetic_data(endpoints, config, verbose=True)
+                seed_synthetic_data(
+                    endpoints, config, client=fed["client"], verbose=True
+                )
                 print("Synthetic data seeded successfully in standalone federation.")
                 return 0
 
@@ -948,6 +1068,7 @@ def main(argv: list[str] | None = None) -> int:
                 step_mode=args.step,
                 no_color=args.no_color,
                 verbose=True,
+                client=fed["client"],
             )
             return 0 if success else 1
 
@@ -961,11 +1082,20 @@ def main(argv: list[str] | None = None) -> int:
 
     # The published localhost ports, as deploy.run_scenario does: the config's
     # own endpoints are Compose-internal hostnames under Path B.
-    endpoints = ScenarioEndpoints()
+    endpoints = ScenarioEndpoints(custodian="http://127.0.0.1:8030")
 
     if args.seed_only:
+        from deploy.bootstrap import load_service_identity_dir
+
         print("Seeding synthetic data into running federation...")
-        seed_synthetic_data(endpoints, config_data, verbose=True)
+        seed_synthetic_data(
+            endpoints,
+            config_data,
+            client=signed_scenario_client(
+                endpoints, load_service_identity_dir(DEFAULT_SERVICES_DIR, "bootstrap")
+            ),
+            verbose=True,
+        )
         print("Seeding complete.")
         return 0
 
