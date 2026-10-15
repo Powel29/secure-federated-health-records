@@ -1,4 +1,4 @@
-"""Proof that a credential's subject is the one asking for its key (ADR-0074).
+"""Proof that a credential's subject is the one asking for its key (ADR-0075).
 
 Review F15: a credential is public signed data, so presenting a copy used to
 be enough to release the attribute key it certifies. A release now also needs

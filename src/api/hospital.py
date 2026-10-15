@@ -594,7 +594,7 @@ def create_hospital_app(
         if rotation_ports is not None:
             expiry_manager.attach_rotator(FacilityRotator(repo, rotation_ports))
             # Open sessions survive a restart as rows with no key; the ones a
-            # previous process left are closed with a rotation now (ADR-0073).
+            # previous process left are closed with a rotation now (ADR-0074).
             expiry_manager.attach_session_store(
                 RepositorySessionStore(repo, facility_id)
             )
@@ -602,7 +602,7 @@ def create_hospital_app(
     # Backed by the store so a facility restart does not re-open replay (F22).
     consumed_assertions = ConsumedAssertionIds(backend=repo)
     # Patient-signed revocations go through the state machine too, so their
-    # event ids are one-time across restarts (ADR-0072).
+    # event ids are one-time across restarts (ADR-0073).
     revocation_machine = LifecycleStateMachine(ConsumedEventIds(backend=repo))
     # Clinical labels are trusted only when their patient signature verifies
     # against these anchors; otherwise the strictest rules apply (ADR-0064).
@@ -975,7 +975,7 @@ def create_hospital_app(
         payload: CreateConsentRequestPayload,
         repo: RepoDep,
     ) -> ConsentResponse:
-        """Register a ConsentRequest its clinician signed (ADR-0072).
+        """Register a ConsentRequest its clinician signed (ADR-0073).
 
         Verified against the clinician's certificate from a configured CA;
         the facility never holds the clinician's key.
@@ -1030,7 +1030,7 @@ def create_hospital_app(
         """Submit and verify a patient-signed ConsentGrant.
 
         A revocation arrives the same way: the patient's signed ``REVOKED``
-        grant, signed in the custodian (ADR-0072). A revocation is final for
+        grant, signed in the custodian (ADR-0073). A revocation is final for
         its request: once one is stored, a ``GRANTED`` decision on the same
         request -- the earlier copy, still validly signed -- is refused here,
         as the read path already refuses it (review F13).
@@ -1073,7 +1073,7 @@ def create_hospital_app(
             ),
         )
 
-    # --- Revocation by Key Rotation Endpoint (P3-7, P3-12, ADR-0072) ---------
+    # --- Revocation by Key Rotation Endpoint (P3-7, P3-12, ADR-0073) ---------
 
     @app.post("/records/{record_id}/revoke", response_model=RevokeRecordResponse)
     def revoke_record(
@@ -1083,7 +1083,7 @@ def create_hospital_app(
         audit_key: AuditKeyDep,
         audit_url: AuditUrlDep,
     ) -> RevokeRecordResponse:
-        """A patient revokes access to their record by key rotation (ADR-0072).
+        """A patient revokes access to their record by key rotation (ADR-0073).
 
         Order: verify the patient-signed ``GRANTED -> REVOKED`` against the
         patient's certificate (theirs, this record, from its current state,

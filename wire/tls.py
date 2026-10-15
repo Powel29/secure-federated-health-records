@@ -28,6 +28,13 @@ SERVICES = {
     "custodian": 8030,  # Key Custodian (ADR-0043); same TLS profile as the rest
 }
 
+# The federation's Postgres (Compose service name ``store``). It is not an HTTP
+# service, so it is not in SERVICES (whose ports the capture and checks treat
+# as service ports); its certificate is trusted only by database clients,
+# through its own file rather than the HTTP bundle (ADR-0071).
+STORE = "store"
+STORE_ROOT_CERT = "store.crt"
+
 # Bounded lifetime -- ARCHITECTURE.md §8 "nothing issues forever"; long enough
 # to outlive a demo/capture run, short enough that a stray cert is not durable.
 _TLS_VALID_DAYS = 90
@@ -38,32 +45,38 @@ def generate(output_dir: Path) -> None:
 
     Each service's key and certificate go in ``<output_dir>/<service>/`` and
     the shared client trust bundle in ``<output_dir>/trust/``, so a container
-    can mount only its own key plus the bundle (ADR-0047).
+    can mount only its own key plus the bundle (ADR-0047). The store's
+    certificate is written the same way and trusted separately, as
+    ``trust/store.crt`` (ADR-0071).
     """
-    certificates: list[bytes] = []
-
-    for service in SERVICES:
-        priv, _pub = generate_ec_keypair()
-        cert = build_self_signed_tls_cert(
-            signing_key=priv,
-            common_name=service,
-            dns_names=(service, "localhost"),
-            ip_addresses=("127.0.0.1",),
-            valid_days=_TLS_VALID_DAYS,
-        )
-        service_dir = output_dir / service
-        service_dir.mkdir(parents=True, exist_ok=True)
-        (service_dir / f"{service}.key").write_bytes(private_key_to_pem(priv))
-        cert_pem = certificate_to_pem(cert)
-        (service_dir / f"{service}.crt").write_bytes(cert_pem)
-        certificates.append(cert_pem)
+    certificates = [_write_server_cert(output_dir, service) for service in SERVICES]
+    store_cert = _write_server_cert(output_dir, STORE)
 
     # Trust the exact demo servers instead of disabling certificate verification.
     trust_dir = output_dir / "trust"
     trust_dir.mkdir(parents=True, exist_ok=True)
     (trust_dir / "ca-bundle.crt").write_bytes(b"".join(certificates))
+    (trust_dir / STORE_ROOT_CERT).write_bytes(store_cert)
 
     print(f"TLS certificates written to {output_dir}")
+
+
+def _write_server_cert(output_dir: Path, name: str) -> bytes:
+    """Write ``<name>/<name>.{key,crt}`` and return the certificate PEM."""
+    priv, _pub = generate_ec_keypair()
+    cert = build_self_signed_tls_cert(
+        signing_key=priv,
+        common_name=name,
+        dns_names=(name, "localhost"),
+        ip_addresses=("127.0.0.1",),
+        valid_days=_TLS_VALID_DAYS,
+    )
+    service_dir = output_dir / name
+    service_dir.mkdir(parents=True, exist_ok=True)
+    (service_dir / f"{name}.key").write_bytes(private_key_to_pem(priv))
+    cert_pem = certificate_to_pem(cert)
+    (service_dir / f"{name}.crt").write_bytes(cert_pem)
+    return cert_pem
 
 
 if __name__ == "__main__":

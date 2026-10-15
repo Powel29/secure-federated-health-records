@@ -1,4 +1,4 @@
-# ADR-0074: An attribute key is released only to its credential's subject (proof of possession)
+# ADR-0075: An attribute key is released only to its credential's subject (proof of possession)
 
 - **Status:** Proposed
 - **Date:** 2026-10-15

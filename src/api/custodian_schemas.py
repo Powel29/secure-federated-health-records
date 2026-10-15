@@ -297,7 +297,7 @@ class IngestResult(BaseModel):
 
 
 class RevokeRecordPayload(BaseModel):
-    """A patient revokes access to one of their records (ADR-0072).
+    """A patient revokes access to one of their records (ADR-0073).
 
     ``new_clinical_policy`` is the clinical branch that keeps access; the
     owner leaf is kept by the facility. The custodian signs the revocation

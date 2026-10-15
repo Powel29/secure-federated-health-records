@@ -128,7 +128,7 @@ AUTHORITY_PUBLIC_ROUTES = frozenset(
 
 @dataclass(frozen=True)
 class SubjectTrust:
-    """Where subjects' certificates must come from (ADR-0074).
+    """Where subjects' certificates must come from (ADR-0075).
 
     A key is released only to a request its credential's subject signed,
     under a key certified by one of these facility CAs.
@@ -171,13 +171,13 @@ def create_authority_app(
             chain to (ADR-0066). This service's id is ``authority_id``.
         subject_trust: The facility CAs subjects' certificates chain through.
             Without them no key is released (503): a release must prove the
-            credential's subject is asking (ADR-0074).
+            credential's subject is asking (ADR-0075).
 
     Returns:
         A configured FastAPI application.
     """
     auth = authority or generate_authority(authority_id, owned_attribute_names)
-    # One-time ids of possession envelopes already used here (ADR-0074).
+    # One-time ids of possession envelopes already used here (ADR-0075).
     release_replay = ConsumedRequestIds()
 
     app = FastAPI(
@@ -305,7 +305,7 @@ def create_authority_app(
         """Exchange a valid credential for its key, if its subject is asking.
 
         The request must carry a possession envelope its subject signed,
-        under a certificate from a configured facility CA (ADR-0074, review
+        under a certificate from a configured facility CA (ADR-0075, review
         F15): a copy of the credential alone releases nothing.
         """
         if subject_trust is None:

@@ -19,7 +19,7 @@ break its break-glass for good. Rotation at expiry -- which invalidates the
 old emergency key and mints a new one with a fresh 3-way split (ADR-0069) --
 replaces the share with :meth:`ShareRegistry.replace`, only ever with a later
 generation, so a stale or repeated rotation cannot roll a share back. A later
-generation may skip one: a rotation recovered after a crash (ADR-0073) starts
+generation may skip one: a rotation recovered after a crash (ADR-0074) starts
 after whatever the store already holds. This
 mirrors how a real custodian holds a standing share rather than a one-time
 token: what makes a share safe to reuse across repeated legitimate emergency
@@ -85,7 +85,7 @@ class ShareRegistry:
 
         Idempotent for a retry: replacing with the share already held at
         ``generation`` is a no-op. A generation may be skipped: a rotation
-        recovered after a crash (ADR-0073) starts one after the store's, which
+        recovered after a crash (ADR-0074) starts one after the store's, which
         can be ahead of this holder's if the crash came between deposits.
 
         Raises:

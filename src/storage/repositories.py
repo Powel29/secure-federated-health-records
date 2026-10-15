@@ -481,7 +481,7 @@ def rotate_record_ciphertext(
         return cur.rowcount == 1
 
 
-# --- open emergency sessions (ADR-0073) ---------------------------------------
+# --- open emergency sessions (ADR-0074) ---------------------------------------
 
 
 def save_emergency_session(conn: psycopg.Connection, row: dict[str, Any]) -> None:

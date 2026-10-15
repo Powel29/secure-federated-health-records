@@ -117,7 +117,7 @@ def sign_revocation_transition(
     from_state: LifecycleState,
     patient_id: str,
 ) -> TransitionEvent:
-    """Sign the record's ``from_state -> REVOKED`` as its patient (ADR-0072).
+    """Sign the record's ``from_state -> REVOKED`` as its patient (ADR-0073).
 
     Signed here with the patient's own key, which never leaves the custodian
     (ADR-0043); the facility verifies it against the patient's certificate
@@ -138,7 +138,7 @@ def sign_revocation_transition(
 def sign_key_release_possession(
     *, signing_key: ECPrivateKey, credential: AttributeCredential
 ) -> RequestEnvelope:
-    """Prove the credential's subject asks for its attribute key (ADR-0074).
+    """Prove the credential's subject asks for its attribute key (ADR-0075).
 
     A one-time envelope signed with the subject's own key, addressed to the
     issuing authority, for ``attribute_key.release``, over the credential's

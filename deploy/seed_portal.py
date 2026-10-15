@@ -280,8 +280,6 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     _use_compose_store_password(database_url)
-    # Restarting only the portal must preserve consents and case history.
-    _prepare_portal_schema(database_url, reset=False)
     if tls_enabled():
         os.environ.setdefault("CUSTODIAN_URL", "https://127.0.0.1:8030")
         os.environ.setdefault("AUDIT_SERVICE_URL", "https://127.0.0.1:8020")
@@ -293,7 +291,10 @@ def main(argv: list[str] | None = None) -> int:
             "AUTHORITY_URLS",
             "authority-med=https://127.0.0.1:8010,authority-net=https://127.0.0.1:8011",
         )
+    # Before the first store connection: the TLS profile covers it (ADR-0071).
     configure_transport()
+    # Restarting only the portal must preserve consents and case history.
+    _prepare_portal_schema(database_url, reset=False)
     db = _db_parts(database_url)
     env = {
         "PORTAL_DB_HOST": db["host"],

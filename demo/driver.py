@@ -334,7 +334,7 @@ def standalone_federation(
             ),
         )
 
-    # Key release needs the subject's proof of possession (ADR-0074).
+    # Key release needs the subject's proof of possession (ADR-0075).
     subject_trust = SubjectTrust(
         root=trust.root,
         facility_cas=trust.facility_cas,

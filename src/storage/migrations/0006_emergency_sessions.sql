@@ -1,4 +1,4 @@
--- Open emergency sessions (ADR-0073, review F5): one row per break-glass
+-- Open emergency sessions (ADR-0074, review F5): one row per break-glass
 -- window, written when it opens and deleted when its expiry has finished.
 -- A facility that restarts finds its own rows here and finishes them: the
 -- emergency key died with the old process, so the record is closed and

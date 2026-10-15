@@ -157,7 +157,7 @@ RecordLoader = Callable[[str], Record | None]
 # The record's lifecycle state in the shared store (ADR-0069).
 StateLoader = Callable[[str], LifecycleState | None]
 # States in which a facility may hand a holder a rotated share: expiry
-# (ADR-0069) and a patient's revocation (ADR-0072).
+# (ADR-0069) and a patient's revocation (ADR-0073).
 ROTATING_STATES = frozenset({LifecycleState.EXPIRED, LifecycleState.REVOKED})
 
 
@@ -243,7 +243,7 @@ class CustodianVault:
         """Take a later generation's share 1 (ADR-0069); a retry is a no-op.
 
         A generation may be skipped by a rotation recovered after a crash
-        (ADR-0073), never repeated or rolled back.
+        (ADR-0074), never repeated or rolled back.
 
         Raises:
             KeyError: No share is held for ``record_id``.
@@ -500,7 +500,7 @@ def _holder_keyring(
     presented: list[str] = []
     if material.credentials and not material.certificate_pem:
         # Without a certificate the subject cannot prove possession, so no
-        # authority releases a key (ADR-0074); the policy engine then denies.
+        # authority releases a key (ADR-0075); the policy engine then denies.
         _logger.warning(
             "subject %s holds no certificate; its credentials cannot be exchanged",
             material.subject_id,
@@ -518,7 +518,7 @@ def _holder_keyring(
                 "no endpoint for issuer %s; skipping %s", cred.issuer_id, label
             )
             continue
-        # The subject signs, here, that it is the one asking (ADR-0074).
+        # The subject signs, here, that it is the one asking (ADR-0075).
         possession = sign_key_release_possession(
             signing_key=material.signing_key, credential=cred
         )
@@ -772,7 +772,7 @@ def create_custodian_app(
 
         Only a facility may call this, only while the shared store shows the
         record ``expired`` (its forced rotation at expiry) or ``revoked`` (the
-        rotation a patient's revocation runs, ADR-0072), and only for a later
+        rotation a patient's revocation runs, ADR-0073), and only for a later
         generation than the one held.
         """
         if state_loader is None:
@@ -1177,7 +1177,7 @@ def create_custodian_app(
         endpoints: EndpointsDep,
         http: HttpDep,
     ) -> RevokeRecordResult:
-        """A patient revokes access to their record (ADR-0072, review F10).
+        """A patient revokes access to their record (ADR-0073, review F10).
 
         The custodian signs ``GRANTED -> REVOKED`` with the patient's key and
         sends that, the patient's certificate and the clinical branch that

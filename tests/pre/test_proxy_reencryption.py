@@ -120,7 +120,7 @@ def test_decrypt_point_rejects_non_subgroup_c1() -> None:
 
 
 def test_rekey_inverts_to_the_reverse_direction() -> None:
-    """ADR-0071 (review D11-a): the scheme is bidirectional, and says so.
+    """ADR-0072 (review D11-a): the scheme is bidirectional, and says so.
 
     Whoever holds rk_{A->B} computes rk^-1 mod q, which is rk_{B->A}: a
     ciphertext for B re-encrypted with it decrypts under A's key. This test

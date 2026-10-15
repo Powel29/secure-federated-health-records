@@ -1,4 +1,4 @@
-# ADR-0073: Open emergency sessions survive a restart as keyless rows and are closed at startup
+# ADR-0074: Open emergency sessions survive a restart as keyless rows and are closed at startup
 
 - **Status:** Proposed
 - **Date:** 2026-10-15
@@ -31,7 +31,7 @@ record stuck:
 3. The next sweep expires it as usual. Finding no key, the rotator recovers
    the DEK through the record's own policy with the authoring keys of its
    leaves (`plan_rotation_via_policy`, the same path revocation uses,
-   ADR-0072), plans a full rotation from the store as it stands, stores it
+   ADR-0073), plans a full rotation from the store as it stands, stores it
    and hands out new shares. If the store already shows `expired`, the
    `EMERGENCY_OPEN -> EXPIRED` entry was appended before the crash and is not
    appended again.

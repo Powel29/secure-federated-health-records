@@ -1,4 +1,4 @@
-# ADR-0071: Proxy re-encryption claims corrected -- KEM delivery, bidirectional toy scheme
+# ADR-0072: Proxy re-encryption claims corrected -- KEM delivery, bidirectional toy scheme
 
 - **Status:** Proposed
 - **Date:** 2026-10-15

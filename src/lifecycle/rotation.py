@@ -156,7 +156,7 @@ def plan_rotation_via_policy(
     sealed_search_terms: SealedSearchTerms | None,
     new_tree: PolicyTree | None = None,
 ) -> RotationPlan:
-    """Compute a full rotation without an emergency session (ADR-0072, ADR-0073).
+    """Compute a full rotation without an emergency session (ADR-0073, ADR-0074).
 
     Used where no emergency key is held: a patient's revocation (with
     ``new_tree``, the revoked access structure) and the recovery of an

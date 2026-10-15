@@ -229,7 +229,7 @@ def _search(client: TestClient, term: str = "cardiac"):
 
 
 def _revoke_payload(h: dict, new_policy: PolicyTree) -> dict:
-    """The patient's signed revocation (ADR-0072): no key, no DEK."""
+    """The patient's signed revocation (ADR-0073): no key, no DEK."""
     # The authority would author role:surgeon for the new tree.
     h["rotation"].keyring[("authority-med", "role", "surgeon")] = _SURGEON_KEY
     event = create_transition_event(
@@ -462,7 +462,7 @@ def test_c6_api_refuses_revocation_of_an_emergency_open_record(hospital):
 
     The patient signs the revocation from the record's real state, so the
     state checks agree and only the transition rules stand in the way
-    (ADR-0072): with them switched off (mutation C6a) the revocation would go
+    (ADR-0073): with them switched off (mutation C6a) the revocation would go
     through. ``create_transition_event`` refuses to sign an illegal pair, so
     the event is signed here directly over the canonical payload.
     """
@@ -658,7 +658,7 @@ def test_c10_attribute_key_not_released_without_a_valid_credential():
     )
     credential = issued.json()["credential"]
 
-    # Positive control: a valid credential, asked for by its subject (ADR-0074),
+    # Positive control: a valid credential, asked for by its subject (ADR-0075),
     # is exchanged for its key.
     assert (
         client.post(

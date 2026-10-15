@@ -49,7 +49,7 @@ transition into the facility's store *after* the audit append, as a
 compare-and-set from the event's ``from_state``. A conflict means someone else
 changed the record's state; the timer logs it and never overwrites it.
 
-Restarts (ADR-0073, review F5): the emergency key lives only in this process,
+Restarts (ADR-0074, review F5): the emergency key lives only in this process,
 so a facility that restarts mid-window, or crashes mid-rotation, has lost it.
 An optional session store keeps each open session's identifiers (no key
 material) from the moment it opens until its expiry has finished. On startup
@@ -148,7 +148,7 @@ class EmergencySession:
     rotation_plan: Any = field(default=None, repr=False)
     rotation_steps: set[str] = field(default_factory=set)
     rotation: RotationOutcome | None = None
-    # Re-registered after a restart (ADR-0073): its emergency key was lost
+    # Re-registered after a restart (ADR-0074): its emergency key was lost
     # with the old process, so the rotator recovers the DEK another way.
     recovered: bool = False
 
@@ -176,7 +176,7 @@ Rotator = Callable[[EmergencySession], RotationOutcome]
 
 
 class SessionStore(Protocol):
-    """Where open sessions are kept across restarts (ADR-0073). No keys."""
+    """Where open sessions are kept across restarts (ADR-0074). No keys."""
 
     def save(self, session: EmergencySession) -> None:
         """Record a session that just opened; raise if it cannot be kept."""
@@ -322,7 +322,7 @@ class EmergencyExpiryManager:
         self._rotator = rotator
 
     def attach_session_store(self, store: SessionStore) -> None:
-        """Keep every open session in ``store`` until it has expired (ADR-0073)."""
+        """Keep every open session in ``store`` until it has expired (ADR-0074)."""
         self._session_store = store
 
     def has_session(self, record_id: str) -> bool:
@@ -393,7 +393,7 @@ class EmergencyExpiryManager:
                 one active emergency session per record at a time.
             Exception: Whatever the session store raises; the session is then
                 not registered, because a window no restart could close must
-                not open (ADR-0073).
+                not open (ADR-0074).
         """
         if return_state not in (LifecycleState.GRANTED, LifecycleState.REVOKED):
             raise ValueError(
@@ -448,7 +448,7 @@ class EmergencyExpiryManager:
         current_record: Record,
         already_expired: bool,
     ) -> EmergencySession:
-        """Re-register a session a previous process left open (ADR-0073).
+        """Re-register a session a previous process left open (ADR-0074).
 
         The session has no emergency key and is due at once: it cannot be
         joined, and the next sweep expires it with a rotation that recovers
@@ -629,7 +629,7 @@ class EmergencyExpiryManager:
             except Exception:
                 # Swallowing is correct: the expiry is complete and stored. A
                 # row left behind only makes the next startup find the record
-                # back at baseline and drop the row (ADR-0073).
+                # back at baseline and drop the row (ADR-0074).
                 _logger.exception(
                     "could not forget the finished emergency session of %s",
                     record_id,

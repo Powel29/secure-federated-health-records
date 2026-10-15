@@ -1,7 +1,7 @@
-"""A facility restart or a crash mid-rotation closes the record (ADR-0073).
+"""A facility restart or a crash mid-rotation closes the record (ADR-0074).
 
 Review F5 and the ADR-0069 residual: the emergency key lives only in the
-facility process. Before ADR-0073 a restart mid-window left the record
+facility process. Before ADR-0074 a restart mid-window left the record
 ``emergency_open`` for good, and a crash between the rotation's store commit
 and its share deposits left it with no holder set that matched. Now every open
 session is kept in the store without its key, and a restarted facility closes

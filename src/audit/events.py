@@ -61,7 +61,7 @@ EVENT_ACCESS_DENIED = "access_denied"
 EVENT_FEDERATION_DISCOVERY = "federation.discovery"
 EVENT_FEDERATION_REWRAP = "federation.rewrap"
 # A patient's revocation by key rotation, logged before it is stored (review
-# F10, ADR-0072): identifiers, policy ids and generations only.
+# F10, ADR-0073): identifiers, policy ids and generations only.
 EVENT_RECORD_REVOKED = "record.revoked"
 
 # Portal-originated events (ADR-0033, ADR-0043). Both are appended through the

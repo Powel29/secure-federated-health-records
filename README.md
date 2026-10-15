@@ -84,6 +84,10 @@ not clash with a local Postgres already on 5432:
 docker run -d --name p08pg -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_DB=ehr_test -p 55432:5432 postgres:16-alpine
 ```
 
+This store speaks plaintext, which is right for the default (plain) profile.
+The TLS profile (`TLS_ENABLED=true`) refuses it and needs a TLS store instead:
+see `deploy/README.md`, "The store link is TLS too" (ADR-0071).
+
 Apply the store schema (migrations, P0-8):
 
 ```bash

@@ -285,7 +285,7 @@ than this is the fastest way to lose credibility in the viva.
    holds share 1 only; the audit service still commits before releasing share
    3; the policy engine still gates every read), but it must be stated.
 6. **Expiry rotation is finished after a crash or restart, not before
-   (ADR-0069, ADR-0073).** At expiry the facility re-keys the record in full --
+   (ADR-0069, ADR-0074).** At expiry the facility re-keys the record in full --
    new DEK, policy root, emergency key and shares, search index -- stores it
    atomically and hands the new shares to the custodian and the audit service
    before the record returns to baseline (review F9, D3-a). Each open session
@@ -293,7 +293,7 @@ than this is the fastest way to lose credibility in the viva.
    or crashes mid-rotation closes those sessions at startup with a fresh
    rotation (review F5). Until it comes back, the record stays closed: nobody
    can join the lost session, and break-glass waits for the rotation. A
-   patient's revocation runs the same rotation (ADR-0072); if a share holder is
+   patient's revocation runs the same rotation (ADR-0073); if a share holder is
    unreachable then, the revocation still holds but break-glass on that record
    stays closed until it is re-keyed. Plaintext a clinician already decrypted
    is not retractable (ADR-0035), and share 2 is still discarded (D2).
@@ -307,7 +307,7 @@ than this is the fastest way to lose credibility in the viva.
    this is a common case, so the paper must say the scenario assumes
    identification.
 8. **The "proxy re-encryption" is a KEM delivery, and the toy PRE is
-   bidirectional and small (ADR-0071, review D11-a).** At break-glass the
+   bidirectional and small (ADR-0072, review D11-a).** At break-glass the
    facility reconstructs the emergency key, unwraps the DEK in its own memory,
    and delivers it to the clinician under a key encapsulated to the
    clinician's ElGamal public key (`pre.encapsulate_key` + AES-GCM). Nothing

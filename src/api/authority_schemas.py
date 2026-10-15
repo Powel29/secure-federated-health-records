@@ -88,7 +88,7 @@ class AttributeKeyReleaseRequest(BaseModel):
 
     ``possession`` is a one-time envelope the credential's subject signed for
     this credential and this authority, verified against
-    ``subject_certificate_pem`` (ADR-0074): a copied credential is not enough.
+    ``subject_certificate_pem`` (ADR-0075): a copied credential is not enough.
     """
 
     credential: AttributeCredential

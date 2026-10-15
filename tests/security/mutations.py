@@ -77,7 +77,7 @@ def _keep_revoked_party(mp: pytest.MonkeyPatch) -> None:
 
 
 def _no_reencryption(mp: pytest.MonkeyPatch) -> None:
-    """Revocation's rotation keeps the old ciphertext (ADR-0072 runs the
+    """Revocation's rotation keeps the old ciphertext (ADR-0073 runs the
     ADR-0069 rotation, so the mutation sits in the shared planner)."""
     import lifecycle.rotation
 
@@ -261,7 +261,7 @@ def _forget_consumed_ids(mp: pytest.MonkeyPatch) -> None:
 
 
 def _skip_possession_check(mp: pytest.MonkeyPatch) -> None:
-    """The authority releases a key without checking who asks (pre-ADR-0074)."""
+    """The authority releases a key without checking who asks (pre-ADR-0075)."""
     import api.authority_service
 
     mp.setattr(

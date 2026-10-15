@@ -205,7 +205,7 @@ def capture_scenario(
 
 
 def _run_scenario_via_subprocess(
-    scheme: str, canaries_out: Path | None = None
+    scheme: str, canaries_out: Path | None = None, *, search_workload: bool = False
 ) -> Callable[[], None]:
     """Default scenario: drive an already-running federation over ``scheme``.
 
@@ -214,6 +214,7 @@ def _run_scenario_via_subprocess(
     loopback ports the BPF filter pins. The federation must already be up
     (``deploy/run_local.py`` or Docker Compose) -- plain HTTP for ``plain``,
     TLS for ``tls`` (start it with the certs from :mod:`wire.tls`).
+    ``search_workload`` adds the P5-3 searches (ADR-0070).
     """
 
     def _run() -> None:
@@ -222,6 +223,12 @@ def _run_scenario_via_subprocess(
         cmd = [sys.executable, "-m", "deploy.run_scenario", "--scheme", scheme]
         if canaries_out is not None:
             cmd += ["--canaries-out", str(canaries_out)]
+        if search_workload:
+            cmd.append("--search-workload")
+            if canaries_out is not None:
+                # Ground truth for labelling the search exchanges (ADR-0071).
+                searches = canaries_out.name.replace(".canaries.", ".searches.")
+                cmd += ["--searches-out", str(canaries_out.with_name(searches))]
         subprocess.run(cmd, check=True)
 
     return _run
@@ -253,9 +260,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Postgres port to include in the capture (claim-2 evidence; "
         "default: DATABASE_URL's port)",
     )
+    parser.add_argument(
+        "--search-workload",
+        action="store_true",
+        help="also run the P5-3 search workload (ADR-0070); default output "
+        "wire/captures/<mode>-search.pcap",
+    )
     args = parser.parse_args(argv)
 
-    out = args.out or (CAPTURE_DIR / f"{args.mode}.pcap")
+    suffix = "-search" if args.search_workload else ""
+    out = args.out or (CAPTURE_DIR / f"{args.mode}{suffix}.pcap")
     if args.interface is not None and not is_allowed_interface(args.interface):
         parser.error(f"refusing interface {args.interface!r}: {CAPTURE_RULE}")
     try:
@@ -266,7 +280,9 @@ def main(argv: list[str] | None = None) -> int:
     scheme = "https" if args.mode == "tls" else "http"
     canaries = out.with_name(f"{out.stem}.canaries.json")
     capture_scenario(
-        _run_scenario_via_subprocess(scheme, canaries),
+        _run_scenario_via_subprocess(
+            scheme, canaries, search_workload=args.search_workload
+        ),
         output_path=out,
         interface=args.interface,
         db_port=args.db_port,

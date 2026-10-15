@@ -233,7 +233,7 @@ def test_forged_signature_is_rejected(client: TestClient) -> None:
     assert "InvalidSignatureError" in verify.json()["detail"]
 
 
-# --- ADR-0074 / review F15: proof of possession ---------------------------
+# --- ADR-0075 / review F15: proof of possession ---------------------------
 
 
 def _issue(client: TestClient, subject_id: str = "dr-alice") -> dict:

@@ -1,4 +1,4 @@
-# ADR-0072: Revocation and consent send no private key or DEK; revocation re-keys with the expiry rotation
+# ADR-0073: Revocation and consent send no private key or DEK; revocation re-keys with the expiry rotation
 
 - **Status:** Proposed
 - **Date:** 2026-10-15

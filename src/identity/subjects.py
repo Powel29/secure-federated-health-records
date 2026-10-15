@@ -1,4 +1,4 @@
-"""Validate a person's certificate for a named subject (ADR-0064, ADR-0072).
+"""Validate a person's certificate for a named subject (ADR-0064, ADR-0073).
 
 Patients and clinicians are certified by their home facility CA. A verifier
 -- a facility checking a consent request, an authority checking who asks for
