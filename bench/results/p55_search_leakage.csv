@@ -1,2 +1,2 @@
-frame,timestamp,path,query_sha256,request_bytes,response_status,response_bytes,result_count
-372,1791556068.4469285,/records/rec-001/emergency-search,10abdadb21d82d91dba7870832318673e870bbec62f19b48d29c547cb9a4258f,26,200,43,1
+frame,timestamp,path,query_id,request_bytes,response_status,response_bytes,result_count
+465,1792044188.94246,/records/rec-001/emergency-search,q1,53,200,43,1

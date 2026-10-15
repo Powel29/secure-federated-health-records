@@ -1,0 +1,34 @@
+{
+  "capture": "wire\\captures\\plain.pcap",
+  "total_tcp_packets": 592,
+  "total_capture_bytes": 132927,
+  "http_events": 62,
+  "tls_packets": 0,
+  "uris_observable": true,
+  "query_volume": 1,
+  "answered_queries": 1,
+  "unique_observable_requests": 1,
+  "repeated_requests": {},
+  "access_pattern_by_record": {
+    "rec-001": 1
+  },
+  "queries_visible_in_clear": 0,
+  "distinct_response_sizes": [
+    43
+  ],
+  "response_bytes_by_result_count": {},
+  "inter_query_seconds": [],
+  "queries": [
+    {
+      "timestamp": 1792044188.9425302,
+      "method": "POST",
+      "uri": "/records/rec-001/emergency-search",
+      "record_id": "rec-001",
+      "request_bytes": 53,
+      "query_visible_in_clear": false,
+      "response_status": 200,
+      "response_bytes": 43,
+      "result_count": null
+    }
+  ]
+}
