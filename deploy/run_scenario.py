@@ -34,6 +34,7 @@ import os
 import sys
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -195,6 +196,8 @@ def run_scenario(
     verbose: bool = True,
     canaries_out: Path | None = None,
     client: httpx.Client | None = None,
+    search_workload: bool = False,
+    search_spacing_seconds: float | None = None,
 ) -> bool:
     """Execute the full cross-hospital break-glass scenario.
 
@@ -209,6 +212,11 @@ def run_scenario(
             the gitignored ``wire/captures/`` and must never be committed.
         client: Signs every request as bootstrap (ADR-0066); defaults to the
             identity ``deploy/run_local.py`` wrote.
+        search_workload: Also run the P5-3 search workload after step 9
+            (:func:`run_search_workload`, ADR-0070). Needs a custodian and an
+            emergency window long enough for the first batch of searches.
+        search_spacing_seconds: Gap between workload searches; defaults to
+            :data:`SEARCH_SPACING_SECONDS`.
 
     Returns:
         True if all scenario steps succeed and all invariants hold.
@@ -644,6 +652,29 @@ def run_scenario(
             f"  * Head Seq: {h_seq}, Verified: {v_status}"
         )
 
+    if search_workload:
+        if not config or "root_certificate_pem" not in config:
+            raise RuntimeError("the search workload needs deploy/pki/federation.json")
+        run_search_workload(
+            client,
+            endpoints,
+            record_id=record_id,
+            federation_config=config,
+            spacing=(
+                SEARCH_SPACING_SECONDS
+                if search_spacing_seconds is None
+                else search_spacing_seconds
+            ),
+            clinician=SearchClinician(
+                clinician_id="doc-301",
+                facility_id="facility-b",
+                signing_key=carol_priv,
+                certificate_pem=carol_cert_pem,
+                pre_keypair=(carol_pre_priv, carol_pre_pub),
+            ),
+            log=log,
+        )
+
     if canaries_out is not None:
         _write_canaries(
             canaries_out,
@@ -683,6 +714,208 @@ def run_scenario(
     return True
 
 
+# P5-3 search workload (ADR-0070). Indexed terms are "cardiac", "infarction"
+# and "aspirin"; the rest miss. Repeats measure frequency leakage, hits against
+# misses measure response-size leakage, and the fixed spacing lets the timing
+# an observer recovers be compared with what the client actually did.
+SEARCH_WORKLOAD_OPEN = (
+    "cardiac",
+    "aspirin",
+    "cardiac",
+    "pneumonia",
+    "infarction",
+    "cardiac",
+    "fracture",
+    "aspirin",
+    "cardiac",
+    "warfarin",
+)
+# Searched again after expiry and a second break-glass: the same terms under
+# the rotated emergency key, so their tokens can be compared (ADR-0069).
+SEARCH_WORKLOAD_REOPENED = ("cardiac", "aspirin", "fracture", "cardiac")
+SEARCH_SPACING_SECONDS = 0.5
+
+
+@dataclass(frozen=True)
+class SearchClinician:
+    """The emergency clinician the workload searches as, and re-declares as."""
+
+    clinician_id: str
+    facility_id: str
+    signing_key: object
+    certificate_pem: str
+    pre_keypair: tuple[int, int]
+
+
+def _emergency_search(
+    client: httpx.Client, facility_url: str, record_id: str, term: str, who: str
+) -> httpx.Response:
+    return client.post(
+        f"{facility_url}/records/{record_id}/emergency-search",
+        json={"search_term": term, "requester_id": who},
+    )
+
+
+def _search_batch(
+    client: httpx.Client,
+    facility_url: str,
+    record_id: str,
+    clinician_id: str,
+    terms: tuple[str, ...],
+    spacing: float,
+) -> list[tuple[str, int]]:
+    """Run ``terms`` in order, ``spacing`` apart; any non-200 is a failure."""
+    results: list[tuple[str, int]] = []
+    for term in terms:
+        res = _emergency_search(client, facility_url, record_id, term, clinician_id)
+        if res.status_code != 200:
+            raise RuntimeError(
+                f"workload search {term!r} failed: {res.status_code} {res.text}"
+            )
+        results.append((term, res.json()["record_count"]))
+        time.sleep(spacing)
+    return results
+
+
+def _wait_for_state(
+    client: httpx.Client,
+    facility_url: str,
+    record_id: str,
+    state: LifecycleState,
+    timeout: float,
+) -> None:
+    deadline = time.monotonic() + timeout
+    seen = None
+    while time.monotonic() < deadline:
+        res = client.get(f"{facility_url}/records/{record_id}/lifecycle")
+        res.raise_for_status()
+        seen = res.json()["state"]
+        if seen == state.value:
+            return
+        time.sleep(0.25)
+    raise RuntimeError(f"{record_id} stuck at {seen!r}, expected {state.value!r}")
+
+
+def run_search_workload(
+    client: httpx.Client,
+    endpoints: ScenarioEndpoints,
+    *,
+    record_id: str,
+    clinician: SearchClinician,
+    federation_config: dict[str, Any],
+    log: Callable[[str], None] = print,
+    spacing: float = SEARCH_SPACING_SECONDS,
+    rotation_timeout: float = 60.0,
+) -> dict[str, list[tuple[str, int]]]:
+    """Drive the P5-3 search workload against a running federation (ADR-0070).
+
+    Opt-in and synthetic: it only searches the scenario's own record. Phases:
+
+    1. ``open`` -- :data:`SEARCH_WORKLOAD_OPEN` under the scenario's session.
+    2. wait for the time box to expire and the forced rotation to finish
+       (``granted``, ADR-0069), then search once more: it must be refused (403),
+       or the dead-token property has regressed.
+    3. ``reopened`` -- a second break-glass through the custodian, which alone
+       holds the rotated share 1, then :data:`SEARCH_WORKLOAD_REOPENED`. The
+       custodian gets the federation's public trust anchors and the
+       clinician's synthetic material first, as the portal seed would give it.
+
+    Every request crosses the wire, so the capture -- not this function's
+    return value -- is the evidence; the return value lets a test check the
+    workload did what it says.
+    """
+    if not endpoints.custodian:
+        raise RuntimeError("the search workload needs the custodian (rotated share 1)")
+    facility_urls = {
+        "facility-a": endpoints.facility_a,
+        "facility-b": endpoints.facility_b,
+    }
+    open_url = facility_urls[clinician.facility_id]
+
+    log("[P5-3] Search workload: repeated and distinct emergency searches...")
+    opened = _search_batch(
+        client,
+        open_url,
+        record_id,
+        clinician.clinician_id,
+        SEARCH_WORKLOAD_OPEN,
+        spacing,
+    )
+    log(f"  * {len(opened)} searches under the first session: {opened}")
+
+    log("[P5-3] Waiting for expiry and the forced rotation...")
+    _wait_for_state(
+        client, open_url, record_id, LifecycleState.GRANTED, rotation_timeout
+    )
+    refused = _emergency_search(
+        client, open_url, record_id, SEARCH_WORKLOAD_OPEN[0], clinician.clinician_id
+    )
+    if refused.status_code != 403:
+        raise RuntimeError(
+            f"search after expiry answered {refused.status_code}, expected 403"
+        )
+    log("  * Search after expiry refused (403); the record was re-keyed")
+    time.sleep(spacing)
+
+    log("[P5-3] Second break-glass through the custodian...")
+    audit_key = client.get(f"{endpoints.audit}/public-key")
+    audit_key.raise_for_status()
+    client.put(
+        f"{endpoints.custodian}/trust",
+        json={
+            "root_certificate_pem": federation_config["root_certificate_pem"],
+            "facility_ca_certificate_pems": {
+                fid: ca["ca_certificate_pem"]
+                for fid, ca in federation_config["facilities"].items()
+            },
+            "audit_public_key_pem": audit_key.json()["public_key_pem"],
+        },
+    ).raise_for_status()
+    pre_priv, pre_pub = clinician.pre_keypair
+    client.post(
+        f"{endpoints.custodian}/subjects/{clinician.clinician_id}/material",
+        json={
+            "kind": "clinician",
+            "signing_key_pem": private_key_to_pem(clinician.signing_key).decode(  # type: ignore[arg-type]
+                "ascii"
+            ),
+            "facility_id": clinician.facility_id,
+            "certificate_pem": clinician.certificate_pem,
+            "pre_private_key": pre_priv,
+            "pre_public_key": pre_pub,
+        },
+    ).raise_for_status()
+    declared = client.post(
+        f"{endpoints.custodian}/subjects/{clinician.clinician_id}/breakglass",
+        json={
+            "patient_id": "pat-101",
+            "record_id": record_id,
+            "justification": "Still unresponsive; second look at medication history.",
+            # The scenario's labels count as restricted at the custodian.
+            "sensitive_justification": "Anticoagulant history decides the next step.",
+            "reason_code": ReasonCode.UNCONSCIOUS_PATIENT.value,
+            "facility_id": clinician.facility_id,
+        },
+    )
+    if declared.status_code != 200:
+        raise RuntimeError(
+            f"second break-glass failed: {declared.status_code} {declared.text}"
+        )
+    reopen_url = facility_urls[declared.json()["facility_id"]]
+    log(f"  * Re-declared at {declared.json()['facility_id']}")
+
+    reopened = _search_batch(
+        client,
+        reopen_url,
+        record_id,
+        clinician.clinician_id,
+        SEARCH_WORKLOAD_REOPENED,
+        spacing,
+    )
+    log(f"  * {len(reopened)} searches under the second session: {reopened}")
+    return {"open": opened, "reopened": reopened}
+
+
 def _write_canaries(
     path: Path,
     *,
@@ -720,8 +953,9 @@ def main() -> int:
     parser.add_argument(
         "--duration",
         type=float,
-        default=5.0,
-        help="Emergency duration time-box in seconds.",
+        default=None,
+        help="Emergency duration time-box in seconds (default 5, or 20 with "
+        "--search-workload so its first batch fits in the window).",
     )
     parser.add_argument(
         "--scheme",
@@ -736,7 +970,17 @@ def main() -> int:
         help="Write the run's secrets here for the P5-5 wire analyser "
         "(keep under the gitignored wire/captures/).",
     )
+    parser.add_argument(
+        "--search-workload",
+        action="store_true",
+        help="After the scenario, run the P5-3 search workload: repeated and "
+        "distinct searches, one after expiry, more after a second break-glass "
+        "(ADR-0070).",
+    )
     args = parser.parse_args()
+    duration = args.duration
+    if duration is None:
+        duration = 20.0 if args.search_workload else 5.0
     if args.scheme == "https":
         os.environ["TLS_ENABLED"] = "true"
         configure_transport()
@@ -763,9 +1007,10 @@ def main() -> int:
         success = run_scenario(
             endpoints,
             config=config_data,
-            emergency_duration_seconds=args.duration,
+            emergency_duration_seconds=duration,
             verbose=True,
             canaries_out=args.canaries_out,
+            search_workload=args.search_workload,
         )
         return 0 if success else 1
     except Exception as exc:

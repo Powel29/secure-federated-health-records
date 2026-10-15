@@ -44,6 +44,17 @@ _DATABASE_URL = os.environ.get("DATABASE_URL")
 
 @pytest.fixture()
 def postgres_federation():
+    """All federation services over live sockets against real Postgres."""
+    yield from _postgres_federation(default_duration=5.0)
+
+
+@pytest.fixture()
+def workload_federation():
+    """The same federation with a 20 s cap, so the P5-3 workload fits in it."""
+    yield from _postgres_federation(default_duration=20.0)
+
+
+def _postgres_federation(default_duration: float):
     """All federation services over live sockets against real Postgres.
 
     The same in-process federation the demo runs (``demo.driver``): every
@@ -60,7 +71,7 @@ def postgres_federation():
     except psycopg.OperationalError as exc:
         skip_or_fail_without_postgres(f"cannot reach Postgres: {exc}")
 
-    with standalone_federation(_DATABASE_URL, default_duration=5.0) as fed:
+    with standalone_federation(_DATABASE_URL, default_duration=default_duration) as fed:
         # The scenario ingests its own record for pat-101.
         with psycopg.connect(_DATABASE_URL) as conn:
             repo_mod.insert_patient(conn, "pat-101", "authority-net")
@@ -137,3 +148,38 @@ def test_full_scenario_with_postgres(postgres_federation, tmp_path):
             ).fetchall()
         ]
     assert generations == [0, 1]
+
+
+def test_search_workload_with_postgres(workload_federation, monkeypatch):
+    """The P5-3 workload runs end to end: searches, expiry, a second session.
+
+    The workload itself fails closed: a search after expiry that is not
+    refused, or a second break-glass that does not open, raises.
+    """
+    import deploy.run_scenario as scenario
+
+    results: dict[str, list[tuple[str, int]]] = {}
+    original = scenario.run_search_workload
+
+    def recording(*args, **kwargs):
+        results.update(original(*args, **kwargs))
+        return results
+
+    monkeypatch.setattr(scenario, "run_search_workload", recording)
+    assert run_scenario(
+        endpoints=workload_federation["endpoints"],
+        config=workload_federation["config"],
+        emergency_duration_seconds=15.0,
+        verbose=False,
+        client=workload_federation["client"],
+        search_workload=True,
+        search_spacing_seconds=0.05,
+    )
+
+    indexed = {"cardiac", "infarction", "aspirin"}
+    assert [t for t, _ in results["open"]] == list(scenario.SEARCH_WORKLOAD_OPEN)
+    assert [t for t, _ in results["reopened"]] == list(
+        scenario.SEARCH_WORKLOAD_REOPENED
+    )
+    for term, count in results["open"] + results["reopened"]:
+        assert count == (1 if term in indexed else 0), term

@@ -1,0 +1,320 @@
+{
+  "capture": "wire\\captures\\tls-search.pcap",
+  "total_tcp_packets": 2718,
+  "total_capture_bytes": 572898,
+  "http_events": 0,
+  "tls_packets": 623,
+  "uris_observable": false,
+  "db_port": 55433,
+  "query_volume": 0,
+  "answered_queries": 0,
+  "unique_observable_requests": 0,
+  "repeated_requests": {},
+  "access_pattern_by_record": {},
+  "queries_visible_in_clear": 0,
+  "term_frequency": {},
+  "distinct_response_sizes": [],
+  "response_bytes_by_result_count": {},
+  "inter_query_seconds": [],
+  "queries": [],
+  "database_link": {
+    "token_lookups": 15,
+    "distinct_tokens": 9,
+    "token_frequency": {
+      "e9019b86a00c": 5,
+      "648bcc1c4cc7": 2,
+      "d263156edbc4": 2,
+      "dccc66de7142": 1,
+      "366a73df4d33": 1,
+      "48c30ed90aa1": 1,
+      "5ddbac70561f": 1,
+      "67f07db16ade": 1,
+      "b8b18d4a3808": 1
+    },
+    "lookups_with_visible_row_count": 15,
+    "lookups_by_row_count": {
+      "0": 4,
+      "1": 11
+    },
+    "inter_lookup_seconds": [
+      0.14447689056396484,
+      0.5775659084320068,
+      0.5731720924377441,
+      0.5766468048095703,
+      0.5889391899108887,
+      0.5808727741241455,
+      0.5724139213562012,
+      0.5712094306945801,
+      0.5748445987701416,
+      0.5579304695129395,
+      16.104329586029053,
+      0.5518162250518799,
+      0.5684783458709717,
+      0.5743014812469482
+    ],
+    "terms_linked_to_tokens": null
+  },
+  "http_timing": {
+    "hit_latency_seconds": [],
+    "miss_latency_seconds": [],
+    "refused_latency_seconds": [],
+    "mean_hit_latency_seconds": null,
+    "mean_miss_latency_seconds": null,
+    "median_hit_latency_seconds": null,
+    "median_miss_latency_seconds": null
+  },
+  "tls_view": {
+    "exchanges": [
+      {
+        "lookup_timestamp": 1792057665.7022972,
+        "request_timestamp": 1792057665.6958396,
+        "request_record_lengths": [
+          1535,
+          70
+        ],
+        "response_timestamp": 1792057665.7512338,
+        "response_record_lengths": [
+          142,
+          60
+        ],
+        "latency_seconds": 0.05539417266845703
+      },
+      {
+        "lookup_timestamp": 1792057665.846774,
+        "request_timestamp": 1792057665.831745,
+        "request_record_lengths": [
+          1535,
+          70
+        ],
+        "response_timestamp": 1792057665.9086227,
+        "response_record_lengths": [
+          142,
+          60
+        ],
+        "latency_seconds": 0.07687783241271973
+      },
+      {
+        "lookup_timestamp": 1792057666.42434,
+        "request_timestamp": 1792057666.4115584,
+        "request_record_lengths": [
+          1535,
+          70
+        ],
+        "response_timestamp": 1792057666.4829867,
+        "response_record_lengths": [
+          142,
+          60
+        ],
+        "latency_seconds": 0.07142829895019531
+      },
+      {
+        "lookup_timestamp": 1792057666.997512,
+        "request_timestamp": 1792057666.9862661,
+        "request_record_lengths": [
+          1535,
+          70
+        ],
+        "response_timestamp": 1792057667.0547473,
+        "response_record_lengths": [
+          142,
+          60
+        ],
+        "latency_seconds": 0.0684812068939209
+      },
+      {
+        "lookup_timestamp": 1792057667.574159,
+        "request_timestamp": 1792057667.5580335,
+        "request_record_lengths": [
+          1535,
+          72
+        ],
+        "response_timestamp": 1792057667.6400118,
+        "response_record_lengths": [
+          142,
+          51
+        ],
+        "latency_seconds": 0.08197832107543945
+      },
+      {
+        "lookup_timestamp": 1792057668.163098,
+        "request_timestamp": 1792057668.1435685,
+        "request_record_lengths": [
+          1535,
+          73
+        ],
+        "response_timestamp": 1792057668.2295423,
+        "response_record_lengths": [
+          142,
+          60
+        ],
+        "latency_seconds": 0.08597373962402344
+      },
+      {
+        "lookup_timestamp": 1792057668.7439709,
+        "request_timestamp": 1792057668.7328556,
+        "request_record_lengths": [
+          1535,
+          70
+        ],
+        "response_timestamp": 1792057668.7958996,
+        "response_record_lengths": [
+          142,
+          60
+        ],
+        "latency_seconds": 0.06304407119750977
+      },
+      {
+        "lookup_timestamp": 1792057669.3163848,
+        "request_timestamp": 1792057669.299007,
+        "request_record_lengths": [
+          1535,
+          71
+        ],
+        "response_timestamp": 1792057669.3784938,
+        "response_record_lengths": [
+          142,
+          51
+        ],
+        "latency_seconds": 0.07948684692382812
+      },
+      {
+        "lookup_timestamp": 1792057669.8875942,
+        "request_timestamp": 1792057669.8809974,
+        "request_record_lengths": [
+          1535,
+          70
+        ],
+        "response_timestamp": 1792057669.9462183,
+        "response_record_lengths": [
+          142,
+          60
+        ],
+        "latency_seconds": 0.06522083282470703
+      },
+      {
+        "lookup_timestamp": 1792057670.4624388,
+        "request_timestamp": 1792057670.4504778,
+        "request_record_lengths": [
+          1535,
+          70
+        ],
+        "response_timestamp": 1792057670.5026762,
+        "response_record_lengths": [
+          142,
+          60
+        ],
+        "latency_seconds": 0.05219841003417969
+      },
+      {
+        "lookup_timestamp": 1792057671.0203693,
+        "request_timestamp": 1792057671.0068371,
+        "request_record_lengths": [
+          1535,
+          71
+        ],
+        "response_timestamp": 1792057671.067002,
+        "response_record_lengths": [
+          142,
+          51
+        ],
+        "latency_seconds": 0.0601649284362793
+      },
+      {
+        "lookup_timestamp": 1792057687.1246989,
+        "request_timestamp": 1792057687.1135397,
+        "request_record_lengths": [
+          69,
+          1535,
+          70
+        ],
+        "response_timestamp": 1792057687.730373,
+        "response_record_lengths": [
+          142,
+          60
+        ],
+        "latency_seconds": 0.6168332099914551
+      },
+      {
+        "lookup_timestamp": 1792057687.676515,
+        "request_timestamp": 1792057687.665787,
+        "request_record_lengths": [
+          1535,
+          70
+        ],
+        "response_timestamp": 1792057687.730373,
+        "response_record_lengths": [
+          142,
+          60
+        ],
+        "latency_seconds": 0.06458592414855957
+      },
+      {
+        "lookup_timestamp": 1792057688.2449934,
+        "request_timestamp": 1792057688.2334478,
+        "request_record_lengths": [
+          1535,
+          71
+        ],
+        "response_timestamp": 1792057688.306129,
+        "response_record_lengths": [
+          142,
+          51
+        ],
+        "latency_seconds": 0.07268118858337402
+      },
+      {
+        "lookup_timestamp": 1792057688.819295,
+        "request_timestamp": 1792057688.8089688,
+        "request_record_lengths": [
+          1535,
+          70
+        ],
+        "response_timestamp": 1792057688.8540895,
+        "response_record_lengths": [
+          142,
+          60
+        ],
+        "latency_seconds": 0.0451207160949707
+      }
+    ],
+    "response_body_record_bytes_by_db_rows": {
+      "0": [
+        51
+      ],
+      "1": [
+        60
+      ]
+    },
+    "request_body_record_bytes": [
+      70,
+      70,
+      70,
+      70,
+      72,
+      73,
+      70,
+      71,
+      70,
+      70,
+      71,
+      70,
+      70,
+      71,
+      70
+    ],
+    "distinct_request_body_record_bytes": [
+      70,
+      71,
+      72,
+      73
+    ],
+    "mean_latency_seconds_by_db_rows": {
+      "0": 0.07357782125473022,
+      "1": 0.11501440134915439
+    },
+    "median_latency_seconds_by_db_rows": {
+      "0": 0.07608401775360107,
+      "1": 0.06522083282470703
+    }
+  }
+}

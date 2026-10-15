@@ -1,0 +1,449 @@
+{
+  "capture": "wire\\captures\\plain-search.pcap",
+  "total_tcp_packets": 2083,
+  "total_capture_bytes": 414478,
+  "http_events": 215,
+  "tls_packets": 0,
+  "uris_observable": true,
+  "db_port": 55433,
+  "query_volume": 16,
+  "answered_queries": 16,
+  "unique_observable_requests": 1,
+  "repeated_requests": {
+    "/records/rec-001/emergency-search": 16
+  },
+  "access_pattern_by_record": {
+    "rec-001": 16
+  },
+  "queries_visible_in_clear": 16,
+  "term_frequency": {
+    "cardiac": 8,
+    "aspirin": 3,
+    "fracture": 2,
+    "pneumonia": 1,
+    "infarction": 1,
+    "warfarin": 1
+  },
+  "distinct_response_sizes": [
+    34,
+    43,
+    95
+  ],
+  "response_bytes_by_result_count": {
+    "0": [
+      34,
+      34,
+      34,
+      34
+    ],
+    "1": [
+      43,
+      43,
+      43,
+      43,
+      43,
+      43,
+      43,
+      43,
+      43,
+      43,
+      43
+    ]
+  },
+  "inter_query_seconds": [
+    0.9859123229980469,
+    0.970667839050293,
+    1.101468563079834,
+    1.5474333763122559,
+    1.3216092586517334,
+    1.2784271240234375,
+    1.289754867553711,
+    1.2835369110107422,
+    1.291093349456787,
+    1.3027405738830566,
+    9.749288320541382,
+    2.210798740386963,
+    1.5713369846343994,
+    1.3819611072540283,
+    1.6367392539978027
+  ],
+  "queries": [
+    {
+      "timestamp": 1792057279.719977,
+      "method": "POST",
+      "uri": "/records/rec-001/emergency-search",
+      "record_id": "rec-001",
+      "request_bytes": 53,
+      "query_visible_in_clear": true,
+      "search_term": "cardiac",
+      "response_timestamp": 1792057280.221361,
+      "response_status": 200,
+      "response_bytes": 43,
+      "result_count": 1,
+      "token_fingerprint": "2185ec97c241",
+      "db_rows": 1,
+      "latency_seconds": 0.5013840198516846
+    },
+    {
+      "timestamp": 1792057280.7058892,
+      "method": "POST",
+      "uri": "/records/rec-001/emergency-search",
+      "record_id": "rec-001",
+      "request_bytes": 53,
+      "query_visible_in_clear": true,
+      "search_term": "cardiac",
+      "response_timestamp": 1792057281.1726356,
+      "response_status": 200,
+      "response_bytes": 43,
+      "result_count": 1,
+      "token_fingerprint": "2185ec97c241",
+      "db_rows": 1,
+      "latency_seconds": 0.46674633026123047
+    },
+    {
+      "timestamp": 1792057281.676557,
+      "method": "POST",
+      "uri": "/records/rec-001/emergency-search",
+      "record_id": "rec-001",
+      "request_bytes": 53,
+      "query_visible_in_clear": true,
+      "search_term": "aspirin",
+      "response_timestamp": 1792057282.2735164,
+      "response_status": 200,
+      "response_bytes": 43,
+      "result_count": 1,
+      "token_fingerprint": "ef5dc5f7c1f2",
+      "db_rows": 1,
+      "latency_seconds": 0.5969593524932861
+    },
+    {
+      "timestamp": 1792057282.7780256,
+      "method": "POST",
+      "uri": "/records/rec-001/emergency-search",
+      "record_id": "rec-001",
+      "request_bytes": 53,
+      "query_visible_in_clear": true,
+      "search_term": "cardiac",
+      "response_timestamp": 1792057283.8223944,
+      "response_status": 200,
+      "response_bytes": 43,
+      "result_count": 1,
+      "token_fingerprint": "2185ec97c241",
+      "db_rows": 1,
+      "latency_seconds": 1.0443687438964844
+    },
+    {
+      "timestamp": 1792057284.325459,
+      "method": "POST",
+      "uri": "/records/rec-001/emergency-search",
+      "record_id": "rec-001",
+      "request_bytes": 55,
+      "query_visible_in_clear": true,
+      "search_term": "pneumonia",
+      "response_timestamp": 1792057285.1426384,
+      "response_status": 200,
+      "response_bytes": 34,
+      "result_count": 0,
+      "token_fingerprint": "5c95ad27bbdc",
+      "db_rows": 0,
+      "latency_seconds": 0.8171794414520264
+    },
+    {
+      "timestamp": 1792057285.6470683,
+      "method": "POST",
+      "uri": "/records/rec-001/emergency-search",
+      "record_id": "rec-001",
+      "request_bytes": 56,
+      "query_visible_in_clear": true,
+      "search_term": "infarction",
+      "response_timestamp": 1792057286.4219851,
+      "response_status": 200,
+      "response_bytes": 43,
+      "result_count": 1,
+      "token_fingerprint": "68e1d428af88",
+      "db_rows": 1,
+      "latency_seconds": 0.7749168872833252
+    },
+    {
+      "timestamp": 1792057286.9254954,
+      "method": "POST",
+      "uri": "/records/rec-001/emergency-search",
+      "record_id": "rec-001",
+      "request_bytes": 53,
+      "query_visible_in_clear": true,
+      "search_term": "cardiac",
+      "response_timestamp": 1792057287.7120762,
+      "response_status": 200,
+      "response_bytes": 43,
+      "result_count": 1,
+      "token_fingerprint": "2185ec97c241",
+      "db_rows": 1,
+      "latency_seconds": 0.7865808010101318
+    },
+    {
+      "timestamp": 1792057288.2152503,
+      "method": "POST",
+      "uri": "/records/rec-001/emergency-search",
+      "record_id": "rec-001",
+      "request_bytes": 54,
+      "query_visible_in_clear": true,
+      "search_term": "fracture",
+      "response_timestamp": 1792057288.9960666,
+      "response_status": 200,
+      "response_bytes": 34,
+      "result_count": 0,
+      "token_fingerprint": "9b9b8964d3dd",
+      "db_rows": 0,
+      "latency_seconds": 0.7808163166046143
+    },
+    {
+      "timestamp": 1792057289.4987872,
+      "method": "POST",
+      "uri": "/records/rec-001/emergency-search",
+      "record_id": "rec-001",
+      "request_bytes": 53,
+      "query_visible_in_clear": true,
+      "search_term": "aspirin",
+      "response_timestamp": 1792057290.287141,
+      "response_status": 200,
+      "response_bytes": 43,
+      "result_count": 1,
+      "token_fingerprint": "ef5dc5f7c1f2",
+      "db_rows": 1,
+      "latency_seconds": 0.7883539199829102
+    },
+    {
+      "timestamp": 1792057290.7898805,
+      "method": "POST",
+      "uri": "/records/rec-001/emergency-search",
+      "record_id": "rec-001",
+      "request_bytes": 53,
+      "query_visible_in_clear": true,
+      "search_term": "cardiac",
+      "response_timestamp": 1792057291.5900736,
+      "response_status": 200,
+      "response_bytes": 43,
+      "result_count": 1,
+      "token_fingerprint": "2185ec97c241",
+      "db_rows": 1,
+      "latency_seconds": 0.8001930713653564
+    },
+    {
+      "timestamp": 1792057292.092621,
+      "method": "POST",
+      "uri": "/records/rec-001/emergency-search",
+      "record_id": "rec-001",
+      "request_bytes": 54,
+      "query_visible_in_clear": true,
+      "search_term": "warfarin",
+      "response_timestamp": 1792057292.865343,
+      "response_status": 200,
+      "response_bytes": 34,
+      "result_count": 0,
+      "token_fingerprint": "eae865d0a3bc",
+      "db_rows": 0,
+      "latency_seconds": 0.7727220058441162
+    },
+    {
+      "timestamp": 1792057301.8419094,
+      "method": "POST",
+      "uri": "/records/rec-001/emergency-search",
+      "record_id": "rec-001",
+      "request_bytes": 53,
+      "query_visible_in_clear": true,
+      "search_term": "cardiac",
+      "response_timestamp": 1792057302.5864944,
+      "response_status": 403,
+      "response_bytes": 95,
+      "result_count": null,
+      "token_fingerprint": null,
+      "db_rows": null,
+      "latency_seconds": 0.7445850372314453
+    },
+    {
+      "timestamp": 1792057304.0527081,
+      "method": "POST",
+      "uri": "/records/rec-001/emergency-search",
+      "record_id": "rec-001",
+      "request_bytes": 53,
+      "query_visible_in_clear": true,
+      "search_term": "cardiac",
+      "response_timestamp": 1792057305.1188314,
+      "response_status": 200,
+      "response_bytes": 43,
+      "result_count": 1,
+      "token_fingerprint": "63a445dcf12a",
+      "db_rows": 1,
+      "latency_seconds": 1.0661232471466064
+    },
+    {
+      "timestamp": 1792057305.6240451,
+      "method": "POST",
+      "uri": "/records/rec-001/emergency-search",
+      "record_id": "rec-001",
+      "request_bytes": 53,
+      "query_visible_in_clear": true,
+      "search_term": "aspirin",
+      "response_timestamp": 1792057306.5027888,
+      "response_status": 200,
+      "response_bytes": 43,
+      "result_count": 1,
+      "token_fingerprint": "a8307f24a10f",
+      "db_rows": 1,
+      "latency_seconds": 0.8787436485290527
+    },
+    {
+      "timestamp": 1792057307.0060062,
+      "method": "POST",
+      "uri": "/records/rec-001/emergency-search",
+      "record_id": "rec-001",
+      "request_bytes": 54,
+      "query_visible_in_clear": true,
+      "search_term": "fracture",
+      "response_timestamp": 1792057308.13921,
+      "response_status": 200,
+      "response_bytes": 34,
+      "result_count": 0,
+      "token_fingerprint": "95dd748e3e48",
+      "db_rows": 0,
+      "latency_seconds": 1.1332037448883057
+    },
+    {
+      "timestamp": 1792057308.6427455,
+      "method": "POST",
+      "uri": "/records/rec-001/emergency-search",
+      "record_id": "rec-001",
+      "request_bytes": 53,
+      "query_visible_in_clear": true,
+      "search_term": "cardiac",
+      "response_timestamp": 1792057309.4812534,
+      "response_status": 200,
+      "response_bytes": 43,
+      "result_count": 1,
+      "token_fingerprint": "63a445dcf12a",
+      "db_rows": 1,
+      "latency_seconds": 0.838507890701294
+    }
+  ],
+  "database_link": {
+    "token_lookups": 15,
+    "distinct_tokens": 9,
+    "token_frequency": {
+      "2185ec97c241": 5,
+      "ef5dc5f7c1f2": 2,
+      "63a445dcf12a": 2,
+      "5c95ad27bbdc": 1,
+      "68e1d428af88": 1,
+      "9b9b8964d3dd": 1,
+      "eae865d0a3bc": 1,
+      "a8307f24a10f": 1,
+      "95dd748e3e48": 1
+    },
+    "lookups_with_visible_row_count": 15,
+    "lookups_by_row_count": {
+      "0": 4,
+      "1": 11
+    },
+    "inter_lookup_seconds": [
+      0.9904625415802002,
+      0.975372314453125,
+      1.0938878059387207,
+      1.5493810176849365,
+      1.3257102966308594,
+      1.2746491432189941,
+      1.2899844646453857,
+      1.2832977771759033,
+      1.289069414138794,
+      1.3033366203308105,
+      11.96199655532837,
+      1.5719079971313477,
+      1.3862178325653076,
+      1.6346359252929688
+    ],
+    "terms_linked_to_tokens": 6,
+    "refused_searches": 1,
+    "epochs": 2,
+    "term_tokens_by_epoch": {
+      "aspirin": {
+        "0": [
+          "ef5dc5f7c1f2"
+        ],
+        "1": [
+          "a8307f24a10f"
+        ]
+      },
+      "cardiac": {
+        "0": [
+          "2185ec97c241"
+        ],
+        "1": [
+          "63a445dcf12a"
+        ]
+      },
+      "fracture": {
+        "0": [
+          "9b9b8964d3dd"
+        ],
+        "1": [
+          "95dd748e3e48"
+        ]
+      },
+      "infarction": {
+        "0": [
+          "68e1d428af88"
+        ]
+      },
+      "pneumonia": {
+        "0": [
+          "5c95ad27bbdc"
+        ]
+      },
+      "warfarin": {
+        "0": [
+          "eae865d0a3bc"
+        ]
+      }
+    },
+    "same_term_same_token_within_epoch": true,
+    "terms_searched_in_several_epochs": [
+      "aspirin",
+      "cardiac",
+      "fracture"
+    ],
+    "terms_rekeyed_across_epochs": [
+      "aspirin",
+      "cardiac",
+      "fracture"
+    ],
+    "tokens_shared_by_distinct_terms": []
+  },
+  "http_timing": {
+    "hit_latency_seconds": [
+      0.5013840198516846,
+      0.46674633026123047,
+      0.5969593524932861,
+      1.0443687438964844,
+      0.7749168872833252,
+      0.7865808010101318,
+      0.7883539199829102,
+      0.8001930713653564,
+      1.0661232471466064,
+      0.8787436485290527,
+      0.838507890701294
+    ],
+    "miss_latency_seconds": [
+      0.8171794414520264,
+      0.7808163166046143,
+      0.7727220058441162,
+      1.1332037448883057
+    ],
+    "refused_latency_seconds": [
+      0.7445850372314453
+    ],
+    "mean_hit_latency_seconds": 0.7766252647746693,
+    "mean_miss_latency_seconds": 0.8759803771972656,
+    "median_hit_latency_seconds": 0.7883539199829102,
+    "median_miss_latency_seconds": 0.7989978790283203
+  },
+  "tls_view": null
+}
