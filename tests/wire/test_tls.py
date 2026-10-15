@@ -13,7 +13,7 @@ from crypto_core import certificate_from_pem
 from cryptography import x509
 
 import wire.tls as tls_mod
-from wire.tls import SERVICES, generate
+from wire.tls import SERVICES, STORE, generate
 
 
 def test_generate_writes_a_cert_and_key_per_service(tmp_path):
@@ -26,7 +26,27 @@ def test_generate_writes_a_cert_and_key_per_service(tmp_path):
             f"{service}.crt",
             f"{service}.key",
         ]
-    assert sorted(p.name for p in (tmp_path / "trust").iterdir()) == ["ca-bundle.crt"]
+    assert sorted(p.name for p in (tmp_path / "trust").iterdir()) == [
+        "ca-bundle.crt",
+        "store.crt",
+    ]
+
+
+def test_store_cert_is_trusted_by_database_clients_only(tmp_path):
+    """The store's cert is its own trust file, not in the HTTP bundle (ADR-0071)."""
+    generate(tmp_path)
+    store_pem = (tmp_path / STORE / f"{STORE}.crt").read_bytes()
+    assert (tmp_path / "trust" / "store.crt").read_bytes() == store_pem
+    assert store_pem not in (tmp_path / "trust" / "ca-bundle.crt").read_bytes()
+    assert STORE not in SERVICES  # not a capture/check service port
+    san = certificate_from_pem(store_pem).extensions.get_extension_for_class(
+        x509.SubjectAlternativeName
+    )
+    # verify-full checks the host name: Compose dials "store", Path A 127.0.0.1.
+    assert {"store", "localhost"} <= set(san.value.get_values_for_type(x509.DNSName))
+    assert "127.0.0.1" in {
+        str(ip) for ip in san.value.get_values_for_type(x509.IPAddress)
+    }
 
 
 def test_cert_has_expected_sans_and_cn(tmp_path):
