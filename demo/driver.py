@@ -195,7 +195,7 @@ def standalone_federation(
     import psycopg
     from api.audit_client import make_lifecycle_audit_logger
     from api.audit_service import create_audit_app
-    from api.authority_service import create_authority_app
+    from api.authority_service import SubjectTrust, create_authority_app
     from api.custodian_service import CustodianEndpoints, create_custodian_app
     from api.hospital import AUDIT_SERVICE_ID, create_hospital_app
     from api.repository import PostgresStorageRepository
@@ -334,13 +334,23 @@ def standalone_federation(
             ),
         )
 
+    # Key release needs the subject's proof of possession (ADR-0074).
+    subject_trust = SubjectTrust(
+        root=trust.root,
+        facility_cas=trust.facility_cas,
+        revoked_serials=trust.revoked_serials,
+    )
     app_med = create_authority_app(
-        "authority-med", frozenset({"role"}), service_root=root_cert
+        "authority-med",
+        frozenset({"role"}),
+        service_root=root_cert,
+        subject_trust=subject_trust,
     )
     app_net = create_authority_app(
         "authority-net",
         frozenset({"specialty", "facility", "owner"}),
         service_root=root_cert,
+        subject_trust=subject_trust,
     )
     app_fa = facility("facility-a", repo_fa, exp_mgr_a)
     app_fb = facility("facility-b", repo_fb, exp_mgr_b)

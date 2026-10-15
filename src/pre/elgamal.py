@@ -1,8 +1,19 @@
-"""Unidirectional ElGamal Proxy Re-Encryption (owner module: ``pre``, C3).
+"""ElGamal-style Proxy Re-Encryption (owner module: ``pre``, C3).
 
 Provides key generation, proxy re-encryption key derivation (A -> B), ciphertext
 re-encryption without plaintext exposure, and symmetric key encapsulation
 (ARCHITECTURE.md §2 C3, ADR-0012).
+
+What it is not (ADR-0071, review D11-a):
+
+- **Not unidirectional.** ``rk = sk_a * sk_b^-1 mod q``, and anyone holding it
+  computes ``rk^-1 mod q``, the key from B to A. The scheme is bidirectional.
+- **Not production strength.** The group is a 256-bit safe prime, giving well
+  under 128-bit security. It demonstrates the primitive for the course.
+- **Not on the break-glass path.** ``reencrypt`` is never called there: the
+  facility unwraps the DEK itself and delivers it to the clinician under a key
+  encapsulated with :func:`encapsulate_key` (``breakglass.gate``). A real
+  unidirectional PRE needs pairings, which are out of scope (PROJECT.md §6).
 """
 
 from __future__ import annotations
@@ -57,7 +68,7 @@ def generate_keypair() -> tuple[int, int]:
 
 
 def generate_rekey(sk_a: int, sk_b: int) -> int:
-    """Generate unidirectional re-encryption key from delegator A to delegatee B.
+    """Generate the re-encryption key from delegator A to delegatee B.
 
     Computes rk_{A -> B} = sk_a * sk_b^-1 mod q.
 
@@ -72,8 +83,10 @@ def generate_rekey(sk_a: int, sk_b: int) -> int:
         PREKeyError: If keys are out of bounds or not invertible.
 
     Security property:
-        Re-key calculation is unidirectional (A -> B). The proxy holding rk cannot
-        invert it to decrypt A's ciphertexts nor decrypt without B's private key.
+        The proxy holding rk transforms A's ciphertexts for B without learning
+        the message, and cannot decrypt either party's ciphertexts with rk
+        alone. It is **not** unidirectional (ADR-0071): rk^-1 mod q is
+        rk_{B -> A}, so the same proxy can re-encrypt B's ciphertexts for A.
     """
     if not (1 < sk_a < SUBGROUP_ORDER_Q) or not (1 < sk_b < SUBGROUP_ORDER_Q):
         raise PREKeyError("Private keys must be in valid subgroup exponent range")

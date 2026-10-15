@@ -40,6 +40,9 @@ from authority.revocation import RevocationEntry, RevocationRegistry
 DEFAULT_CREDENTIAL_VALID_DAYS = 365  # ARCHITECTURE.md §8: nothing issues forever
 _FIELD_SEPARATOR = b"\x1f"  # ASCII unit separator -- keeps fields unambiguous
 
+# The operation a subject signs to ask for its attribute key (ADR-0074).
+KEY_RELEASE_OPERATION = "attribute_key.release"
+
 
 class AttributeAuthority:
     """One federated attribute authority (e.g. ``authority-med``).
@@ -268,6 +271,23 @@ def _signing_payload(
         status.value,
     ]
     return _FIELD_SEPARATOR.join(field.encode("utf-8") for field in fields)
+
+
+def credential_binding(credential: AttributeCredential) -> bytes:
+    """The credential's canonical bytes, which its issuer's signature covers.
+
+    A key-release possession envelope signs these as its body (ADR-0074), so
+    the subject's signature is bound to exactly one credential.
+    """
+    return _signing_payload(
+        serial=credential.serial,
+        issuer_id=credential.issuer_id,
+        subject_id=credential.subject_id,
+        attribute=credential.attribute,
+        valid_from=credential.valid_from,
+        valid_until=credential.valid_until,
+        status=credential.status,
+    )
 
 
 def issue_credential(

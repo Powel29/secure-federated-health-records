@@ -284,14 +284,18 @@ than this is the fastest way to lose credibility in the viva.
    This simplification does not weaken the threshold property (the custodian
    holds share 1 only; the audit service still commits before releasing share
    3; the policy engine still gates every read), but it must be stated.
-6. **Expiry rotation survives everything but a crash mid-rotation (ADR-0069).**
-   At expiry the facility re-keys the record in full -- new DEK, policy root,
-   emergency key and shares, search index -- stores it atomically and hands
-   the new shares to the custodian and the audit service before the record
-   returns to baseline (review F9, D3-a). If the facility process dies between
-   the store commit and both share deposits, no holder set matches the stored
-   emergency wrapping and that record cannot be broken into until it is
-   re-provisioned (access stays closed). Plaintext a clinician already decrypted
+6. **Expiry rotation is finished after a crash or restart, not before
+   (ADR-0069, ADR-0073).** At expiry the facility re-keys the record in full --
+   new DEK, policy root, emergency key and shares, search index -- stores it
+   atomically and hands the new shares to the custodian and the audit service
+   before the record returns to baseline (review F9, D3-a). Each open session
+   is kept in the store without its key; a facility that restarts mid-window
+   or crashes mid-rotation closes those sessions at startup with a fresh
+   rotation (review F5). Until it comes back, the record stays closed: nobody
+   can join the lost session, and break-glass waits for the rotation. A
+   patient's revocation runs the same rotation (ADR-0072); if a share holder is
+   unreachable then, the revocation still holds but break-glass on that record
+   stays closed until it is re-keyed. Plaintext a clinician already decrypted
    is not retractable (ADR-0035), and share 2 is still discarded (D2).
 7. **Unidentified patients get no history (ADR-0033, ADR-0059, ADR-0060).**
    Break-glass is bound to a `patient_id` chosen from a logged directory
@@ -302,6 +306,18 @@ than this is the fastest way to lose credibility in the viva.
    the encounter; nothing is guessed or merged. In a real emergency department
    this is a common case, so the paper must say the scenario assumes
    identification.
+8. **The "proxy re-encryption" is a KEM delivery, and the toy PRE is
+   bidirectional and small (ADR-0071, review D11-a).** At break-glass the
+   facility reconstructs the emergency key, unwraps the DEK in its own memory,
+   and delivers it to the clinician under a key encapsulated to the
+   clinician's ElGamal public key (`pre.encapsulate_key` + AES-GCM). Nothing
+   is re-encrypted "without decryption": the facility sees the DEK, and
+   `pre.reencrypt` is not on the break-glass path at all. The hand-rolled
+   ElGamal scheme itself is **bidirectional** -- `rk = a·b⁻¹ mod q` inverts to
+   `b·a⁻¹`, so whoever holds a re-encryption key from A to B can also re-encrypt
+   from B to A -- and its 256-bit group gives well under 128-bit security. It
+   is a course demonstration of the primitive, not a production PRE; a
+   genuinely unidirectional scheme needs pairings, which are out of scope (§6).
 
 ---
 

@@ -64,8 +64,9 @@ def test_revoked_episode_cannot_be_reopened_with_the_old_grant(federation):
         federation["apps"]["facility-b"], "facility-b", caller="portal"
     )
     assert other_facility.post("/consent/grants", json=revoked).status_code == 200
-    # Re-submitting the old grant cannot remove the separate revocation artifact.
-    assert other_facility.post("/consent/grants", json=signed).status_code == 200
+    # Re-submitting the old grant is refused (review F13), and could not remove
+    # the separate revocation artifact anyway.
+    assert other_facility.post("/consent/grants", json=signed).status_code == 409
     denied = client.post(f"/subjects/{DOC_CARDIO}/read", json=body)
     assert denied.status_code == 403
     assert "revocation" in denied.json()["detail"]

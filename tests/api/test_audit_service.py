@@ -383,7 +383,8 @@ def _seed_record(conn, record_id: str, state: LifecycleState) -> None:
 
 
 class TestShareReplacement:
-    """Only a facility, only during the record's expiry, only the next generation."""
+    """Only a facility, only during an expiry or revocation rotation, only a
+    later generation (ADR-0069, ADR-0072, ADR-0073)."""
 
     def _facility(self, audit_app, federation_pki):
         return federation_pki["services"].client(
@@ -417,17 +418,40 @@ class TestShareReplacement:
         assert r.status_code == 409
         assert client.app.state.shares.get("rec-r2") == (3, bytes.fromhex("deadbeef"))
 
-    def test_a_skipped_generation_is_refused(
+    def test_only_a_later_generation_replaces(
         self, client, audit_app, audit_conn, federation_pki
     ):
+        """A recovered rotation may skip a generation (ADR-0073); a share is
+        never rolled back or swapped within its generation."""
         _register(client, "rec-r3")
         _seed_record(audit_conn, "rec-r3", LifecycleState.EXPIRED)
-        skipped = self._facility(audit_app, federation_pki).put(
+        facility = self._facility(audit_app, federation_pki)
+        skipped = facility.put(
             "/breakglass/shares/rec-r3",
             json={"x": 3, "share_hex": "abcdef01", "generation": 2},
         )
-        assert skipped.status_code == 409
-        assert client.app.state.shares.generation("rec-r3") == 0
+        assert skipped.status_code == 200
+        assert client.app.state.shares.generation("rec-r3") == 2
+        for body in (
+            {"x": 3, "share_hex": "abcdef02", "generation": 1},  # rollback
+            {"x": 3, "share_hex": "abcdef02", "generation": 2},  # swap
+        ):
+            r = facility.put("/breakglass/shares/rec-r3", json=body)
+            assert r.status_code == 409
+        assert client.app.state.shares.get("rec-r3") == (3, bytes.fromhex("abcdef01"))
+
+    def test_a_revocation_rotation_replaces_the_share(
+        self, client, audit_app, audit_conn, federation_pki
+    ):
+        """A patient's revocation re-keys the emergency path too (ADR-0072)."""
+        _register(client, "rec-r5")
+        _seed_record(audit_conn, "rec-r5", LifecycleState.REVOKED)
+        r = self._facility(audit_app, federation_pki).put(
+            "/breakglass/shares/rec-r5",
+            json={"x": 3, "share_hex": "abcdef01", "generation": 1},
+        )
+        assert r.status_code == 200
+        assert client.app.state.shares.generation("rec-r5") == 1
 
     def test_only_a_facility_may_replace(self, client, audit_conn, federation_pki):
         _register(client, "rec-r4")

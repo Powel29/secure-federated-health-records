@@ -147,7 +147,8 @@ def test_sec_pre_key_rebound_to_delegatee_only() -> None:
     holds only the re-encryption key ``rk`` and the transformed ciphertext, never
     ``sk_b``. We assert (positive control) that the legitimate delegatee B
     recovers the exact key, and that none of the parties who lack sk_b — the
-    original delegator A (unidirectionality), an unrelated key holder, or the
+    original delegator A (the re-encrypted ciphertext is now B's), an unrelated
+    key holder, or the
     proxy wielding ``rk`` itself — can reconstruct it.
     """
     sk_a, pk_a = generate_keypair()
@@ -161,7 +162,8 @@ def test_sec_pre_key_rebound_to_delegatee_only() -> None:
     # Positive control: the legitimate delegatee B recovers the exact key.
     assert decapsulate_key(sk_b, c1_re, c2_re) == sym_key
 
-    # Unidirectionality: even the original delegator A cannot read it post-rewrap.
+    # Even the original delegator A cannot read it post-rewrap. (This is not
+    # unidirectionality: rk itself inverts to B -> A, see ADR-0071.)
     assert decapsulate_key(sk_a, c1_re, c2_re) != sym_key
     # An unrelated key holder cannot read it.
     assert decapsulate_key(outsider_sk, c1_re, c2_re) != sym_key

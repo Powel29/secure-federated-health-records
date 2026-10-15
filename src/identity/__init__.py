@@ -24,6 +24,7 @@ from identity.exceptions import (
     ChainValidationError,
     PatientCertificateError,
     ServiceCertificateError,
+    SubjectCertificateError,
     UnknownFacilityError,
 )
 from identity.patients import validate_patient_certificate
@@ -33,16 +34,23 @@ from identity.services import (
     service_name,
     validate_service_certificate,
 )
+from identity.subjects import (
+    PERSON_ROLES,
+    validate_clinician_certificate,
+    validate_subject_certificate,
+)
 from identity.trust_registry import TrustRegistry
 
 __all__ = [
     "PATIENT_ROLE",
+    "PERSON_ROLES",
     "SERVICE_KINDS",
     "ChainValidationError",
     "PatientCertificateError",
     "RootAnchor",
     "ServiceCertificateError",
     "ServiceName",
+    "SubjectCertificateError",
     "TrustRegistry",
     "UnknownFacilityError",
     "generate_root_anchor",
@@ -54,6 +62,8 @@ __all__ = [
     "issue_service_certificate",
     "service_name",
     "validate_chain",
+    "validate_clinician_certificate",
     "validate_patient_certificate",
     "validate_service_certificate",
+    "validate_subject_certificate",
 ]

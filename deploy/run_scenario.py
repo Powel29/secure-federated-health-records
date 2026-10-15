@@ -610,20 +610,24 @@ def run_scenario(
         log(f"  * Emergency search returned status {search_res.status_code}")
 
     # Revocation crosses the wire too (PROJECT §4A(1): "normal read,
-    # revocation, or break-glass"; review N4). The request carries the old DEK
-    # in the clear on the plain profile, which claim 1 must catch. The
-    # facility refuses it while the record is emergency-open (409) or cannot
-    # persist it on Postgres yet (501, F10); either way the bytes were sent.
-    patient_priv, _patient_pub = generate_ec_keypair()
+    # revocation, or break-glass"; review N4). The patient signs the
+    # GRANTED -> REVOKED transition with their own key, as the custodian does
+    # for them (ADR-0072); no private key or DEK is sent. The record is
+    # emergency-open here, so the facility refuses it (409) -- the bytes still
+    # cross the wire for the capture to check.
+    revoke_event = create_transition_event(
+        record_id=record_id,
+        from_state=LifecycleState.GRANTED,
+        to_state=LifecycleState.REVOKED,
+        actor_id="pat-101",
+        signing_key=pat_priv,
+    )
     revoke_res = client.post(
         f"{endpoints.facility_a}/records/{record_id}/revoke",
         json={
-            "actor_id": "pat-101",
-            "actor_signing_key_pem": private_key_to_pem(patient_priv).decode("ascii"),
-            "old_dek_b64": base64.b64encode(recovered_dek).decode("ascii"),
+            "transition_event": revoke_event.model_dump(mode="json"),
+            "patient_certificate_pem": pat_cert_pem,
             "new_clinical_policy": clinical_policy.model_dump(mode="json"),
-            "owner_authority_id": "authority-net",
-            "attribute_keyring": authoring_keyring_b64,
             "correlation_id": f"{corr_id}-revoke",
         },
     )

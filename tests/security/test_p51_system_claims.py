@@ -17,9 +17,10 @@ fixture, so a refusal means the control worked, not that the setup broke.
 
 from __future__ import annotations
 
-import base64
+import datetime
 import os
 import secrets
+import uuid
 
 import psycopg
 import pytest
@@ -33,12 +34,12 @@ from breakglass.emergency_key import generate_emergency_key, split_emergency_key
 from contracts import TransitionEvent
 from contracts.enums import LifecycleState, PolicyNodeType, ReasonCode
 from contracts.policy import Attribute, PolicyTree
-from crypto_core import InvalidSignatureError, certificate_to_pem, private_key_to_pem
+from crypto_core import InvalidSignatureError, certificate_to_pem, sign
 from fastapi.testclient import TestClient
 from identity.root_anchor import generate_root_anchor
+from lifecycle import state_machine
 from lifecycle.expiry import EmergencyExpiryManager
-from lifecycle.state_machine import verify_transition_event
-from policy.engine import unwrap_dek_via_policy
+from lifecycle.state_machine import create_transition_event, verify_transition_event
 from records.ingest import ingest_record
 from search.service import derive_search_token
 from storage.migrate import apply_migrations
@@ -54,7 +55,7 @@ from tests.api.conftest import (  # noqa: F401
     signed_labels,
 )
 from tests.security.conftest import skip_or_fail_without_postgres
-from tests.service_pki import ServicePKI
+from tests.service_pki import PersonPKI, ServicePKI, release_body
 from tests.transitions import open_event
 
 RECORD = "rec-001"
@@ -227,27 +228,26 @@ def _search(client: TestClient, term: str = "cardiac"):
     )
 
 
-def _revoke_payload(h: dict, new_policy: PolicyTree, extra_keys: dict) -> dict:
-    attrs = h["attrs"]
-    old_dek = unwrap_dek_via_policy(
-        h["ingested"].compiled_policy, attrs["attr_keyring"], h["ingested"].dek_wrapping
+def _revoke_payload(h: dict, new_policy: PolicyTree) -> dict:
+    """The patient's signed revocation (ADR-0072): no key, no DEK."""
+    # The authority would author role:surgeon for the new tree.
+    h["rotation"].keyring[("authority-med", "role", "surgeon")] = _SURGEON_KEY
+    event = create_transition_event(
+        record_id=RECORD,
+        from_state=LifecycleState.GRANTED,
+        to_state=LifecycleState.REVOKED,
+        actor_id=PATIENT,
+        signing_key=h["pki"]["pat_priv"],
     )
     return {
-        "actor_id": PATIENT,
-        "actor_signing_key_pem": private_key_to_pem(h["pki"]["pat_priv"]).decode(),
-        "old_dek_b64": base64.b64encode(old_dek).decode(),
+        "transition_event": event.model_dump(mode="json"),
+        "patient_certificate_pem": h["pki"]["pat_cert_pem"],
         "new_clinical_policy": new_policy.model_dump(mode="json"),
-        "owner_authority_id": "authority-net",
-        "attribute_keyring": {**attrs["b64_keyring"], **extra_keys},
         "correlation_id": "corr-p51-revoke",
     }
 
 
-_SURGEON_KEY = {
-    "authority-med:role:surgeon": base64.b64encode(
-        b"k_role_surgeon_32bytes_sample!!!"
-    ).decode()
-}
+_SURGEON_KEY = b"k_role_surgeon_32bytes_sample!!!"
 _SURGEON_ONLY = PolicyTree(
     node_type=PolicyNodeType.LEAF,
     attribute=Attribute(name="role", value="surgeon"),
@@ -271,7 +271,7 @@ def test_c1_revoked_clinician_cannot_read_after_revoke_endpoint(hospital):
 
     revoked = client.post(
         f"/records/{RECORD}/revoke",
-        json=_revoke_payload(hospital, _SURGEON_ONLY, _SURGEON_KEY),
+        json=_revoke_payload(hospital, _SURGEON_ONLY),
     )
     assert revoked.status_code == 200, revoked.text
 
@@ -460,9 +460,11 @@ def test_c5_tampered_db_row_fails_the_chain_verify_endpoint(audit_client):
 def test_c6_api_refuses_revocation_of_an_emergency_open_record(hospital):
     """C6: EMERGENCY_OPEN -> REVOKED is not a legal transition, so the API refuses.
 
-    Holds since review N1: the revoke handler claims the state with a
-    compare-and-set from its event's ``from_state`` (GRANTED), so a record in
-    any other state is refused before anything is written.
+    The patient signs the revocation from the record's real state, so the
+    state checks agree and only the transition rules stand in the way
+    (ADR-0072): with them switched off (mutation C6a) the revocation would go
+    through. ``create_transition_event`` refuses to sign an illegal pair, so
+    the event is signed here directly over the canonical payload.
     """
     client, repo = hospital["client"], hospital["repo"]
     assert (
@@ -473,12 +475,32 @@ def test_c6_api_refuses_revocation_of_an_emergency_open_record(hospital):
     )
     assert repo.get_lifecycle_state(RECORD) is LifecycleState.EMERGENCY_OPEN
 
-    response = client.post(
-        f"/records/{RECORD}/revoke",
-        json=_revoke_payload(hospital, _SURGEON_ONLY, _SURGEON_KEY),
-    )
-    assert response.status_code in (400, 403, 409)
+    body = _revoke_payload(hospital, _SURGEON_ONLY)
+    body["transition_event"] = _illegal_revocation(hospital).model_dump(mode="json")
+    response = client.post(f"/records/{RECORD}/revoke", json=body)
+
+    assert response.status_code == 403
+    assert "IllegalTransitionError" in response.json()["detail"]
     assert repo.get_lifecycle_state(RECORD) is LifecycleState.EMERGENCY_OPEN
+
+
+def _illegal_revocation(h: dict) -> TransitionEvent:
+    """``EMERGENCY_OPEN -> REVOKED`` signed by the patient, bypassing the
+    legality check that ``create_transition_event`` runs before signing."""
+    event_id, nonce = uuid.uuid4(), secrets.token_bytes(16)
+    issued_at = datetime.datetime.now(datetime.timezone.utc)
+    fields = {
+        "event_id": event_id,
+        "record_id": RECORD,
+        "from_state": LifecycleState.EMERGENCY_OPEN,
+        "to_state": LifecycleState.REVOKED,
+        "actor_id": PATIENT,
+        "reason_code": None,
+        "issued_at": issued_at,
+        "nonce": nonce,
+    }
+    signature = sign(h["pki"]["pat_priv"], state_machine._canonical_payload(**fields))
+    return TransitionEvent(**fields, signature=signature)
 
 
 # ---------------------------------------------------------------------------
@@ -618,8 +640,13 @@ def test_c10_attribute_key_not_released_without_a_valid_credential():
     services are trusted parties by construction (ADR-0026).
     """
     services = ServicePKI(generate_root_anchor())
+    people = PersonPKI(services.root)
+    alice = people.clinician("dr-alice")
     app = create_authority_app(
-        "authority-med", frozenset({"role"}), service_root=services.root.certificate
+        "authority-med",
+        frozenset({"role"}),
+        service_root=services.root.certificate,
+        subject_trust=people.trust,
     )
     client = services.client(app, "authority-med")
     issued = client.post(
@@ -631,19 +658,29 @@ def test_c10_attribute_key_not_released_without_a_valid_credential():
     )
     credential = issued.json()["credential"]
 
-    # Positive control: a valid credential is exchanged for its key.
+    # Positive control: a valid credential, asked for by its subject (ADR-0074),
+    # is exchanged for its key.
     assert (
         client.post(
-            "/attribute-keys/release", json={"credential": credential}
+            "/attribute-keys/release", json=release_body(credential, alice)
         ).status_code
         == 200
     )
+
+    # A copy of the valid credential, presented by someone else, gets nothing
+    # (review F15).
+    mallory = people.clinician("dr-mallory")
+    copied = client.post(
+        "/attribute-keys/release", json=release_body(credential, mallory)
+    )
+    assert copied.status_code == 403
+    assert "key_b64" not in copied.text
 
     revoked = client.post(f"/credentials/{credential['serial']}/revoke", json={})
     assert revoked.status_code == 200, revoked.text
     assert (
         client.post(
-            "/attribute-keys/release", json={"credential": credential}
+            "/attribute-keys/release", json=release_body(credential, alice)
         ).status_code
         == 403
     )

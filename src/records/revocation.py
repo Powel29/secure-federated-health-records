@@ -126,6 +126,52 @@ def check_revocation_authorization(
         )
 
 
+def revoked_policy_tree(
+    *,
+    current_tree: PolicyTree,
+    new_clinical_policy: PolicyTree,
+    patient_id: str,
+) -> PolicyTree:
+    """The access tree after a revocation, owner leaf taken from the record.
+
+    The owner leaf's authority comes from the record's stored tree, never from
+    the caller (review F10): a caller naming another "home authority" cannot
+    move the patient's own access somewhere else.
+
+    Args:
+        current_tree: The record's current access tree.
+        new_clinical_policy: The clinical branch that stays after revocation.
+        patient_id: The record's patient.
+
+    Returns:
+        ``OR(new_clinical_policy, owner:<patient_id>)`` (ADR-0016).
+
+    Raises:
+        UnauthorizedRevocationError: The stored tree has no owner leaf for
+            ``patient_id``, so there is no home authority to keep it under.
+    """
+    from policy.engine import (
+        OWNER_ATTRIBUTE_NAME,
+        author_policy_with_owner,
+        policy_leaves,
+    )
+
+    owners = {
+        authority_id
+        for authority_id, name, value in policy_leaves(current_tree)
+        if name == OWNER_ATTRIBUTE_NAME and value == patient_id
+    }
+    if len(owners) != 1:
+        raise UnauthorizedRevocationError(
+            f"record's access tree has no single owner leaf for {patient_id!r}"
+        )
+    return author_policy_with_owner(
+        clinical_policy=new_clinical_policy,
+        patient_id=patient_id,
+        owner_authority_id=owners.pop(),
+    )
+
+
 def revoke_record_access(
     *,
     current_record: Record,

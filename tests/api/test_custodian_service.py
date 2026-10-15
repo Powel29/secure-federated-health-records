@@ -25,7 +25,7 @@ from urllib.parse import urlparse
 
 import httpx
 import pytest
-from api.authority_service import create_authority_app
+from api.authority_service import SubjectTrust, create_authority_app
 from api.custodian_service import (
     CustodianEndpoints,
     CustodianVault,
@@ -153,12 +153,19 @@ def _forwarded(request: httpx.Request) -> dict[str, str]:
     return headers
 
 
-def _router(apps: dict[str, FastAPI]) -> httpx.Client:
-    """An httpx client whose transport dispatches by hostname to in-process apps."""
+def _router(
+    apps: dict[str, FastAPI], seen: list[httpx.Request] | None = None
+) -> httpx.Client:
+    """An httpx client whose transport dispatches by hostname to in-process apps.
+
+    ``seen`` collects every request sent, for tests that inspect the wire.
+    """
     # Requests arrive signed by the custodian; the headers are forwarded as is.
     clients = {host: TestClient(app) for host, app in apps.items()}
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if seen is not None:
+            seen.append(request)
         host = urlparse(str(request.url)).hostname or ""
         client = clients[host]
         resp = client.request(
@@ -184,13 +191,22 @@ def federation():
     # Every service takes signed requests only (ADR-0066); seeding signs as
     # bootstrap, the custodian as itself.
     services = ServicePKI(root)
+    # Subjects prove possession under their facility CAs (ADR-0074).
+    subject_trust = SubjectTrust(
+        root=root.certificate,
+        facility_cas={"facility-a": fa_cert, "facility-b": fb_cert},
+    )
     app_med = create_authority_app(
-        "authority-med", frozenset({"role"}), service_root=root.certificate
+        "authority-med",
+        frozenset({"role"}),
+        service_root=root.certificate,
+        subject_trust=subject_trust,
     )
     app_net = create_authority_app(
         "authority-net",
         frozenset({"specialty", "facility", "owner"}),
         service_root=root.certificate,
+        subject_trust=subject_trust,
     )
     med = services.client(app_med, "authority-med")
     net = services.client(app_net, "authority-net")
@@ -366,6 +382,7 @@ def _custodian(
     *,
     audit_commit_ok: bool = True,
     audit_deposit_ok: bool = True,
+    seen: list[httpx.Request] | None = None,
 ) -> TestClient:
     audit_shares = {RECORD: federation["shares"]["share3"]}
     audit = _audit_stub(
@@ -373,7 +390,7 @@ def _custodian(
         commit_ok=audit_commit_ok,
         deposit_ok=audit_deposit_ok,
     )
-    http = _router({**federation["apps"], "audit": audit})
+    http = _router({**federation["apps"], "audit": audit}, seen)
     app = create_custodian_app(
         endpoints=CustodianEndpoints(
             authorities={"authority-med": AUTH_MED, "authority-net": AUTH_NET},
@@ -1055,9 +1072,13 @@ def test_share_1_is_not_replaced_outside_the_records_expiry(federation):
     original = client.app.state.vault.get_share(RECORD)
     assert _replace(facility, 1).status_code == 409  # record is GRANTED
     federation["repo"].upsert_lifecycle_state(RECORD, LifecycleState.EXPIRED)
-    assert _replace(facility, 2).status_code == 409  # skips a generation
     assert _replace(client, 1).status_code == 403  # bootstrap is not a facility
     assert client.app.state.vault.get_share(RECORD) == original
+    # A later generation may skip ahead (ADR-0073); the held one is final.
+    assert _replace(facility, 2).status_code == 200
+    assert _replace(facility, 2, share_hex="abcdef02").status_code == 409
+    assert _replace(facility, 1, share_hex="abcdef02").status_code == 409
+    assert client.app.state.vault.get_share(RECORD) == (1, bytes.fromhex("abcdef01"))
 
 
 def test_share_1_replacement_needs_store_access(federation):
@@ -1103,3 +1124,82 @@ def test_breakglass_after_rotation_uses_the_new_share_1(federation):
     again = client.post(f"/subjects/{DOC_ER}/breakglass", json=body)
     assert again.status_code == 200, again.text
     assert base64.b64decode(again.json()["plaintext_b64"]) == PLAINTEXT
+
+
+# --- ADR-0072: a patient's revocation through the custodian -------------------
+
+PHYSICIAN_ONLY = {
+    "node_type": "leaf",
+    "attribute": {"name": "role", "value": "physician"},
+    "authority_id": "authority-med",
+}
+
+
+def test_patient_revokes_through_the_custodian_with_no_key_on_the_wire(federation):
+    """Review F10/F13: the custodian signs the revocation with the patient's
+    key and sends the signed event; no private key, DEK or attribute key goes
+    to the facility, and the record is re-keyed and REVOKED."""
+    seen: list[httpx.Request] = []
+    client = _custodian(federation, seen=seen)
+    _deposit_all(client, federation)
+    seen.clear()
+
+    r = client.post(
+        f"/subjects/{PATIENT}/records/{RECORD}/revoke",
+        json={"new_clinical_policy": PHYSICIAN_ONLY},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["lifecycle_state"] == "revoked"
+    assert federation["repo"].get_lifecycle_state(RECORD) is LifecycleState.REVOKED
+    assert federation["rotation"].deposits[-1]["generation"] == 1
+    (revoke,) = [q for q in seen if q.url.path.endswith("/revoke")]
+    body = revoke.content.decode()
+    assert "PRIVATE KEY" not in body
+    for field in ("old_dek_b64", "actor_signing_key_pem", "attribute_keyring"):
+        assert field not in body
+
+
+def test_a_clinician_cannot_revoke_through_the_custodian(federation):
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    r = client.post(
+        f"/subjects/{DOC_CARDIO}/records/{RECORD}/revoke",
+        json={"new_clinical_policy": PHYSICIAN_ONLY},
+    )
+    assert r.status_code == 403
+    assert federation["repo"].get_lifecycle_state(RECORD) is LifecycleState.GRANTED
+
+
+def test_only_the_records_patient_revokes_it(federation):
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    other = dict(federation["material"][PATIENT])
+    other["credentials"] = []
+    assert client.post("/subjects/pat-999/material", json=other).status_code == 201
+    r = client.post(
+        "/subjects/pat-999/records/rec-001/revoke",
+        json={"new_clinical_policy": PHYSICIAN_ONLY},
+    )
+    assert r.status_code == 403
+    assert federation["repo"].get_lifecycle_state(RECORD) is LifecycleState.GRANTED
+
+
+def test_key_release_carries_the_subjects_possession_proof(federation):
+    """ADR-0074: every key release the custodian asks for is signed by the
+    credential's subject, and names that subject's certificate."""
+    seen: list[httpx.Request] = []
+    client = _custodian(federation, seen=seen)
+    _deposit_all(client, federation)
+    r = client.post(
+        f"/subjects/{DOC_CARDIO}/read",
+        json={"record_id": RECORD, "facility_id": "facility-a"},
+    )
+    assert r.status_code == 200, r.text
+    releases = [q for q in seen if q.url.path == "/attribute-keys/release"]
+    assert len(releases) == 2
+    for request in releases:
+        body = json.loads(request.content)
+        assert body["possession"]["caller_id"] == DOC_CARDIO
+        assert body["possession"]["operation"] == "attribute_key.release"
+        assert body["subject_certificate_pem"].startswith("-----BEGIN CERTIFICATE")

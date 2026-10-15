@@ -80,8 +80,11 @@ from custodian import (
     prepare_unlock,
     provision_emergency_key,
     sign_emergency_transition,
+    sign_key_release_possession,
+    sign_revocation_transition,
 )
 from fastapi import Depends, FastAPI, HTTPException, Request, status
+from lifecycle.exceptions import IllegalTransitionError
 from pre.exceptions import PREError
 from pydantic import ValidationError
 from records.exceptions import DecryptionError
@@ -105,6 +108,8 @@ from api.custodian_schemas import (
     ReadRecordResult,
     ReplaceShareRequest,
     RevokeConsentPayload,
+    RevokeRecordPayload,
+    RevokeRecordResult,
     SharePresented,
     SignConsentRequestPayload,
     SignConsentRequestResponse,
@@ -137,6 +142,7 @@ CUSTODIAN_PERMISSIONS: dict[tuple[str, str], frozenset[str]] = {
     ("POST", "/subjects/{subject_id}/consent/revoke"): _PORTAL,
     ("POST", "/subjects/{subject_id}/read"): _PORTAL,
     ("POST", "/subjects/{subject_id}/records"): _PORTAL,
+    ("POST", "/subjects/{subject_id}/records/{record_id}/revoke"): _PORTAL,
     ("POST", "/subjects/{subject_id}/breakglass"): _PORTAL,
 }
 CUSTODIAN_PUBLIC_ROUTES = frozenset({("GET", "/health")})
@@ -150,6 +156,9 @@ SHARE_HOLDER_HOME_AUTHORITY = "home-authority"
 RecordLoader = Callable[[str], Record | None]
 # The record's lifecycle state in the shared store (ADR-0069).
 StateLoader = Callable[[str], LifecycleState | None]
+# States in which a facility may hand a holder a rotated share: expiry
+# (ADR-0069) and a patient's revocation (ADR-0072).
+ROTATING_STATES = frozenset({LifecycleState.EXPIRED, LifecycleState.REVOKED})
 
 
 # --- In-memory vault ---------------------------------------------------------
@@ -231,11 +240,14 @@ class CustodianVault:
     def replace_share(
         self, record_id: str, share: tuple[int, bytes], generation: int
     ) -> None:
-        """Take the next generation's share 1 (ADR-0069); a retry is a no-op.
+        """Take a later generation's share 1 (ADR-0069); a retry is a no-op.
+
+        A generation may be skipped by a rotation recovered after a crash
+        (ADR-0073), never repeated or rolled back.
 
         Raises:
             KeyError: No share is held for ``record_id``.
-            ValueError: ``generation`` is not the held generation + 1 (or the
+            ValueError: ``generation`` is not after the held one (or is the
                 same generation with a different share).
         """
         with self._lock:
@@ -245,7 +257,7 @@ class CustodianVault:
             held = self._share_generations[record_id]
             if generation == held and current == share:
                 return
-            if generation != held + 1:
+            if generation <= held:
                 raise ValueError(
                     f"share for {record_id!r} is at generation {held}; "
                     f"refusing generation {generation}"
@@ -486,6 +498,14 @@ def _holder_keyring(
     """
     keyring: dict[str, str] = {}
     presented: list[str] = []
+    if material.credentials and not material.certificate_pem:
+        # Without a certificate the subject cannot prove possession, so no
+        # authority releases a key (ADR-0074); the policy engine then denies.
+        _logger.warning(
+            "subject %s holds no certificate; its credentials cannot be exchanged",
+            material.subject_id,
+        )
+        return keyring, presented
     for cred in material.credentials:
         authority_url = endpoints.authorities.get(cred.issuer_id)
         label = f"{cred.issuer_id}:{cred.attribute.name}:{cred.attribute.value}"
@@ -498,10 +518,18 @@ def _holder_keyring(
                 "no endpoint for issuer %s; skipping %s", cred.issuer_id, label
             )
             continue
+        # The subject signs, here, that it is the one asking (ADR-0074).
+        possession = sign_key_release_possession(
+            signing_key=material.signing_key, credential=cred
+        )
         try:
             resp = http.post(
                 f"{authority_url}/attribute-keys/release",
-                json={"credential": cred.model_dump(mode="json")},
+                json={
+                    "credential": cred.model_dump(mode="json"),
+                    "possession": possession.model_dump(mode="json"),
+                    "subject_certificate_pem": material.certificate_pem,
+                },
             )
         except httpx.HTTPError as exc:
             raise HTTPException(
@@ -743,18 +771,20 @@ def create_custodian_app(
         """Take share 1 of a record's new emergency key after rotation (ADR-0069).
 
         Only a facility may call this, only while the shared store shows the
-        record ``expired`` -- the moment its forced rotation runs -- and only
-        for the generation after the one held.
+        record ``expired`` (its forced rotation at expiry) or ``revoked`` (the
+        rotation a patient's revocation runs, ADR-0072), and only for a later
+        generation than the one held.
         """
         if state_loader is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="no store access; share 1 cannot be replaced",
             )
-        if state_loader(record_id) is not LifecycleState.EXPIRED:
+        if state_loader(record_id) not in ROTATING_STATES:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="a share is replaced only during its record's expiry rotation",
+                detail="a share is replaced only by its record's expiry or "
+                "revocation rotation",
             )
         try:
             share_bytes = bytes.fromhex(payload.share_hex)
@@ -1132,6 +1162,87 @@ def create_custodian_app(
             lifecycle_state=data["lifecycle_state"],
             search_terms_indexed=data["search_terms_indexed"],
             audit_share_deposited=True,
+        )
+
+    @app.post(
+        "/subjects/{subject_id}/records/{record_id}/revoke",
+        response_model=RevokeRecordResult,
+        responses={403: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+    )
+    def revoke_own_record(
+        subject_id: str,
+        record_id: str,
+        payload: RevokeRecordPayload,
+        vault: VaultDep,
+        endpoints: EndpointsDep,
+        http: HttpDep,
+    ) -> RevokeRecordResult:
+        """A patient revokes access to their record (ADR-0072, review F10).
+
+        The custodian signs ``GRANTED -> REVOKED`` with the patient's key and
+        sends that, the patient's certificate and the clinical branch that
+        stays. The facility recovers the old DEK and re-keys the record
+        itself: neither a private key nor a DEK leaves for the wire.
+        """
+        material = _require_subject(vault, subject_id)
+        _require_kind(material, "patient")
+        certificate_pem = _patient_certificate(material)
+        facility_id = payload.facility_id
+        loader = app.state.record_loader
+        target = loader(record_id) if loader else None
+        if target is not None:
+            if target.patient_id != subject_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="only the record's patient can revoke access to it",
+                )
+            facility_id = target.facility_id
+        if not facility_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="no facility_id given and the record is not in the store",
+            )
+        facility_url = _facility_url(endpoints, facility_id)
+        state = LifecycleState(
+            _get(
+                http,
+                f"{facility_url}/records/{record_id}/lifecycle",
+                what="record lifecycle state",
+            )["state"]
+        )
+        try:
+            event = sign_revocation_transition(
+                signing_key=material.signing_key,
+                record_id=record_id,
+                from_state=state,
+                patient_id=subject_id,
+            )
+        except IllegalTransitionError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"the record is {state.value}; it cannot be revoked now",
+            ) from exc
+        corr_id = payload.correlation_id or str(uuid4())
+        data = _post(
+            http,
+            f"{facility_url}/records/{record_id}/revoke",
+            {
+                "transition_event": event.model_dump(mode="json"),
+                "patient_certificate_pem": certificate_pem,
+                "new_clinical_policy": payload.new_clinical_policy.model_dump(
+                    mode="json"
+                ),
+                "correlation_id": corr_id,
+            },
+            what="record revocation",
+        )
+        return RevokeRecordResult(
+            record_id=record_id,
+            facility_id=facility_id,
+            new_policy_id=data["new_policy_id"],
+            lifecycle_state=LifecycleState.REVOKED.value,
+            breakglass_provisioned=data.get("breakglass_provisioned", True),
+            correlation_id=corr_id,
         )
 
     @app.post(

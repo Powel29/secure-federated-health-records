@@ -326,15 +326,20 @@ def create_audit_app(
     ) -> RegisterShareResponse:
         """Take the next generation's share from a record's rotation (ADR-0069).
 
-        Only a facility may call this, only while the record is ``expired`` in
-        the shared store -- the moment its forced rotation runs -- and only
-        for the generation after the one held.
+        Only a facility may call this, only while the record is ``expired``
+        (its forced rotation at expiry) or ``revoked`` (the rotation a
+        patient's revocation runs, ADR-0072) in the shared store, and only for
+        a later generation than the one held.
         """
         row = get_lifecycle_state(conn, share_key)
-        if row is None or row["state"] != LifecycleState.EXPIRED.value:
+        if row is None or row["state"] not in (
+            LifecycleState.EXPIRED.value,
+            LifecycleState.REVOKED.value,
+        ):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="a share is replaced only during its record's expiry rotation",
+                detail="a share is replaced only by its record's expiry or "
+                "revocation rotation",
             )
         try:
             share_bytes = bytes.fromhex(payload.share_hex)

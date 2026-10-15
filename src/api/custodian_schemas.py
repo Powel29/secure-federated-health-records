@@ -296,6 +296,28 @@ class IngestResult(BaseModel):
     detail: str = "Record encrypted at the facility; owner leaf present"
 
 
+class RevokeRecordPayload(BaseModel):
+    """A patient revokes access to one of their records (ADR-0072).
+
+    ``new_clinical_policy`` is the clinical branch that keeps access; the
+    owner leaf is kept by the facility. The custodian signs the revocation
+    with the patient's key; nothing key-bearing leaves it.
+    """
+
+    new_clinical_policy: PolicyTree
+    facility_id: str | None = None
+    correlation_id: str | None = None
+
+
+class RevokeRecordResult(BaseModel):
+    record_id: str
+    facility_id: str
+    new_policy_id: str
+    lifecycle_state: str
+    breakglass_provisioned: bool
+    correlation_id: str
+
+
 class ErrorResponse(BaseModel):
     detail: str
     denied_by: str | None = None

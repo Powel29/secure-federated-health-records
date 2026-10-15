@@ -30,6 +30,8 @@ from __future__ import annotations
 
 import base64
 import datetime
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Annotated
 
 from authority.exceptions import (
@@ -37,6 +39,7 @@ from authority.exceptions import (
     CredentialNotYetValidError,
     CredentialRevokedError,
     CredentialStatusError,
+    PossessionError,
     UnauthorizedAttributeError,
 )
 from authority.issuance import (
@@ -47,11 +50,23 @@ from authority.issuance import (
     issue_owner_credential,
     verify_credential,
 )
+from authority.possession import verify_key_release_possession
 from breakglass import ConsumedRequestIds
-from crypto_core import public_key_to_pem
-from crypto_core.exceptions import InvalidSignatureError
+from breakglass.exceptions import BreakglassError
+from crypto_core import certificate_from_pem, certificate_public_key, public_key_to_pem
+from crypto_core.exceptions import (
+    CertificateExpiredError,
+    InvalidSignatureError,
+    KeyFormatError,
+)
 from cryptography.x509 import Certificate
 from fastapi import Depends, FastAPI, HTTPException, Request, status
+from identity import (
+    PERSON_ROLES,
+    ChainValidationError,
+    SubjectCertificateError,
+    validate_subject_certificate,
+)
 
 from api.authority_schemas import (
     AttributeKeyReleaseRequest,
@@ -111,12 +126,36 @@ AUTHORITY_PUBLIC_ROUTES = frozenset(
 )
 
 
+@dataclass(frozen=True)
+class SubjectTrust:
+    """Where subjects' certificates must come from (ADR-0074).
+
+    A key is released only to a request its credential's subject signed,
+    under a key certified by one of these facility CAs.
+    """
+
+    root: Certificate
+    facility_cas: Mapping[str, Certificate]
+    revoked_serials: frozenset[int] = field(default_factory=frozenset)
+
+
+_POSSESSION_ERRORS = (
+    ChainValidationError,
+    CertificateExpiredError,
+    SubjectCertificateError,
+    PossessionError,
+    InvalidSignatureError,
+    BreakglassError,  # envelope expired, wrong operation or recipient, replayed
+)
+
+
 def create_authority_app(
     authority_id: str,
     owned_attribute_names: frozenset[str],
     authority: AttributeAuthority | None = None,
     *,
     service_root: Certificate,
+    subject_trust: SubjectTrust | None = None,
 ) -> FastAPI:
     """Create and configure the standalone Attribute Authority Service application.
 
@@ -130,11 +169,16 @@ def create_authority_app(
             material."
         service_root: The federation root callers' service certificates must
             chain to (ADR-0066). This service's id is ``authority_id``.
+        subject_trust: The facility CAs subjects' certificates chain through.
+            Without them no key is released (503): a release must prove the
+            credential's subject is asking (ADR-0074).
 
     Returns:
         A configured FastAPI application.
     """
     auth = authority or generate_authority(authority_id, owned_attribute_names)
+    # One-time ids of possession envelopes already used here (ADR-0074).
+    release_replay = ConsumedRequestIds()
 
     app = FastAPI(
         title=f"Attribute Authority Service ({authority_id})",
@@ -258,7 +302,50 @@ def create_authority_app(
     def release_attribute_key(
         payload: AttributeKeyReleaseRequest, authority: AuthorityDep
     ) -> AttributeKeyResponse:
-        """Exchange a valid credential for the attribute key it certifies."""
+        """Exchange a valid credential for its key, if its subject is asking.
+
+        The request must carry a possession envelope its subject signed,
+        under a certificate from a configured facility CA (ADR-0074, review
+        F15): a copy of the credential alone releases nothing.
+        """
+        if subject_trust is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="no subject trust anchors configured; no key is released",
+            )
+        try:
+            certificate = certificate_from_pem(
+                payload.subject_certificate_pem.encode("utf-8")
+            )
+        except KeyFormatError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"invalid subject certificate PEM: {exc}",
+            ) from exc
+        try:
+            validate_subject_certificate(
+                certificate,
+                subject_id=payload.credential.subject_id,
+                roles=PERSON_ROLES,
+                facility_cas=subject_trust.facility_cas,
+                trusted_root=subject_trust.root,
+                revoked_serials=subject_trust.revoked_serials,
+            )
+            verify_key_release_possession(
+                payload.credential,
+                payload.possession,
+                certificate_public_key(certificate),
+                authority_id=authority_id,
+                consumed_store=release_replay,
+            )
+        except _POSSESSION_ERRORS as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "subject did not prove possession "
+                    f"({exc.__class__.__name__}): {exc}"
+                ),
+            ) from exc
         try:
             key = authority.get_attribute_key(payload.credential)
         except UnauthorizedAttributeError as exc:

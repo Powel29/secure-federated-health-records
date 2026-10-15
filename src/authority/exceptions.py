@@ -28,3 +28,11 @@ class CredentialNotYetValidError(CryptoError):
 
 class CredentialExpiredError(CryptoError):
     """Raised when a credential is checked after its ``valid_until``."""
+
+
+class PossessionError(CryptoError):
+    """Raised when a key-release request does not prove the subject is asking.
+
+    The possession envelope is from someone other than the credential's
+    subject, or covers another credential (ADR-0074, review F15).
+    """

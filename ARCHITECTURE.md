@@ -19,7 +19,7 @@ sophistication win.
 | Hashing | `hashlib` (stdlib) | SHA-256 for the audit chain |
 | Randomness | `secrets` (stdlib) | Never `random` for anything security-relevant |
 | Shamir SSS | **Hand-rolled**, GF(p) with p a 256-bit prime | ~80 lines, it is a course topic, and it removes a dependency |
-| Proxy re-encryption | **Hand-rolled** ElGamal-style unidirectional PRE | No maintained easy-install PRE library exists |
+| Proxy re-encryption | **Hand-rolled** ElGamal-style PRE (bidirectional, toy-sized group; ADR-0071) | No maintained easy-install PRE library exists |
 | Access structure | **Hand-rolled** policy tree over Shamir | Replaces CP-ABE — see §3 |
 | Services | FastAPI + Uvicorn | Trivial to run several processes; gives us real network boundaries |
 | Storage | **PostgreSQL** (one shared store) | Real concurrent multi-service access; holds only ciphertext, wrapped keys, and coded index — stores data, never decides access (ADR-0014) |
@@ -47,9 +47,13 @@ primitives *through here*, never directly.
 **C2 — `shamir`.** Threshold secret sharing over a prime field. Split, combine,
 share validation. Used by both the break-glass gate and the policy engine.
 
-**C3 — `pre`.** Unidirectional ElGamal-style proxy re-encryption: generate
-re-encryption key from A to B, transform a ciphertext without ever seeing
-plaintext.
+**C3 — `pre`.** ElGamal-style proxy re-encryption: generate a re-encryption
+key from A to B and transform a ciphertext without seeing the plaintext, plus
+key encapsulation to an ElGamal public key. The scheme is **bidirectional**
+(`rk = a·b⁻¹ mod q` inverts) over a 256-bit group, well below 128-bit
+security; it demonstrates the primitive (ADR-0071). Break-glass does not use
+`reencrypt`: the facility unwraps the DEK itself and delivers it to the
+clinician under an encapsulated key (`breakglass.gate`, PROJECT.md §5 caveat 8).
 
 **C4 — `storage`.** PostgreSQL schema and repository objects. Tables: patients,
 records, dek_wrappings, attributes, authorities, facilities, lifecycle_state,

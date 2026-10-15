@@ -32,7 +32,7 @@ class TraceTests(TestCase):
         self.client.login(username="auditor", password=TEST_PASSWORD)
 
     def test_trace_by_correlation_id_shows_the_whole_flow(self) -> None:
-        BreakglassCase.objects.create(
+        case = BreakglassCase.objects.create(
             correlation_id="lookup-1", record_id="rec-001", patient_id="pat-101", clinician_id="doc-201",
             facility_id="facility-b", reason_code="stroke", status=CaseStatus.OPEN,
             opened_at=timezone.now(), expires_at=timezone.now() + timedelta(minutes=2),
@@ -49,7 +49,9 @@ class TraceTests(TestCase):
         self.assertContains(resp, "federation.rewrap")
         self.assertContains(resp, "links intact")
         self.assertContains(resp, "PASS")
-        self.assertContains(resp, "BG-0001")
+        # The number comes from the primary key, which a Postgres sequence
+        # does not reset between tests, so it is not always BG-0001.
+        self.assertContains(resp, case.case_number)
 
     def test_broken_link_is_flagged(self) -> None:
         broken = [dict(e) for e in ENTRIES]

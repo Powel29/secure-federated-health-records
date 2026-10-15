@@ -1,7 +1,9 @@
 """Proxy Re-Encryption (owner module: ``pre``, C3).
 
-Provides unidirectional ElGamal proxy re-encryption (ADR-0012) for re-wrapping
-ciphertexts to emergency clinicians without plaintext exposure.
+Provides a hand-rolled ElGamal proxy re-encryption (ADR-0012) and the key
+encapsulation break-glass delivers a DEK with. The scheme is bidirectional
+and toy-sized, and break-glass uses only the encapsulation: the facility sees
+the DEK it delivers (ADR-0071, review D11-a).
 """
 
 from __future__ import annotations

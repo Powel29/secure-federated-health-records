@@ -11,7 +11,7 @@ Decouples API orchestration routes from underlying storage engines. Provides:
 from __future__ import annotations
 
 import threading
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 import psycopg
@@ -29,6 +29,7 @@ from search.service import SealedSearchTerms
 from storage.policy_codec import decode_policy, encode_policy
 from storage.repositories import (
     consume_id,
+    delete_emergency_session,
     find_records_by_search_term,
     get_chain_head,
     get_dek_wrapping,
@@ -43,9 +44,11 @@ from storage.repositories import (
     insert_record,
     insert_search_term,
     insert_transition_event,
+    list_emergency_sessions,
     put_sealed_search_terms,
     replace_search_index,
     rotate_record_ciphertext,
+    save_emergency_session,
     transition_lifecycle_state,
     upsert_lifecycle_state,
 )
@@ -218,6 +221,22 @@ class StorageRepository(Protocol):
         """
         ...
 
+    def save_emergency_session(self, row: dict[str, Any]) -> None:
+        """Record an open emergency session (ADR-0073); no key material.
+
+        Raises:
+            StateConflictError: A session is already recorded for the record.
+        """
+        ...
+
+    def delete_emergency_session(self, record_id: str) -> None:
+        """Forget a finished emergency session; a missing one is fine."""
+        ...
+
+    def list_emergency_sessions(self, facility_id: str) -> list[dict[str, Any]]:
+        """Every open session ``facility_id`` recorded, oldest first."""
+        ...
+
 
 class InMemoryStorageRepository:
     """Thread-safe, fully in-memory repository implementation."""
@@ -237,6 +256,7 @@ class InMemoryStorageRepository:
         self.consent_grants: dict[UUID, ConsentGrant] = {}
         self.consumed_ids: set[tuple[str, UUID]] = set()
         self.sealed_search_terms: dict[str, SealedSearchTerms] = {}
+        self.emergency_sessions: dict[str, dict[str, Any]] = {}
 
     def get_record(self, record_id: str) -> Record | None:
         with self._lock:
@@ -422,6 +442,28 @@ class InMemoryStorageRepository:
             ] + [(record_id, token) for token in plan.search_tokens]
             if plan.sealed_search_terms is not None:
                 self.sealed_search_terms[record_id] = plan.sealed_search_terms
+
+    def save_emergency_session(self, row: dict[str, Any]) -> None:
+        with self._lock:
+            if row["record_id"] in self.emergency_sessions:
+                raise StateConflictError(
+                    f"an emergency session is already recorded for "
+                    f"{row['record_id']!r}"
+                )
+            self.emergency_sessions[row["record_id"]] = dict(row)
+
+    def delete_emergency_session(self, record_id: str) -> None:
+        with self._lock:
+            self.emergency_sessions.pop(record_id, None)
+
+    def list_emergency_sessions(self, facility_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = [
+                dict(row)
+                for row in self.emergency_sessions.values()
+                if row["facility_id"] == facility_id
+            ]
+        return sorted(rows, key=lambda row: row["opened_at"])
 
 
 class PostgresStorageRepository:
@@ -609,3 +651,17 @@ class PostgresStorageRepository:
             replace_search_index(self._conn, record_id, list(plan.search_tokens))
             if plan.sealed_search_terms is not None:
                 self.put_sealed_search_terms(record_id, plan.sealed_search_terms)
+
+    def save_emergency_session(self, row: dict[str, Any]) -> None:
+        try:
+            save_emergency_session(self._conn, row)
+        except psycopg.errors.UniqueViolation as exc:
+            raise StateConflictError(
+                f"an emergency session is already recorded for {row['record_id']!r}"
+            ) from exc
+
+    def delete_emergency_session(self, record_id: str) -> None:
+        delete_emergency_session(self._conn, record_id)
+
+    def list_emergency_sessions(self, facility_id: str) -> list[dict[str, Any]]:
+        return list_emergency_sessions(self._conn, facility_id)

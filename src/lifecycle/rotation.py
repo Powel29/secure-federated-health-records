@@ -34,9 +34,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from breakglass.emergency_key import Share, generate_emergency_key, split_emergency_key
+from contracts.policy import PolicyTree
 from contracts.records import DEKWrapping, Record
 from crypto_core.symmetric import generate_key
-from policy.engine import CompiledPolicy, compile_policy, policy_tree_of
+from policy.engine import (
+    CompiledPolicy,
+    compile_policy,
+    policy_tree_of,
+    unwrap_dek_via_policy,
+)
 from records.service import decrypt_record, encrypt_record, unwrap_dek, wrap_dek
 from search.service import (
     SealedSearchTerms,
@@ -129,7 +135,85 @@ def plan_rotation(
         produced with a fresh nonce. The plaintext exists only inside this
         call.
     """
-    old_dek = unwrap_dek(emergency_wrapping, emergency_key)
+    return _plan_from_dek(
+        record=record,
+        old_dek=unwrap_dek(emergency_wrapping, emergency_key),
+        emergency_generation=emergency_wrapping.generation,
+        baseline_generation=baseline_generation,
+        tree=policy_tree_of(compiled_policy),
+        authoring_keyring=authoring_keyring,
+        sealed_search_terms=sealed_search_terms,
+    )
+
+
+def plan_rotation_via_policy(
+    *,
+    record: Record,
+    baseline_wrapping: DEKWrapping,
+    emergency_generation: int,
+    compiled_policy: CompiledPolicy,
+    authoring_keyring: Mapping[tuple[str, str, str], bytes],
+    sealed_search_terms: SealedSearchTerms | None,
+    new_tree: PolicyTree | None = None,
+) -> RotationPlan:
+    """Compute a full rotation without an emergency session (ADR-0072, ADR-0073).
+
+    Used where no emergency key is held: a patient's revocation (with
+    ``new_tree``, the revoked access structure) and the recovery of an
+    emergency session whose key was lost to a facility restart or a crash
+    mid-rotation. The old DEK is recovered through the record's own policy
+    (``policy.engine.unwrap_dek_via_policy``) with the authoring keys of its
+    leaves -- the keys the facility already fetches for every rotation
+    (ADR-0069). Everything after that is :func:`plan_rotation`'s computation.
+
+    Args:
+        record: The record as stored.
+        baseline_wrapping: Its DEK wrapped under ``compiled_policy``'s root.
+        emergency_generation: Generation of its current emergency wrapping;
+            the new one is one higher.
+        compiled_policy: The record's current compiled policy.
+        authoring_keyring: An authoring key for every leaf of the current
+            tree and of ``new_tree``, keyed ``(authority_id, name, value)``.
+        sealed_search_terms: The record's sealed term list, if it has one.
+        new_tree: The access tree to compile the new root under; ``None``
+            keeps the current one.
+
+    Raises:
+        PolicyDeniedError: The keyring does not open the current policy.
+        UnwrappingError: The policy root does not open ``baseline_wrapping``.
+        DecryptionError: The DEK does not open the record.
+        PolicyCompileError: The keyring lacks a key for a leaf of the new tree.
+
+    Security property:
+        Same as :func:`plan_rotation`. Recovering the DEK this way gives the
+        facility no power it lacks at every expiry: authoring keys and holder
+        keys are the same keys (ADR-0026), and the facility already fetches
+        them for each leaf to recompile the policy.
+    """
+    return _plan_from_dek(
+        record=record,
+        old_dek=unwrap_dek_via_policy(
+            compiled_policy, authoring_keyring, baseline_wrapping
+        ),
+        emergency_generation=emergency_generation,
+        baseline_generation=baseline_wrapping.generation,
+        tree=new_tree if new_tree is not None else policy_tree_of(compiled_policy),
+        authoring_keyring=authoring_keyring,
+        sealed_search_terms=sealed_search_terms,
+    )
+
+
+def _plan_from_dek(
+    *,
+    record: Record,
+    old_dek: bytes,
+    emergency_generation: int,
+    baseline_generation: int,
+    tree: PolicyTree,
+    authoring_keyring: Mapping[tuple[str, str, str], bytes],
+    sealed_search_terms: SealedSearchTerms | None,
+) -> RotationPlan:
+    """Steps 1-4 of the module docstring, from the record's current DEK."""
     plaintext = decrypt_record(record, old_dek)
     terms = (
         open_search_terms(sealed_search_terms, old_dek, record.record_id)
@@ -152,7 +236,7 @@ def plan_rotation(
 
     root_secret = generate_key(_ROOT_SECRET_BYTES)
     recompiled = compile_policy(
-        tree=policy_tree_of(compiled_policy),
+        tree=tree,
         root_secret=root_secret,
         attribute_keyring=authoring_keyring,
     )
@@ -171,7 +255,7 @@ def plan_rotation(
         record_id=record.record_id,
         wrapping_key=new_emergency_key,
         wrapped_for=EMERGENCY_WRAPPED_FOR,
-        generation=emergency_wrapping.generation + 1,
+        generation=emergency_generation + 1,
     )
 
     tokens = tuple(derive_search_token(new_emergency_key, term) for term in terms)

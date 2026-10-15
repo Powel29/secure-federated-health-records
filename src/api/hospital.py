@@ -24,10 +24,11 @@ import binascii
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timezone
 from typing import Annotated, Any, Callable
 from uuid import uuid4
 
+import httpx
 from audit.events import (
     ACCESS_VIA_CONSENT,
     ACCESS_VIA_EMERGENCY_SEARCH,
@@ -46,6 +47,7 @@ from audit.events import (
     EVENT_ACCESS_GRANTED,
     EVENT_FEDERATION_DISCOVERY,
     EVENT_FEDERATION_REWRAP,
+    EVENT_RECORD_REVOKED,
     log_access_denied,
     log_access_granted,
     log_federation_discovery,
@@ -85,10 +87,9 @@ from consent.exceptions import (
     ConsentSubjectError,
 )
 from consent.service import (
-    create_consent_request,
     read_record_under_consent,
-    revoke_consent_grant,
     verify_consent_grant,
+    verify_consent_request,
 )
 from contracts.enums import ConsentStatus, LifecycleState
 from crypto_core import (
@@ -105,7 +106,12 @@ from crypto_core.types import ECPrivateKey, ECPublicKey
 from cryptography.x509 import Certificate
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
-from identity import PatientCertificateError, validate_patient_certificate
+from identity import (
+    PatientCertificateError,
+    SubjectCertificateError,
+    validate_clinician_certificate,
+    validate_patient_certificate,
+)
 from identity.exceptions import ChainValidationError
 from lifecycle.exceptions import (
     EmergencySessionExpiredError,
@@ -114,10 +120,15 @@ from lifecycle.exceptions import (
     ReplayedEventError,
     SessionNotFoundError,
     StateConflictError,
+    StateMismatchError,
 )
 from lifecycle.expiry import EmergencyExpiryManager
-from lifecycle.state_machine import verify_transition_event
-from policy.engine import decrypt_record_via_policy
+from lifecycle.state_machine import (
+    ConsumedEventIds,
+    LifecycleStateMachine,
+    verify_transition_event,
+)
+from policy.engine import decrypt_record_via_policy, policy_tree_of
 from policy.exceptions import PolicyCompileError, PolicyDeniedError
 from records.exceptions import (
     RecordError,
@@ -133,7 +144,7 @@ from records.labels import (
 )
 from records.revocation import (
     check_revocation_authorization,
-    revoke_record_access,
+    revoked_policy_tree,
 )
 from search.service import emergency_search_token
 from shamir.exceptions import SecretSharingError
@@ -143,9 +154,16 @@ from api.repository import (
     InMemoryStorageRepository,
     PostgresStorageRepository,
     RecordExistsError,
+    RotationConflictError,
     StorageRepository,
 )
-from api.rotation import FacilityRotator, RotationPorts
+from api.rotation import (
+    FacilityRotator,
+    RepositorySessionStore,
+    RotationError,
+    RotationPorts,
+    recover_emergency_sessions,
+)
 from api.schemas import (
     BreakglassUnlockRequest,
     BreakglassUnlockResponse,
@@ -160,7 +178,6 @@ from api.schemas import (
     LifecycleStateResponse,
     ReadRecordRequest,
     ReadRecordResponse,
-    RevokeConsentGrantPayload,
     RevokeRecordRequest,
     RevokeRecordResponse,
     SearchRecordsRequest,
@@ -186,8 +203,9 @@ _PORTAL = frozenset({"portal", "bootstrap"})
 FACILITY_PERMISSIONS: dict[tuple[str, str], frozenset[str]] = {
     ("POST", "/records/{record_id}/read"): _CUSTODIAN,
     ("POST", "/consent/requests"): _CUSTODIAN,
+    # A revoked grant is the patient's signed REVOKED grant, submitted here
+    # like any other decision; nobody sends the facility a key to sign one.
     ("POST", "/consent/grants"): _CUSTODIAN | _PORTAL,
-    ("POST", "/consent/grants/revoke"): _CUSTODIAN,
     ("POST", "/records/{record_id}/revoke"): _CUSTODIAN,
     ("POST", "/records/{record_id}/breakglass"): _CUSTODIAN,
     ("GET", "/records/{record_id}/lifecycle"): _CUSTODIAN,
@@ -575,8 +593,17 @@ def create_hospital_app(
         expiry_manager.attach_state_writer(repo.transition_lifecycle_state)
         if rotation_ports is not None:
             expiry_manager.attach_rotator(FacilityRotator(repo, rotation_ports))
+            # Open sessions survive a restart as rows with no key; the ones a
+            # previous process left are closed with a rotation now (ADR-0073).
+            expiry_manager.attach_session_store(
+                RepositorySessionStore(repo, facility_id)
+            )
+            recover_emergency_sessions(repo, expiry_manager, facility_id)
     # Backed by the store so a facility restart does not re-open replay (F22).
     consumed_assertions = ConsumedAssertionIds(backend=repo)
+    # Patient-signed revocations go through the state machine too, so their
+    # event ids are one-time across restarts (ADR-0072).
+    revocation_machine = LifecycleStateMachine(ConsumedEventIds(backend=repo))
     # Clinical labels are trusted only when their patient signature verifies
     # against these anchors; otherwise the strictest rules apply (ADR-0064).
     label_trust = (
@@ -948,25 +975,46 @@ def create_hospital_app(
         payload: CreateConsentRequestPayload,
         repo: RepoDep,
     ) -> ConsentResponse:
-        """Create and sign a new ConsentRequest."""
+        """Register a ConsentRequest its clinician signed (ADR-0072).
+
+        Verified against the clinician's certificate from a configured CA;
+        the facility never holds the clinician's key.
+        """
+        req = payload.request
+        if trust is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="consent verification needs configured trust anchors",
+            )
         try:
-            req_priv = private_key_from_pem(
-                payload.requester_signing_key_pem.encode("utf-8")
+            certificate = certificate_from_pem(
+                payload.requester_certificate_pem.encode("utf-8")
             )
         except KeyFormatError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid requester signing key PEM: {exc}",
+                detail=f"Invalid requester certificate PEM: {exc}",
             ) from exc
-
-        req = create_consent_request(
-            patient_id=payload.patient_id,
-            requester_id=payload.requester_id,
-            scope=tuple(payload.scope),
-            purpose=payload.purpose,
-            requester_signing_key=req_priv,
-            ttl=timedelta(days=payload.ttl_days),
-        )
+        try:
+            validate_clinician_certificate(
+                certificate,
+                clinician_id=req.requester_id,
+                facility_cas=trust.facility_cas,
+                trusted_root=trust.root,
+                revoked_serials=trust.revoked_serials,
+            )
+            verify_consent_request(req, certificate_public_key(certificate))
+        except (
+            ChainValidationError,
+            CertificateExpiredError,
+            SubjectCertificateError,
+            InvalidSignatureError,
+            ConsentExpiredError,
+        ) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Consent request refused ({exc.__class__.__name__}): {exc}",
+            ) from exc
         repo.store_consent_request(req)
         return ConsentResponse(
             status="created",
@@ -979,7 +1027,14 @@ def create_hospital_app(
         payload: SubmitConsentGrantPayload,
         repo: RepoDep,
     ) -> ConsentResponse:
-        """Submit and verify a patient-signed ConsentGrant."""
+        """Submit and verify a patient-signed ConsentGrant.
+
+        A revocation arrives the same way: the patient's signed ``REVOKED``
+        grant, signed in the custodian (ADR-0072). A revocation is final for
+        its request: once one is stored, a ``GRANTED`` decision on the same
+        request -- the earlier copy, still validly signed -- is refused here,
+        as the read path already refuses it (review F13).
+        """
         patient_pub = patient_key(
             payload.patient_certificate_pem, payload.grant.patient_id
         )
@@ -992,41 +1047,33 @@ def create_hospital_app(
                 detail=f"Consent grant signature verification failed: {exc}",
             ) from exc
 
+        revoked = payload.grant.status is ConsentStatus.REVOKED
+        if not revoked and any(
+            decision.request_id == payload.grant.request_id
+            and decision.status is ConsentStatus.REVOKED
+            for decision in repo.list_consent_grants_by_patient(
+                payload.grant.patient_id
+            )
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"consent request {payload.grant.request_id} was revoked; "
+                    "re-consent needs a new request"
+                ),
+            )
         repo.store_consent_grant(payload.grant)
         return ConsentResponse(
-            status="accepted",
+            status="revoked" if revoked else "accepted",
             grant=payload.grant,
-            message="Consent grant verified and stored",
+            message=(
+                "Consent grant revocation verified and stored"
+                if revoked
+                else "Consent grant verified and stored"
+            ),
         )
 
-    @app.post("/consent/grants/revoke", response_model=ConsentResponse)
-    def revoke_grant(
-        payload: RevokeConsentGrantPayload,
-        repo: RepoDep,
-    ) -> ConsentResponse:
-        """Revoke a previously issued ConsentGrant by patient signature."""
-        try:
-            patient_priv = private_key_from_pem(
-                payload.patient_signing_key_pem.encode("utf-8")
-            )
-        except KeyFormatError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid patient signing key PEM: {exc}",
-            ) from exc
-
-        revoked_grant = revoke_consent_grant(
-            prior_grant=payload.prior_grant,
-            patient_signing_key=patient_priv,
-        )
-        repo.store_consent_grant(revoked_grant)
-        return ConsentResponse(
-            status="revoked",
-            grant=revoked_grant,
-            message="Consent grant revoked successfully",
-        )
-
-    # --- Revocation by Key Rotation Endpoint (P3-7, P3-12) -------------------
+    # --- Revocation by Key Rotation Endpoint (P3-7, P3-12, ADR-0072) ---------
 
     @app.post("/records/{record_id}/revoke", response_model=RevokeRecordResponse)
     def revoke_record(
@@ -1036,30 +1083,24 @@ def create_hospital_app(
         audit_key: AuditKeyDep,
         audit_url: AuditUrlDep,
     ) -> RevokeRecordResponse:
-        """Cryptographically revoke record access via DEK rotation (P3-7, P3-12)."""
-        record = repo.get_record(record_id)
-        if not record:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Record {record_id!r} not found",
-            )
+        """A patient revokes access to their record by key rotation (ADR-0072).
 
-        wrapping = repo.get_wrapping_for_record(record_id, wrapped_for=record.policy_id)
-        if not wrapping:
-            wrapping = repo.get_wrapping_for_record(record_id)
-        if not wrapping:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"DEK wrapping for record {record_id!r} not found",
-            )
+        Order: verify the patient-signed ``GRANTED -> REVOKED`` against the
+        patient's certificate (theirs, this record, from its current state,
+        recent, never seen before) -> plan the rotation from the store under
+        the revoked access tree -> log the revocation (log-before-commit) ->
+        claim the state (compare-and-set) -> store the rotation and the event
+        in one go, undoing the claim on failure -> hand the new emergency
+        shares to their holders.
 
-        try:
-            check_revocation_authorization(
-                actor_id=payload.actor_id,
-                record=record,
-                owner_authority_id=payload.owner_authority_id,
-            )
-        except UnauthorizedRevocationError as exc:
+        The rotation is the expiry one (ADR-0069): new DEK and policy root,
+        and a new emergency key, so break-glass on the revoked record still
+        works with the holders' new shares and the old ones open nothing.
+        """
+        corr_id = payload.correlation_id or str(uuid4())
+        event = payload.transition_event
+
+        def deny(reason: str, code: int, detail: str) -> HTTPException:
             _log_denial(
                 audit_url,
                 repo,
@@ -1067,131 +1108,181 @@ def create_hospital_app(
                 sink=audit_sink,
                 audit_auth=audit_auth,
                 record_id=record_id,
-                requester_id=payload.actor_id,
+                requester_id=event.actor_id,
                 denied_by=DENIED_BY_REVOCATION_AUTHZ,
-                reason=str(exc),
+                reason=reason,
                 actor_id=facility_id,
-                correlation_id=payload.correlation_id or str(uuid4()),
+                correlation_id=corr_id,
             )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Unauthorized revocation: {exc}",
-            ) from exc
+            return HTTPException(status_code=code, detail=detail)
 
-        try:
-            actor_priv = private_key_from_pem(
-                payload.actor_signing_key_pem.encode("utf-8")
+        if rotation_ports is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "revocation re-keys the record and its break-glass path; "
+                    "this facility has no rotation configured (ADR-0069)"
+                ),
             )
-        except KeyFormatError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid actor signing key PEM: {exc}",
-            ) from exc
+        record = repo.get_record(record_id)
+        if not record:
+            raise deny(
+                "record not found",
+                status.HTTP_404_NOT_FOUND,
+                f"Record {record_id!r} not found",
+            )
 
+        # 1. Only the record's patient revokes, under their own certified key.
         try:
-            old_dek = base64.b64decode(payload.old_dek_b64, validate=True)
-        except (ValueError, binascii.Error) as exc:
+            patient_pub = patient_key(
+                payload.patient_certificate_pem, record.patient_id
+            )
+        except HTTPException as exc:
+            raise deny(str(exc.detail), exc.status_code, str(exc.detail)) from exc
+        compiled = repo.get_compiled_policy(record.policy_id)
+        if compiled is None:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid base64 encoding for old_dek: {exc}",
-            ) from exc
-
-        keyring = _parse_attribute_keyring(payload.attribute_keyring)
-
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Compiled policy of record {record_id!r} not found",
+            )
         try:
-            rev_result = revoke_record_access(
-                current_record=record,
-                current_wrapping=wrapping,
-                old_dek=old_dek,
+            new_tree = revoked_policy_tree(
+                current_tree=policy_tree_of(compiled),
                 new_clinical_policy=payload.new_clinical_policy,
-                owner_authority_id=payload.owner_authority_id,
-                attribute_keyring=keyring,
-                actor_id=payload.actor_id,
-                actor_signing_key=actor_priv,
-                correlation_id=payload.correlation_id or str(uuid4()),
-                reason_code=payload.reason_code,
-                new_policy_id=payload.new_policy_id,
+                patient_id=record.patient_id,
             )
-        except (
-            RecordError,
-            PolicyDeniedError,
-            PolicyCompileError,
-            ValueError,
-        ) as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Revocation failed: {exc}",
+            check_revocation_authorization(
+                actor_id=event.actor_id,
+                record=record,
+                owner_authority_id="",  # authorities do not sign revocations here
+            )
+        except UnauthorizedRevocationError as exc:
+            raise deny(
+                str(exc), status.HTTP_403_FORBIDDEN, f"Unauthorized revocation: {exc}"
             ) from exc
 
-        # Claim the transition first, as a compare-and-set from the event's own
-        # from_state (review N1): revoking a record that is not in that state
-        # (e.g. EMERGENCY_OPEN) is refused with no side effects.
-        event = rev_result.transition_event
+        source_state = _current_lifecycle_state(repo, record_id)
+        if event.from_state is not source_state:
+            reason = (
+                f"revocation was signed from {event.from_state.value!r}; the "
+                f"record is {source_state.value!r}"
+            )
+            raise deny(reason, status.HTTP_409_CONFLICT, reason)
+        now = datetime.now(timezone.utc)
+        if (
+            event.record_id != record_id
+            or event.to_state is not LifecycleState.REVOKED
+            or event.issued_at < now - MAX_ASSERTION_TTL
+            or event.issued_at > now + ASSERTION_CLOCK_SKEW
+        ):
+            reason = "transition event is not a recent revocation of this record"
+            raise deny(reason, status.HTTP_400_BAD_REQUEST, reason)
+        try:
+            revocation_machine.apply_transition(source_state, event, patient_pub)
+        except (
+            InvalidSignatureError,
+            IllegalTransitionError,
+            MissingReasonCodeError,
+            StateMismatchError,
+            ReplayedEventError,
+        ) as exc:
+            raise deny(
+                str(exc),
+                status.HTTP_403_FORBIDDEN,
+                f"Revocation refused ({exc.__class__.__name__}): {exc}",
+            ) from exc
+
+        # 2. Plan the rotation under the revoked tree (nothing stored yet).
+        rotator = FacilityRotator(repo, rotation_ports)
+        try:
+            plan = rotator.plan_from_store(record_id, new_tree=new_tree)
+        except (RotationError, httpx.HTTPError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"revocation could not re-key the record: {exc}",
+            ) from exc
+        except (PolicyCompileError, PolicyDeniedError, RecordError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"revocation could not re-key the record: {exc}",
+            ) from exc
+
+        # 3. Log-before-commit (review F10): an audit outage raises (503).
+        _log_event(
+            audit_url,
+            repo,
+            audit_key,
+            sink=audit_sink,
+            audit_auth=audit_auth,
+            event_type=EVENT_RECORD_REVOKED,
+            event_data={
+                "record_id": record_id,
+                "actor_id": event.actor_id,
+                "event_id": str(event.event_id),
+                "old_policy_id": record.policy_id,
+                "new_policy_id": plan.record.policy_id,
+                "new_generation": plan.baseline_wrapping.generation,
+                "emergency_generation": plan.generation,
+            },
+            actor_id=facility_id,
+            correlation_id=corr_id,
+        )
+
+        # 4. Claim the state; of two concurrent changes exactly one wins (N1).
         try:
             repo.transition_lifecycle_state(
                 record_id,
-                expected=event.from_state,
-                new=event.to_state,
+                expected=source_state,
+                new=LifecycleState.REVOKED,
                 last_event_id=str(event.event_id),
             )
         except StateConflictError as exc:
-            _log_denial(
-                audit_url,
-                repo,
-                audit_key,
-                sink=audit_sink,
-                audit_auth=audit_auth,
-                record_id=record_id,
-                requester_id=payload.actor_id,
-                denied_by=DENIED_BY_REVOCATION_AUTHZ,
-                reason=str(exc),
-                actor_id=facility_id,
-                correlation_id=payload.correlation_id or str(uuid4()),
-            )
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Revocation refused: {exc}",
+            raise deny(
+                str(exc), status.HTTP_409_CONFLICT, f"Revocation refused: {exc}"
             ) from exc
 
-        record_replaced = False
+        # 5. Store the rotation (atomic, compare-and-set on the ciphertext).
         try:
-            repo.insert_record(rev_result.rotated_record)
-            record_replaced = True
-            repo.insert_dek_wrapping(rev_result.rotated_wrapping)
-            repo.store_compiled_policy(
-                rev_result.rotated_record.policy_id, rev_result.compiled_policy
-            )
+            repo.apply_rotation(plan)
             repo.insert_transition_event(event)
         except Exception as exc:
-            # Undo the claim, and put the old ciphertext back if the rotated
-            # one already replaced it, so a failed write cannot leave the
-            # record under a DEK its stored wrapping does not open.
-            if record_replaced:
-                repo.insert_record(record)
             try:
                 repo.transition_lifecycle_state(
-                    record_id, expected=event.to_state, new=event.from_state
+                    record_id, expected=LifecycleState.REVOKED, new=source_state
                 )
             except StateConflictError:
-                # Keep the original error; the state moved underneath us.
                 _logger.error(
                     "could not roll back the revocation claim on record %s",
                     record_id,
                 )
-            if isinstance(exc, RecordExistsError):
-                # The Postgres store has no in-place record rotation yet
-                # (review F10, blocked on D3/D4); refuse instead of a 500.
+            if isinstance(exc, RotationConflictError):
                 raise HTTPException(
-                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
-                    detail="revocation persistence on this store is not implemented",
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Revocation refused: {exc}",
                 ) from exc
             raise
 
+        # 6. New shares to their holders. The revocation already holds; if a
+        # holder is unreachable, break-glass on this record fails closed until
+        # it is re-keyed, and the response says so.
+        provisioned = True
+        try:
+            rotator.deposit(plan)
+        except httpx.HTTPError as exc:
+            provisioned = False
+            _logger.error(
+                "revocation of %s stored, but its new emergency shares were not "
+                "delivered (%s); break-glass on it is closed until re-keyed",
+                record_id,
+                exc,
+            )
+
         return RevokeRecordResponse(
             record_id=record_id,
-            new_generation=rev_result.rotated_wrapping.generation,
-            new_policy_id=rev_result.rotated_record.policy_id,
+            new_generation=plan.baseline_wrapping.generation,
+            new_policy_id=plan.record.policy_id,
             transition_event=event,
+            breakglass_provisioned=provisioned,
         )
 
     # --- Break-Glass Emergency Endpoint (P3-5, P3-10, P3-11) ------------------
