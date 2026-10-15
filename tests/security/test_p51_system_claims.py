@@ -33,12 +33,11 @@ from breakglass.emergency_key import generate_emergency_key, split_emergency_key
 from contracts import TransitionEvent
 from contracts.enums import LifecycleState, PolicyNodeType, ReasonCode
 from contracts.policy import Attribute, PolicyTree
-from crypto_core import InvalidSignatureError, certificate_to_pem, private_key_to_pem
+from crypto_core import InvalidSignatureError, certificate_to_pem
 from fastapi.testclient import TestClient
 from identity.root_anchor import generate_root_anchor
 from lifecycle.expiry import EmergencyExpiryManager
-from lifecycle.state_machine import verify_transition_event
-from policy.engine import unwrap_dek_via_policy
+from lifecycle.state_machine import create_transition_event, verify_transition_event
 from records.ingest import ingest_record
 from search.service import derive_search_token
 from storage.migrate import apply_migrations
@@ -53,6 +52,7 @@ from tests.api.conftest import (  # noqa: F401
     make_trust,
     signed_labels,
 )
+from tests.sealing import facility_statement, seal_all, seal_for
 from tests.security.conftest import skip_or_fail_without_postgres
 from tests.service_pki import ServicePKI
 from tests.transitions import open_event
@@ -154,6 +154,7 @@ def audit_client(federation_pki):  # noqa: F811
         actor_id="audit-p51",
         service_root=federation_pki["root"].certificate,
         trust=make_trust(federation_pki),
+        identity=federation_pki["services"].identity("audit-service"),
     )
     yield federation_pki["services"].client(
         app, "audit-service", caller="custodian"
@@ -183,7 +184,7 @@ def _read(client: TestClient, requester: str, keyring: dict[str, str]):
     )
 
 
-def _unlock_payload(h: dict, *, shares=None) -> dict:
+def _unlock_payload(h: dict, *, shares=None, target=None) -> dict:
     """Dr Alice's open: her assertion and her own signed transition (ADR-0068)."""
     pki = h["pki"]
     shares = shares if shares is not None else h["shares"][:2]
@@ -205,7 +206,7 @@ def _unlock_payload(h: dict, *, shares=None) -> dict:
     payload = {
         "assertion": assertion.model_dump(mode="json"),
         "clinician_certificate_pem": certificate_to_pem(pki["alice_cert"]).decode(),
-        "shares": [(x, s.hex()) for x, s in shares],
+        "sealed_shares": seal_all(target or h["client"], RECORD, list(shares)),
         "pre_rewrap_key": pki["alice_pre_pub"],
         "transition_event": event.model_dump(mode="json"),
         "correlation_id": f"corr-{secrets.token_hex(4)}",
@@ -228,14 +229,18 @@ def _search(client: TestClient, term: str = "cardiac"):
 
 
 def _revoke_payload(h: dict, new_policy: PolicyTree, extra_keys: dict) -> dict:
+    """The patient's signed revocation, as the custodian sends it (review D6)."""
     attrs = h["attrs"]
-    old_dek = unwrap_dek_via_policy(
-        h["ingested"].compiled_policy, attrs["attr_keyring"], h["ingested"].dek_wrapping
+    event = create_transition_event(
+        record_id=RECORD,
+        from_state=LifecycleState.GRANTED,
+        to_state=LifecycleState.REVOKED,
+        actor_id=PATIENT,
+        signing_key=h["pki"]["pat_priv"],
     )
     return {
-        "actor_id": PATIENT,
-        "actor_signing_key_pem": private_key_to_pem(h["pki"]["pat_priv"]).decode(),
-        "old_dek_b64": base64.b64encode(old_dek).decode(),
+        "transition_event": event.model_dump(mode="json"),
+        "actor_certificate_pem": h["pki"]["pat_cert_pem"],
         "new_clinical_policy": new_policy.model_dump(mode="json"),
         "owner_authority_id": "authority-net",
         "attribute_keyring": {**attrs["b64_keyring"], **extra_keys},
@@ -302,7 +307,10 @@ def test_c3_audit_service_releases_no_share_without_a_valid_assertion(
     client, _conn = audit_client
     registered = client.post(
         "/breakglass/shares",
-        json={"share_key": RECORD, "x": 3, "share_hex": secrets.token_hex(33)},
+        json={
+            "share_key": RECORD,
+            "sealed_share": seal_for(client, RECORD, (3, secrets.token_bytes(33))),
+        },
     )
     assert registered.status_code == 201
     request = {
@@ -315,7 +323,7 @@ def test_c3_audit_service_releases_no_share_without_a_valid_assertion(
 
     released = client.post("/breakglass/release", json=request)
     assert released.status_code in (400, 401, 403, 422)
-    assert "share_hex" not in released.text
+    assert "sealed_share" not in released.text
 
     justification = "Unresponsive on arrival; medication history needed now."
     certificate_pem = certificate_to_pem(federation_pki["alice_cert"]).decode()
@@ -336,12 +344,13 @@ def test_c3_audit_service_releases_no_share_without_a_valid_assertion(
             "assertion": assertion.model_dump(mode="json"),
             "clinician_certificate_pem": certificate_pem,
             "justification": justification,
+            "recipient": facility_statement(federation_pki["services"])[1],
         }
 
     # A genuine assertion, but for another record, releases nothing either.
     elsewhere = client.post("/breakglass/release", json=signed_for("rec-other"))
     assert elsewhere.status_code == 403, elsewhere.text
-    assert "share_hex" not in elsewhere.text
+    assert "sealed_share" not in elsewhere.text
 
     # Positive control: with Dr Alice's assertion for this record it releases.
     allowed = client.post("/breakglass/release", json=signed_for(RECORD))
@@ -545,8 +554,15 @@ def test_c8_replayed_assertion_rejected_after_facility_restart(hospital):
 
     # Same store, new process: the replay store and timer start empty.
     restarted = _hospital_app(hospital["repo"], hospital["pki"], hospital["rotation"])
-    replay = restarted.post(f"/records/{RECORD}/breakglass", json=payload)
+    # The restarted process has a new share key; reseal so the assertion's
+    # replay check is what refuses, not the share opening (ADR-0079).
+    replay_body = {
+        **payload,
+        "sealed_shares": seal_all(restarted, RECORD, list(hospital["shares"][:2])),
+    }
+    replay = restarted.post(f"/records/{RECORD}/breakglass", json=replay_body)
     assert replay.status_code == 400
+    assert "eplay" in replay.text
     assert "rewrapped_dek_b64" not in replay.text
 
 

@@ -57,6 +57,30 @@ the change that fixed them; unmarked items are still open.
 
 ---
 
+## Status of the design decisions (2026-10-15)
+
+Every D has an answer. All the ADRs below are **Proposed**, waiting for
+ratification. D1, D3, D4, D5, D7 and D8 landed on `main` through PRs #40 and
+#46–#49; D2, D6, D9, D10 and D11 are on branch
+`proposal/open-decisions-d2-d6-d9-d10-d11`.
+
+| ID | Option taken | ADR | Fixes closed | What remains |
+|---|---|---|---|---|
+| D1 | (a) audit validates the assertion | 0067 | F2, C3 | — |
+| D2 | (b) 2-of-2 in this build, share 2 reserved | 0074 | F3 (as a stated limitation) | Depositing share 2 needs a holder that validates the assertion and commits to the audit chain first |
+| D3 | (a) full rotation (stretch, not the recommended b) | 0069 | F9, C4 | Crash mid-rotation (PROJECT §5 item 6) |
+| D4 | (a) patient certificates | 0064 | F13 (grants verified against a certified key); F10 authz via ADR-0072 | F15 (proof of possession at the authority) |
+| D5 | (b) then (a) signed service requests | 0066 | F14, F34, C9 | — |
+| D6 | (b) claim 1 scoped to TLS, after taking private keys and the caller's DEK out of facility requests and sealing every share to its recipient | 0072, 0073, 0079 | F18 claim-1 default; rest of F10 (signed revoke); shares off the plain wire (live plain capture 2026-10-15: no share, claim 2 passes on the sealed share 3) | Revocation persistence on Postgres is still 501. A fresh TLS capture needs the TLS store (ADR-0071) |
+| D7 | (a) `EXPIRED -> REVOKED` | 0058 | F5 final state, C6 | F5 restart reconciliation, if still wanted |
+| D8 | (a) clinician key signs in the custodian | 0068 | F11, C7 | — |
+| D9 | (a) domain-tagged, length-prefixed encoding | 0077 | F23; F29 (AAD binds record, policy, generation) | — |
+| D10 | (a) stated limitation | 0075 | F44 (documented) | Epoch-versioned attribute keys (future work) |
+| D11 | (a) docs corrected, construction unchanged | 0076 | F32 | — |
+
+N14's last row (per-service SANs) is decided in ADR-0078: keep the
+`localhost` SANs that host-run paths need, and record the residual risk.
+
 ## Status at `4ddc201` (second review)
 
 | ID | Status | Evidence | What remains |

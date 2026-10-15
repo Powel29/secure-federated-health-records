@@ -25,7 +25,7 @@ import datetime
 import secrets
 
 from contracts import Attribute, AttributeCredential, CredentialStatus
-from crypto_core import generate_ec_keypair, generate_key, sign, verify
+from crypto_core import encode_fields, generate_ec_keypair, generate_key, sign, verify
 from crypto_core.types import ECPrivateKey, ECPublicKey
 
 from authority.exceptions import (
@@ -38,7 +38,7 @@ from authority.exceptions import (
 from authority.revocation import RevocationEntry, RevocationRegistry
 
 DEFAULT_CREDENTIAL_VALID_DAYS = 365  # ARCHITECTURE.md §8: nothing issues forever
-_FIELD_SEPARATOR = b"\x1f"  # ASCII unit separator -- keeps fields unambiguous
+_DOMAIN = "ehr/attribute-credential/v1"  # encode_fields tag (ADR-0077)
 
 
 class AttributeAuthority:
@@ -262,12 +262,13 @@ def _signing_payload(
         serial,
         issuer_id,
         subject_id,
-        f"{attribute.name}:{attribute.value}",
+        attribute.name,
+        attribute.value,
         valid_from.astimezone(datetime.timezone.utc).isoformat(),
         valid_until.astimezone(datetime.timezone.utc).isoformat(),
         status.value,
     ]
-    return _FIELD_SEPARATOR.join(field.encode("utf-8") for field in fields)
+    return encode_fields(_DOMAIN, [field.encode("utf-8") for field in fields])
 
 
 def issue_credential(

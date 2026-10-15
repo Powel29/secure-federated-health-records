@@ -8,10 +8,9 @@ contents (CONVENTIONS.md §2 rule 3); every event-emitting caller is
 responsible for honouring that, this module only encodes and hashes whatever
 it is given.
 
-The canonical payload format follows the project-wide convention already used
-by ``lifecycle/state_machine.py``, ``consent/service.py``, and
-``breakglass/envelopes.py`` (``_FIELD_SEPARATOR = b"\\x1f"`` joining fields so
-concatenation cannot confuse a boundary). See
+Hashed and signed bytes use ``crypto_core.encode_fields``: a domain tag, then
+length-prefixed fields
+(ADR-0077), so no ``event_type`` or ``actor_id`` can shift a field boundary. See
 ``docs/adr/0034-audit-hash-chain-and-share-release.md`` for why ``event_data``
 is JSON-canonicalised and why the signature covers the *whole* entry rather
 than just ``entry_hash``.
@@ -27,13 +26,16 @@ from typing import Any
 import psycopg
 from contracts import AuditEntry
 from contracts.base import SHA256_DIGEST_BYTES
-from crypto_core import sha256_digest, sign, verify
+from crypto_core import encode_fields, sha256_digest, sign, verify
 from crypto_core.types import ECPrivateKey, ECPublicKey
 from storage import repositories as repo
 
 from audit.exceptions import ChainBreakError, EmptyChainError, TamperedEntryError
 
-_FIELD_SEPARATOR = b"\x1f"
+# encode_fields domain tags (ADR-0077).
+_EVENT_DOMAIN = "ehr/audit-event/v1"
+_LINK_DOMAIN = "ehr/audit-chain-link/v1"
+_ENTRY_DOMAIN = "ehr/audit-entry/v1"
 
 # The genesis link value -- 32 zero bytes, matching SHA256_DIGEST_BYTES.
 # ARCHITECTURE.md §7 bootstrap step 4: "initialises the hash chain with a
@@ -52,8 +54,8 @@ def _canonical_event(event_type: str, event_data: dict[str, Any]) -> bytes:
     insertion order.
     """
     encoded_data = json.dumps(event_data, sort_keys=True, separators=(",", ":"))
-    return _FIELD_SEPARATOR.join(
-        [event_type.encode("utf-8"), encoded_data.encode("utf-8")]
+    return encode_fields(
+        _EVENT_DOMAIN, [event_type.encode("utf-8"), encoded_data.encode("utf-8")]
     )
 
 
@@ -72,7 +74,7 @@ def _chain_link_payload(
         timestamp.astimezone(datetime.timezone.utc).isoformat().encode("utf-8"),
         actor_id.encode("utf-8"),
     ]
-    return _FIELD_SEPARATOR.join(fields)
+    return encode_fields(_LINK_DOMAIN, fields)
 
 
 def compute_entry_hash(
@@ -122,7 +124,7 @@ def _entry_signing_payload(
         correlation_id.encode("utf-8"),
         timestamp.astimezone(datetime.timezone.utc).isoformat().encode("utf-8"),
     ]
-    return _FIELD_SEPARATOR.join(fields)
+    return encode_fields(_ENTRY_DOMAIN, fields)
 
 
 def _sign_entry_fields(

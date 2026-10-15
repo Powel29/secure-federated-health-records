@@ -29,6 +29,22 @@ MED_AUTHORITY_ID = "authority-med"
 NET_AUTHORITY_ID = "authority-net"
 
 
+def _signed_revocation(record, actor_id, signing_key):
+    """The actor's signed GRANTED -> REVOKED event and the key it verifies by.
+
+    Revocation takes a pre-signed event (review D6): the signer's private key
+    never reaches ``revoke_record_access``.
+    """
+    event = create_transition_event(
+        record_id=record.record_id,
+        from_state=LifecycleState.GRANTED,
+        to_state=LifecycleState.REVOKED,
+        actor_id=actor_id,
+        signing_key=signing_key,
+    )
+    return {"transition_event": event, "actor_public_key": signing_key.public_key()}
+
+
 def _leaf(name: str, value: str, authority_id: str) -> PolicyTree:
     return PolicyTree(
         node_type=PolicyNodeType.LEAF,
@@ -88,10 +104,6 @@ class TestRotationMechanics:
         plaintext = b"cardiac readings, revocation test"
         ingested, keyring, _, _, clinical = _fresh_ingest(patient_id, plaintext)
 
-        # Pre-rotation: recover the DEK via the policy path.
-        old_root = reconstruct_root_secret(ingested.compiled_policy, keyring)
-        old_dek = unwrap_dek(ingested.dek_wrapping, old_root)
-
         # Rotate — the new clinical policy stays the same (this test isolates
         # the crypto rotation; the "kick a party out" case is in the security
         # suite via a stripped keyring).
@@ -99,12 +111,11 @@ class TestRotationMechanics:
         result = revoke_record_access(
             current_record=ingested.record,
             current_wrapping=ingested.dek_wrapping,
-            old_dek=old_dek,
+            current_compiled_policy=ingested.compiled_policy,
             new_clinical_policy=clinical,
             owner_authority_id=NET_AUTHORITY_ID,
             attribute_keyring=keyring,
-            actor_id="pat-701",
-            actor_signing_key=signing_priv,
+            **_signed_revocation(ingested.record, "pat-701", signing_priv),
             correlation_id="rev-flow-701",
         )
 
@@ -122,19 +133,16 @@ class TestRotationMechanics:
         patient_id = "pat-702"
         plaintext = b"round-trip revocation test payload"
         ingested, keyring, _, _, clinical = _fresh_ingest(patient_id, plaintext)
-        old_root = reconstruct_root_secret(ingested.compiled_policy, keyring)
-        old_dek = unwrap_dek(ingested.dek_wrapping, old_root)
 
         signing_priv, _ = generate_ec_keypair()
         result = revoke_record_access(
             current_record=ingested.record,
             current_wrapping=ingested.dek_wrapping,
-            old_dek=old_dek,
+            current_compiled_policy=ingested.compiled_policy,
             new_clinical_policy=clinical,
             owner_authority_id=NET_AUTHORITY_ID,
             attribute_keyring=keyring,
-            actor_id="pat-702",
-            actor_signing_key=signing_priv,
+            **_signed_revocation(ingested.record, "pat-702", signing_priv),
             correlation_id="rev-flow-702",
         )
 
@@ -151,19 +159,16 @@ class TestTransitionEvent:
         patient_id = "pat-703"
         plaintext = b"transition event test"
         ingested, keyring, _, _, clinical = _fresh_ingest(patient_id, plaintext)
-        old_root = reconstruct_root_secret(ingested.compiled_policy, keyring)
-        old_dek = unwrap_dek(ingested.dek_wrapping, old_root)
 
         signing_priv, signing_pub = generate_ec_keypair()
         result = revoke_record_access(
             current_record=ingested.record,
             current_wrapping=ingested.dek_wrapping,
-            old_dek=old_dek,
+            current_compiled_policy=ingested.compiled_policy,
             new_clinical_policy=clinical,
             owner_authority_id=NET_AUTHORITY_ID,
             attribute_keyring=keyring,
-            actor_id="pat-703",
-            actor_signing_key=signing_priv,
+            **_signed_revocation(ingested.record, "pat-703", signing_priv),
             correlation_id="rev-flow-703",
         )
 
@@ -212,19 +217,16 @@ class TestOwnerLeafPreserved:
         patient_id = "pat-705"
         plaintext = b"patient should still be able to read this"
         ingested, keyring, med, net, clinical = _fresh_ingest(patient_id, plaintext)
-        old_root = reconstruct_root_secret(ingested.compiled_policy, keyring)
-        old_dek = unwrap_dek(ingested.dek_wrapping, old_root)
 
         signing_priv, _ = generate_ec_keypair()
         result = revoke_record_access(
             current_record=ingested.record,
             current_wrapping=ingested.dek_wrapping,
-            old_dek=old_dek,
+            current_compiled_policy=ingested.compiled_policy,
             new_clinical_policy=clinical,
             owner_authority_id=NET_AUTHORITY_ID,
             attribute_keyring=keyring,
-            actor_id=patient_id,
-            actor_signing_key=signing_priv,
+            **_signed_revocation(ingested.record, patient_id, signing_priv),
             correlation_id="rev-flow-705",
         )
 
@@ -317,18 +319,15 @@ class TestRevocationAuthorization:
         patient_id = "pat-auth-706"
         plaintext = b"home authority revocation test"
         ingested, keyring, _, net, clinical = _fresh_ingest(patient_id, plaintext)
-        old_root = reconstruct_root_secret(ingested.compiled_policy, keyring)
-        old_dek = unwrap_dek(ingested.dek_wrapping, old_root)
 
         result = revoke_record_access(
             current_record=ingested.record,
             current_wrapping=ingested.dek_wrapping,
-            old_dek=old_dek,
+            current_compiled_policy=ingested.compiled_policy,
             new_clinical_policy=clinical,
             owner_authority_id=NET_AUTHORITY_ID,
             attribute_keyring=keyring,
-            actor_id=NET_AUTHORITY_ID,
-            actor_signing_key=net.private_key,
+            **_signed_revocation(ingested.record, NET_AUTHORITY_ID, net.private_key),
             correlation_id="rev-home-auth-706",
         )
 
@@ -343,8 +342,6 @@ class TestRevocationAuthorization:
         patient_id = "pat-auth-707"
         plaintext = b"clinician unauthorized revocation test"
         ingested, keyring, _, _, clinical = _fresh_ingest(patient_id, plaintext)
-        old_root = reconstruct_root_secret(ingested.compiled_policy, keyring)
-        old_dek = unwrap_dek(ingested.dek_wrapping, old_root)
 
         clinician_priv, _ = generate_ec_keypair()
         with pytest.raises(
@@ -353,11 +350,12 @@ class TestRevocationAuthorization:
             revoke_record_access(
                 current_record=ingested.record,
                 current_wrapping=ingested.dek_wrapping,
-                old_dek=old_dek,
+                current_compiled_policy=ingested.compiled_policy,
                 new_clinical_policy=clinical,
                 owner_authority_id=NET_AUTHORITY_ID,
                 attribute_keyring=keyring,
-                actor_id="clinician-dr-mallory",
-                actor_signing_key=clinician_priv,
+                **_signed_revocation(
+                    ingested.record, "clinician-dr-mallory", clinician_priv
+                ),
                 correlation_id="rev-malicious-707",
             )

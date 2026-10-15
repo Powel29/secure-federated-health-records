@@ -6,8 +6,9 @@ integrity: a one-time ``request_id`` the callee's consumed-id store rejects
 on reuse, with the signature binding that id, the ``recipient_id``, and the
 ``body`` together so a captured envelope cannot be replayed or retargeted.
 
-The canonical payload format matches the project-wide convention
-(``_FIELD_SEPARATOR = b"\\x1f"``).
+Signed bytes use ``crypto_core.encode_fields``: a domain tag, then
+length-prefixed fields
+(ADR-0077).
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import secrets
 from uuid import uuid4
 
 from contracts import RequestEnvelope
-from crypto_core import sign, verify
+from crypto_core import encode_fields, sign, verify
 from crypto_core.types import ECPrivateKey, ECPublicKey
 
 from breakglass.exceptions import (
@@ -27,7 +28,7 @@ from breakglass.exceptions import (
 )
 from breakglass.replay import ConsumedRequestIds
 
-_FIELD_SEPARATOR = b"\x1f"
+_DOMAIN = "ehr/request-envelope/v1"  # encode_fields tag (ADR-0077)
 _NONCE_BYTES = 16
 
 # How long a signed request stays acceptable, and how far its issued_at may
@@ -67,7 +68,7 @@ def _canonical_envelope_payload(
         issued_at.astimezone(datetime.timezone.utc).isoformat().encode("utf-8"),
         nonce,
     ]
-    return _FIELD_SEPARATOR.join(fields)
+    return encode_fields(_DOMAIN, fields)
 
 
 # ---------------------------------------------------------------------------

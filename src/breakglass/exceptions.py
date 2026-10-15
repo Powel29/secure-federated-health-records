@@ -121,3 +121,18 @@ class InsufficientSharesError(BreakglassError):
     not satisfy the 2-of-3 threshold. No single party can open a record
     unilaterally (ARCHITECTURE.md §8).
     """
+
+
+# ---------------------------------------------------------------------------
+# Share transport (ADR-0079)
+# ---------------------------------------------------------------------------
+
+
+class SealedShareError(BreakglassError):
+    """A sealed share or a share-key statement does not check out.
+
+    The statement is not signed by a root-issued service certificate of the
+    expected kind, or a sealed share does not open for this recipient and
+    record (wrong key, wrong recipient, wrong record, or tampered). Fail
+    closed: the share is never used.
+    """

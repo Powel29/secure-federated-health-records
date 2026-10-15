@@ -1,81 +1,25 @@
 """Unit tests for the Hospital Node Consent endpoints (P4-1).
 
 Verifies:
-- POST /consent/requests creates a valid, signed ConsentRequest.
 - POST /consent/grants validates and registers a patient-signed ConsentGrant.
 - POST /consent/grants rejects forged or tampered signatures with HTTP 400.
-- POST /consent/grants/revoke produces a signed REVOKED grant.
+- A REVOKED grant, signed where the patient's key lives (the custodian), is
+  submitted through the same route; no route takes a private key (review D6).
 """
 
 from __future__ import annotations
 
-import datetime
-
-from consent.service import create_consent_grant, create_consent_request
-from contracts.enums import ConsentStatus
-from crypto_core import (
-    generate_ec_keypair,
-    private_key_to_pem,
+from consent.service import (
+    create_consent_grant,
+    create_consent_request,
+    revoke_consent_grant,
 )
+from contracts.enums import ConsentStatus
+from crypto_core import generate_ec_keypair
 
 
 class TestHospitalConsentEndpoints:
     """Test suite for /consent routes."""
-
-    def test_create_consent_request(self, test_setup):
-        """Clinician creates a signed ConsentRequest."""
-        client = test_setup["client"]
-        pki = test_setup["pki"]
-
-        alice_priv_pem = private_key_to_pem(pki["alice_priv"]).decode("ascii")
-
-        response = client.post(
-            "/consent/requests",
-            json={
-                "patient_id": "patient-001",
-                "requester_id": "dr-alice",
-                "scope": ["rec-001"],
-                "purpose": "Consultation",
-                "ttl_days": 7,
-                "requester_signing_key_pem": alice_priv_pem,
-            },
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "created"
-        assert data["request"]["patient_id"] == "patient-001"
-        assert data["request"]["requester_id"] == "dr-alice"
-        assert data["request"]["scope"] == ["rec-001"]
-
-    def test_create_consent_request_honors_ttl_days(self, test_setup):
-        """`ttl_days` on the payload must shape the request's expiry window."""
-        client = test_setup["client"]
-        pki = test_setup["pki"]
-
-        alice_priv_pem = private_key_to_pem(pki["alice_priv"]).decode("ascii")
-
-        response = client.post(
-            "/consent/requests",
-            json={
-                "patient_id": "patient-001",
-                "requester_id": "dr-alice",
-                "scope": ["rec-001"],
-                "purpose": "Consultation",
-                "ttl_days": 3,
-                "requester_signing_key_pem": alice_priv_pem,
-            },
-        )
-
-        assert response.status_code == 200
-        req = response.json()["request"]
-        requested_at = datetime.datetime.fromisoformat(req["requested_at"])
-        expires_at = datetime.datetime.fromisoformat(req["expires_at"])
-        window = expires_at - requested_at
-        # Signed request must reflect the caller's 3-day window, not the 7-day default.
-        assert window == datetime.timedelta(
-            days=3
-        ), f"ttl_days=3 not honored: window was {window}"
 
     def test_submit_valid_consent_grant(self, test_setup):
         """Patient submits a valid signed grant."""
@@ -143,8 +87,8 @@ class TestHospitalConsentEndpoints:
         assert response.status_code == 400
         assert "signature verification failed" in response.json()["detail"]
 
-    def test_revoke_consent_grant(self, test_setup):
-        """Patient successfully revokes a prior grant."""
+    def test_revoked_grant_is_submitted_like_any_grant(self, test_setup):
+        """The patient's signed REVOKED grant replaces the prior one."""
         client = test_setup["client"]
         pki = test_setup["pki"]
 
@@ -161,17 +105,24 @@ class TestHospitalConsentEndpoints:
             grantee_id="dr-alice",
             patient_signing_key=pki["pat_priv"],
         )
-        pat_priv_pem = private_key_to_pem(pki["pat_priv"]).decode("ascii")
+        revoked = revoke_consent_grant(
+            prior_grant=prior_grant, patient_signing_key=pki["pat_priv"]
+        )
 
         response = client.post(
-            "/consent/grants/revoke",
+            "/consent/grants",
             json={
-                "prior_grant": prior_grant.model_dump(mode="json"),
-                "patient_signing_key_pem": pat_priv_pem,
+                "grant": revoked.model_dump(mode="json"),
+                "patient_certificate_pem": pki["pat_cert_pem"],
             },
         )
 
         assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "revoked"
-        assert data["grant"]["status"] == ConsentStatus.REVOKED.value
+        assert response.json()["grant"]["status"] == ConsentStatus.REVOKED.value
+
+    def test_routes_that_took_a_private_key_are_gone(self, test_setup):
+        """Review D6: consent requests and revocations are signed by the
+        custodian; the facility has no route that accepts the key."""
+        client = test_setup["client"]
+        for path in ("/consent/requests", "/consent/grants/revoke"):
+            assert client.post(path, json={}).status_code in (404, 405)

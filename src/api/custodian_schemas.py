@@ -18,6 +18,7 @@ from __future__ import annotations
 import datetime
 from typing import Any, Literal
 
+from breakglass.share_sealing import SealedShare
 from contracts import AttributeCredential, TransitionEvent
 from contracts.clinical import ClinicalMetadata
 from contracts.consent import ConsentGrant, ConsentRequest
@@ -88,18 +89,17 @@ class DepositShareRequest(BaseModel):
     in this deployment, is the custodian acting as every clinician's key
     agent (ADR-0043). Share 2 (home authority) is not deposited anywhere: the
     demo threshold is satisfied by shares 1 + 3, exactly as ``deploy/run_scenario``
-    and ``demo/driver`` present it.
+    and ``demo/driver`` present it. The share arrives sealed to this service's
+    share key (ADR-0079).
     """
 
-    x: int
-    share_hex: str
+    sealed_share: SealedShare
 
 
 class ReplaceShareRequest(BaseModel):
     """The next generation's share 1, from a record's rotation at expiry (ADR-0069)."""
 
-    x: int
-    share_hex: str
+    sealed_share: SealedShare
     generation: int = Field(..., ge=1)
 
 
@@ -167,6 +167,26 @@ class RevokeConsentPayload(BaseModel):
     """A patient asks the custodian to sign a revocation of a prior grant."""
 
     prior_grant: ConsentGrant
+
+
+class RevokeRecordPayload(BaseModel):
+    """A patient revokes access to one of their records (P3-7, review D6).
+
+    The custodian signs the ``GRANTED -> REVOKED`` event with the patient's
+    key and fetches the authoring keys; the facility rotates the DEK.
+    """
+
+    record_id: str
+    facility_id: str
+    new_clinical_policy: PolicyTree
+    correlation_id: str | None = None
+
+
+class RevokeRecordResult(BaseModel):
+    record_id: str
+    new_generation: int
+    new_policy_id: str
+    transition_event: TransitionEvent
 
 
 class SignedGrantResponse(BaseModel):

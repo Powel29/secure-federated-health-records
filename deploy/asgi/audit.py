@@ -45,5 +45,5 @@ def app() -> FastAPI:
         actor_id=actor_id,
         service_root=trust.root,
         trust=trust,
-        service_id=identity.service_id,
+        identity=identity,
     )

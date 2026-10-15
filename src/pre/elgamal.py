@@ -1,8 +1,13 @@
-"""Unidirectional ElGamal Proxy Re-Encryption (owner module: ``pre``, C3).
+"""ElGamal proxy re-encryption and key encapsulation (owner module: ``pre``, C3).
 
-Provides key generation, proxy re-encryption key derivation (A -> B), ciphertext
-re-encryption without plaintext exposure, and symmetric key encapsulation
-(ARCHITECTURE.md §2 C3, ADR-0012).
+Provides key generation, re-encryption key derivation, ciphertext
+re-encryption, and symmetric key encapsulation (ARCHITECTURE.md §2 C3,
+ADR-0012).
+
+Scope (ADR-0076): the re-encryption key ``rk = sk_a * sk_b^-1 mod q`` is
+**bidirectional** -- its inverse re-encrypts B to A -- and computing it needs
+both secret keys. Break-glass does not call :func:`reencrypt`; it uses only
+the KEM (:func:`encapsulate_key`) to deliver a DEK the facility has unwrapped.
 """
 
 from __future__ import annotations
@@ -57,7 +62,7 @@ def generate_keypair() -> tuple[int, int]:
 
 
 def generate_rekey(sk_a: int, sk_b: int) -> int:
-    """Generate unidirectional re-encryption key from delegator A to delegatee B.
+    """Generate the re-encryption key from delegator A to delegatee B.
 
     Computes rk_{A -> B} = sk_a * sk_b^-1 mod q.
 
@@ -72,8 +77,10 @@ def generate_rekey(sk_a: int, sk_b: int) -> int:
         PREKeyError: If keys are out of bounds or not invertible.
 
     Security property:
-        Re-key calculation is unidirectional (A -> B). The proxy holding rk cannot
-        invert it to decrypt A's ciphertexts nor decrypt without B's private key.
+        A proxy holding only ``rk`` cannot decrypt either party's ciphertexts.
+        The key is **not** unidirectional: ``rk^-1 mod q`` is the B -> A key,
+        so a proxy can re-encrypt in both directions (ADR-0076). Computing it
+        needs both ``sk_a`` and ``sk_b``.
     """
     if not (1 < sk_a < SUBGROUP_ORDER_Q) or not (1 < sk_b < SUBGROUP_ORDER_Q):
         raise PREKeyError("Private keys must be in valid subgroup exponent range")

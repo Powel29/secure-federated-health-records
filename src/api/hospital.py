@@ -24,7 +24,7 @@ import binascii
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timezone
 from typing import Annotated, Any, Callable
 from uuid import uuid4
 
@@ -71,11 +71,18 @@ from breakglass.exceptions import (
     FacilityMismatchError,
     InsufficientSharesError,
     ReplayedAssertionError,
+    SealedShareError,
 )
 from breakglass.gate import (
     EmergencyUnlockResult,
     join_emergency_access,
     open_emergency_access,
+)
+from breakglass.share_sealing import (
+    ShareRecipient,
+    ShareSealingKey,
+    make_key_statement,
+    open_sealed_share,
 )
 from consent.exceptions import (
     ConsentDeniedError,
@@ -85,9 +92,7 @@ from consent.exceptions import (
     ConsentSubjectError,
 )
 from consent.service import (
-    create_consent_request,
     read_record_under_consent,
-    revoke_consent_grant,
     verify_consent_grant,
 )
 from contracts.enums import ConsentStatus, LifecycleState
@@ -116,7 +121,7 @@ from lifecycle.exceptions import (
     StateConflictError,
 )
 from lifecycle.expiry import EmergencyExpiryManager
-from lifecycle.state_machine import verify_transition_event
+from lifecycle.state_machine import ConsumedEventIds, verify_transition_event
 from policy.engine import decrypt_record_via_policy
 from policy.exceptions import PolicyCompileError, PolicyDeniedError
 from records.exceptions import (
@@ -150,7 +155,6 @@ from api.schemas import (
     BreakglassUnlockRequest,
     BreakglassUnlockResponse,
     ConsentResponse,
-    CreateConsentRequestPayload,
     DiscoveryResponse,
     EmergencySearchRequest,
     ErrorResponse,
@@ -160,7 +164,6 @@ from api.schemas import (
     LifecycleStateResponse,
     ReadRecordRequest,
     ReadRecordResponse,
-    RevokeConsentGrantPayload,
     RevokeRecordRequest,
     RevokeRecordResponse,
     SearchRecordsRequest,
@@ -173,6 +176,7 @@ from api.service_auth import (
     SignedRequestAuth,
     install_service_auth,
 )
+from api.share_transport import serve_share_key
 
 _logger = logging.getLogger(__name__)
 
@@ -185,9 +189,7 @@ _CUSTODIAN = frozenset({"custodian", "bootstrap"})
 _PORTAL = frozenset({"portal", "bootstrap"})
 FACILITY_PERMISSIONS: dict[tuple[str, str], frozenset[str]] = {
     ("POST", "/records/{record_id}/read"): _CUSTODIAN,
-    ("POST", "/consent/requests"): _CUSTODIAN,
     ("POST", "/consent/grants"): _CUSTODIAN | _PORTAL,
-    ("POST", "/consent/grants/revoke"): _CUSTODIAN,
     ("POST", "/records/{record_id}/revoke"): _CUSTODIAN,
     ("POST", "/records/{record_id}/breakglass"): _CUSTODIAN,
     ("GET", "/records/{record_id}/lifecycle"): _CUSTODIAN,
@@ -527,6 +529,7 @@ def create_hospital_app(
     identity: ServiceIdentity | None = None,
     rotation_ports: RotationPorts | None = None,
     service_root: Certificate | None = None,
+    share_key: ShareSealingKey | None = None,
 ) -> FastAPI:
     """Create and configure a FastAPI application for a hospital node.
 
@@ -549,6 +552,9 @@ def create_hospital_app(
             refused with 503: a session that cannot be rotated must not open.
         service_root: The federation root callers' service certificates must
             chain to; defaults to ``trust.root``. One of the two is required.
+        share_key: The key break-glass shares are sealed to (ADR-0079); fresh
+            by default. Published at ``GET /share-key``, signed with
+            ``identity``, when an identity is given.
 
     Returns:
         Configured FastAPI application instance.
@@ -566,6 +572,11 @@ def create_hospital_app(
         )
     if audit_service_url and identity is None:
         raise ValueError("a facility that logs to the audit service must sign")
+    if identity is not None and identity.service_id != facility_id:
+        raise ValueError(
+            f"service identity {identity.service_id!r} is not facility {facility_id!r}"
+        )
+    sealing_key = share_key or ShareSealingKey.generate()
     audit_auth = (
         SignedRequestAuth(identity, {audit_service_url: AUDIT_SERVICE_ID})
         if audit_service_url and identity is not None
@@ -943,36 +954,8 @@ def create_hospital_app(
 
     # --- Consent Endpoints ----------------------------------------------------
 
-    @app.post("/consent/requests", response_model=ConsentResponse)
-    def create_request(
-        payload: CreateConsentRequestPayload,
-        repo: RepoDep,
-    ) -> ConsentResponse:
-        """Create and sign a new ConsentRequest."""
-        try:
-            req_priv = private_key_from_pem(
-                payload.requester_signing_key_pem.encode("utf-8")
-            )
-        except KeyFormatError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid requester signing key PEM: {exc}",
-            ) from exc
-
-        req = create_consent_request(
-            patient_id=payload.patient_id,
-            requester_id=payload.requester_id,
-            scope=tuple(payload.scope),
-            purpose=payload.purpose,
-            requester_signing_key=req_priv,
-            ttl=timedelta(days=payload.ttl_days),
-        )
-        repo.store_consent_request(req)
-        return ConsentResponse(
-            status="created",
-            request=req,
-            message="Consent request created and registered",
-        )
+    # Consent requests are signed by the requester's custodian, which holds
+    # the key (ADR-0043); the facility never takes a private key (review D6).
 
     @app.post("/consent/grants", response_model=ConsentResponse)
     def submit_grant(
@@ -999,32 +982,9 @@ def create_hospital_app(
             message="Consent grant verified and stored",
         )
 
-    @app.post("/consent/grants/revoke", response_model=ConsentResponse)
-    def revoke_grant(
-        payload: RevokeConsentGrantPayload,
-        repo: RepoDep,
-    ) -> ConsentResponse:
-        """Revoke a previously issued ConsentGrant by patient signature."""
-        try:
-            patient_priv = private_key_from_pem(
-                payload.patient_signing_key_pem.encode("utf-8")
-            )
-        except KeyFormatError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid patient signing key PEM: {exc}",
-            ) from exc
-
-        revoked_grant = revoke_consent_grant(
-            prior_grant=payload.prior_grant,
-            patient_signing_key=patient_priv,
-        )
-        repo.store_consent_grant(revoked_grant)
-        return ConsentResponse(
-            status="revoked",
-            grant=revoked_grant,
-            message="Consent grant revoked successfully",
-        )
+    # A consent revocation is a REVOKED grant the patient's custodian signs
+    # and submits through POST /consent/grants (review D6): no route takes a
+    # patient's private key.
 
     # --- Revocation by Key Rotation Endpoint (P3-7, P3-12) -------------------
 
@@ -1036,7 +996,15 @@ def create_hospital_app(
         audit_key: AuditKeyDep,
         audit_url: AuditUrlDep,
     ) -> RevokeRecordResponse:
-        """Cryptographically revoke record access via DEK rotation (P3-7, P3-12)."""
+        """Cryptographically revoke record access via DEK rotation (P3-7, P3-12).
+
+        The patient's custodian signs the ``GRANTED -> REVOKED`` event; this
+        route verifies it against the patient's certificate and unwraps the
+        current DEK through the record's policy. No private key and no DEK
+        cross the wire (review D6).
+        """
+        event = payload.transition_event
+        corr_id = payload.correlation_id or str(uuid4())
         record = repo.get_record(record_id)
         if not record:
             raise HTTPException(
@@ -1055,10 +1023,19 @@ def create_hospital_app(
 
         try:
             check_revocation_authorization(
-                actor_id=payload.actor_id,
+                actor_id=event.actor_id,
                 record=record,
                 owner_authority_id=payload.owner_authority_id,
             )
+            if event.actor_id != record.patient_id:
+                # The home authority may revoke (P3-12), but it has no
+                # certified signing identity a facility can verify yet, so
+                # its revocation is refused here rather than trusted.
+                raise UnauthorizedRevocationError(
+                    f"actor {event.actor_id!r} has no certificate this facility "
+                    "can verify a revocation against; only the patient may "
+                    "revoke over HTTP"
+                )
         except UnauthorizedRevocationError as exc:
             _log_denial(
                 audit_url,
@@ -1067,49 +1044,55 @@ def create_hospital_app(
                 sink=audit_sink,
                 audit_auth=audit_auth,
                 record_id=record_id,
-                requester_id=payload.actor_id,
+                requester_id=event.actor_id,
                 denied_by=DENIED_BY_REVOCATION_AUTHZ,
                 reason=str(exc),
                 actor_id=facility_id,
-                correlation_id=payload.correlation_id or str(uuid4()),
+                correlation_id=corr_id,
             )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Unauthorized revocation: {exc}",
             ) from exc
 
-        try:
-            actor_priv = private_key_from_pem(
-                payload.actor_signing_key_pem.encode("utf-8")
+        # A fresh event only, as for break-glass: an old signed revocation
+        # cannot be held back and replayed later.
+        now = datetime.now(timezone.utc)
+        if not (
+            now - MAX_ASSERTION_TTL <= event.issued_at <= now + ASSERTION_CLOCK_SKEW
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Revocation event is not recent; sign it again",
             )
-        except KeyFormatError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid actor signing key PEM: {exc}",
-            ) from exc
-
+        actor_pub = patient_key(payload.actor_certificate_pem, record.patient_id)
         try:
-            old_dek = base64.b64decode(payload.old_dek_b64, validate=True)
-        except (ValueError, binascii.Error) as exc:
+            ConsumedEventIds(backend=repo).consume(event.event_id)
+        except ReplayedEventError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid base64 encoding for old_dek: {exc}",
+                detail=f"Revocation event replayed: {exc}",
             ) from exc
 
         keyring = _parse_attribute_keyring(payload.attribute_keyring)
+        compiled_policy = repo.get_compiled_policy(record.policy_id)
+        if compiled_policy is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"policy for record {record_id!r} not found",
+            )
 
         try:
             rev_result = revoke_record_access(
                 current_record=record,
                 current_wrapping=wrapping,
-                old_dek=old_dek,
+                current_compiled_policy=compiled_policy,
                 new_clinical_policy=payload.new_clinical_policy,
                 owner_authority_id=payload.owner_authority_id,
                 attribute_keyring=keyring,
-                actor_id=payload.actor_id,
-                actor_signing_key=actor_priv,
-                correlation_id=payload.correlation_id or str(uuid4()),
-                reason_code=payload.reason_code,
+                transition_event=event,
+                actor_public_key=actor_pub,
+                correlation_id=corr_id,
                 new_policy_id=payload.new_policy_id,
             )
         except (
@@ -1117,6 +1100,9 @@ def create_hospital_app(
             PolicyDeniedError,
             PolicyCompileError,
             ValueError,
+            InvalidSignatureError,
+            IllegalTransitionError,
+            MissingReasonCodeError,
         ) as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1126,7 +1112,6 @@ def create_hospital_app(
         # Claim the transition first, as a compare-and-set from the event's own
         # from_state (review N1): revoking a record that is not in that state
         # (e.g. EMERGENCY_OPEN) is refused with no side effects.
-        event = rev_result.transition_event
         try:
             repo.transition_lifecycle_state(
                 record_id,
@@ -1142,11 +1127,11 @@ def create_hospital_app(
                 sink=audit_sink,
                 audit_auth=audit_auth,
                 record_id=record_id,
-                requester_id=payload.actor_id,
+                requester_id=event.actor_id,
                 denied_by=DENIED_BY_REVOCATION_AUTHZ,
                 reason=str(exc),
                 actor_id=facility_id,
-                correlation_id=payload.correlation_id or str(uuid4()),
+                correlation_id=corr_id,
             )
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -1263,14 +1248,24 @@ def create_hospital_app(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Certificate parsing failed: {exc}",
             ) from exc
+        # Each share was sealed to this facility for this record (ADR-0079).
         shares_list: list[Share] = []
-        for x, share_hex in payload.shares:
+        for sealed in payload.sealed_shares:
             try:
-                shares_list.append((x, bytes.fromhex(share_hex)))
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid hex share for x={x}: {exc}",
+                shares_list.append(
+                    open_sealed_share(
+                        sealed,
+                        record_id=record_id,
+                        service_id=facility_id,
+                        key=sealing_key,
+                    )
+                )
+            except SealedShareError as exc:
+                raise deny(
+                    DENIED_BY_BREAKGLASS_GATE,
+                    str(exc),
+                    status.HTTP_400_BAD_REQUEST,
+                    f"Sealed share refused: {exc}",
                 ) from exc
         # A caller may shorten the configured time-box, never extend it (F6).
         configured = exp_manager.default_duration_seconds
@@ -1923,4 +1918,16 @@ def create_hospital_app(
             replay=ConsumedRequestIds(backend=repo),
         ),
     )
+    app.state.share_key = sealing_key
+    app.state.share_recipient = ShareRecipient(facility_id, sealing_key.public_key)
+    if identity is not None:
+        statement = make_key_statement(
+            sealing_key,
+            service_id=identity.service_id,
+            kind=identity.kind,
+            signing_key=identity.signing_key,
+            certificate_pem=identity.certificate_pem,
+        )
+        app.state.share_key_statement = statement
+        serve_share_key(app, statement)
     return app

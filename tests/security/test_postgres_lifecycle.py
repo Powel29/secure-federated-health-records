@@ -30,6 +30,7 @@ from tests.api.conftest import (  # noqa: F401
     federation_pki,
     make_trust,
 )
+from tests.sealing import seal_all
 from tests.security.conftest import skip_or_fail_without_postgres
 from tests.security.test_p51_system_claims import (
     PATIENT,
@@ -123,7 +124,7 @@ def test_concurrent_breakglass_one_wins(store):
     barrier = threading.Barrier(2)
 
     def open_record(client):
-        payload = _unlock_payload(_hospital(store))
+        payload = _unlock_payload(_hospital(store), target=client)
         barrier.wait()
         results.append(
             client.post(f"/records/{RECORD}/breakglass", json=payload).status_code
@@ -144,7 +145,8 @@ def test_timer_mirror_does_not_overwrite_a_changed_state(store):
     client = store["process"]()
     assert (
         client.post(
-            f"/records/{RECORD}/breakglass", json=_unlock_payload(_hospital(store))
+            f"/records/{RECORD}/breakglass",
+            json=_unlock_payload(_hospital(store), target=client),
         ).status_code
         == 200
     )
@@ -158,7 +160,10 @@ def test_timer_mirror_does_not_overwrite_a_changed_state(store):
 def test_expiry_returns_the_stored_state_to_granted(store):
     """N1: with nothing in the way, the timer's transitions reach the store."""
     client = store["process"]()
-    client.post(f"/records/{RECORD}/breakglass", json=_unlock_payload(_hospital(store)))
+    client.post(
+        f"/records/{RECORD}/breakglass",
+        json=_unlock_payload(_hospital(store), target=client),
+    )
     client.app.state.expiry_manager.expire_session(RECORD, force=True)
     assert store["repo"].get_lifecycle_state(RECORD) is LifecycleState.GRANTED
 
@@ -168,13 +173,15 @@ def test_stale_emergency_open_returns_409_not_silent_reset(store):
     first = store["process"]()
     assert (
         first.post(
-            f"/records/{RECORD}/breakglass", json=_unlock_payload(_hospital(store))
+            f"/records/{RECORD}/breakglass",
+            json=_unlock_payload(_hospital(store), target=first),
         ).status_code
         == 200
     )
     second = store["process"]()
     response = second.post(
-        f"/records/{RECORD}/breakglass", json=_unlock_payload(_hospital(store))
+        f"/records/{RECORD}/breakglass",
+        json=_unlock_payload(_hospital(store), target=second),
     )
     assert response.status_code == 409
     assert store["repo"].get_lifecycle_state(RECORD) is LifecycleState.EMERGENCY_OPEN
@@ -183,13 +190,19 @@ def test_stale_emergency_open_returns_409_not_silent_reset(store):
 @pytest.mark.claim("C8", level="system")
 def test_c8_replayed_assertion_rejected_across_processes_on_postgres(store):
     """N13 / C8: a replay into a second facility process on the same store fails."""
-    payload = _unlock_payload(_hospital(store))
     first = store["process"]()
+    payload = _unlock_payload(_hospital(store), target=first)
     assert first.post(f"/records/{RECORD}/breakglass", json=payload).status_code == 200
     first.app.state.expiry_manager.expire_session(RECORD, force=True)
 
     restarted = store["process"]()
-    replay = restarted.post(f"/records/{RECORD}/breakglass", json=payload)
+    # A new process has a new share key; reseal so the replay check is what
+    # refuses (ADR-0079).
+    resealed = {
+        **payload,
+        "sealed_shares": seal_all(restarted, RECORD, list(store["shares"][:2])),
+    }
+    replay = restarted.post(f"/records/{RECORD}/breakglass", json=resealed)
     assert replay.status_code == 400
     assert "ReplayedAssertionError" in replay.json()["detail"]
     assert "rewrapped_dek_b64" not in replay.text
@@ -213,15 +226,22 @@ def test_tampered_genesis_stops_the_audit_service(store):
     service to be healthy, so nothing else starts either.
     """
     admin = store["admin"]
+    identity = store["pki"]["services"].identity("audit-service")
     create_audit_app(
-        admin, actor_id="audit-boot", service_root=store["pki"]["root"].certificate
+        admin,
+        actor_id="audit-boot",
+        service_root=store["pki"]["root"].certificate,
+        identity=identity,
     )  # writes the genesis entry
     with admin.cursor() as cur:
         cur.execute("UPDATE audit_log SET actor_id = 'forged' WHERE seq = 0")
 
     with pytest.raises(Exception) as excinfo:  # noqa: B017 -- any verify error
         create_audit_app(
-            admin, actor_id="audit-boot", service_root=store["pki"]["root"].certificate
+            admin,
+            actor_id="audit-boot",
+            service_root=store["pki"]["root"].certificate,
+            identity=identity,
         )
     assert type(excinfo.value).__name__ in {
         "InvalidSignatureError",

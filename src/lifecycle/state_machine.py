@@ -24,7 +24,7 @@ from uuid import UUID, uuid4
 
 from contracts import TransitionEvent
 from contracts.enums import LifecycleState, ReasonCode
-from crypto_core import sign, verify
+from crypto_core import encode_fields, sign, verify
 from crypto_core.types import ECPrivateKey, ECPublicKey
 
 from lifecycle.exceptions import (
@@ -34,10 +34,9 @@ from lifecycle.exceptions import (
     StateMismatchError,
 )
 
-# ASCII unit separator -- keeps fields unambiguous under concatenation.
-# Matches the pattern in ``src/authority/issuance.py`` so the two payload
-# formats are visibly the same shape.
-_FIELD_SEPARATOR = b"\x1f"
+# Signed bytes are domain-tagged and length-prefixed (review D9, ADR-0077), so
+# a clinician's transition signature never verifies as their assertion.
+_DOMAIN = "ehr/transition-event/v1"
 
 # Matches ``contracts.base.MIN_ANTIREPLAY_NONCE_BYTES``. The contract validator
 # would reject anything smaller anyway; keeping the constant local means the
@@ -99,7 +98,7 @@ def _canonical_payload(
         issued_at.astimezone(datetime.timezone.utc).isoformat().encode("utf-8"),
         nonce,
     ]
-    return _FIELD_SEPARATOR.join(fields)
+    return encode_fields(_DOMAIN, fields)
 
 
 def validate_transition(

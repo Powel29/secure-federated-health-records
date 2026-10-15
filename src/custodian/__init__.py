@@ -28,7 +28,7 @@ class EmergencyProvision:
     """A new record's 2-of-3 emergency key and the two shares that are held.
 
     Share 1 stays in clinician custody here, share 3 goes to the audit
-    service; share 2 (home authority) is not deposited (review F3, D2).
+    service; share 2 (home authority) is reserved, not deposited (ADR-0074).
     """
 
     key: bytes = field(repr=False)
@@ -99,6 +99,24 @@ def sign_emergency_transition(
         actor_id=clinician_id,
         signing_key=signing_key,
         reason_code=reason_code,
+    )
+
+
+def sign_revocation_transition(
+    *, signing_key: ECPrivateKey, record_id: str, patient_id: str
+) -> TransitionEvent:
+    """Sign the record's ``GRANTED -> REVOKED`` as the patient (review D6).
+
+    Signed here, with the patient's own key, so a revocation request carries
+    a signed event and never the key itself; the facility verifies it against
+    the patient's certificate (ADR-0064).
+    """
+    return create_transition_event(
+        record_id=record_id,
+        from_state=LifecycleState.GRANTED,
+        to_state=LifecycleState.REVOKED,
+        actor_id=patient_id,
+        signing_key=signing_key,
     )
 
 

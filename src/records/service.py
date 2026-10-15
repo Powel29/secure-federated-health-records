@@ -11,6 +11,7 @@ import uuid
 
 from contracts.clinical import ClinicalMetadata
 from contracts.records import DEKWrapping, Record
+from crypto_core.encoding import encode_fields
 from crypto_core.exceptions import InvalidTagError
 from crypto_core.symmetric import aes_gcm_decrypt, aes_gcm_encrypt, generate_key
 
@@ -104,6 +105,19 @@ def decrypt_record(record: Record, dek: bytes) -> bytes:
         ) from exc
 
 
+def _wrapping_aad(record_id: str, wrapped_for: str, generation: int) -> bytes:
+    """AAD for a DEK wrapping: the record, the policy it is sealed for, and
+    its generation (review F29, ADR-0077)."""
+    return encode_fields(
+        "ehr/dek-wrapping/v1",
+        [
+            record_id.encode("utf-8"),
+            wrapped_for.encode("utf-8"),
+            str(generation).encode("ascii"),
+        ],
+    )
+
+
 def wrap_dek(
     dek: bytes,
     record_id: str,
@@ -128,15 +142,16 @@ def wrap_dek(
         A DEKWrapping contract instance.
 
     Security property:
-        Binds the record_id as AAD so wrapped DEKs cannot be substituted across records.
+        Binds ``record_id``, ``wrapped_for`` and ``generation`` as AAD (review
+        F29, ADR-0077), so a wrapping cannot be moved to another record,
+        another policy, or replayed as a different generation (rollback).
     """
     if wrapping_id is None:
         wrapping_id = f"wrap-{uuid.uuid4()}"
     if created_at is None:
         created_at = datetime.datetime.now(datetime.timezone.utc)
 
-    # Bind record_id as AAD to prevent cross-record wrapping replay
-    aad = record_id.encode("utf-8")
+    aad = _wrapping_aad(record_id, wrapped_for, generation)
     wrapped_dek, nonce = aes_gcm_encrypt(key=wrapping_key, plaintext=dek, aad=aad)
 
     return DEKWrapping(
@@ -166,7 +181,7 @@ def unwrap_dek(wrapping: DEKWrapping, wrapping_key: bytes) -> bytes:
     Security property:
         Fails closed if the key is unauthorized or ciphertext was tampered with.
     """
-    aad = wrapping.record_id.encode("utf-8")
+    aad = _wrapping_aad(wrapping.record_id, wrapping.wrapped_for, wrapping.generation)
     try:
         return aes_gcm_decrypt(
             key=wrapping_key,

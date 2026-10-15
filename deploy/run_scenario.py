@@ -42,9 +42,11 @@ from typing import Any
 import httpx
 from api.audit_client import _tls_verify
 from api.service_auth import ServiceIdentity, signed_client
+from api.share_transport import fetch_share_key, fetch_share_recipient, sealed_json
 from breakglass import create_emergency_assertion
 from breakglass.assertion import clinical_context_digest
 from breakglass.emergency_key import generate_emergency_key, split_emergency_key
+from breakglass.share_sealing import verify_key_statement
 from contracts.base import GCM_NONCE_BYTES
 from contracts.clinical import ClinicalMetadata
 from contracts.enums import LifecycleState, PolicyNodeType, ReasonCode
@@ -282,6 +284,12 @@ def run_scenario(
         root_anchor, fed_pki = generate_federation_pki(["facility-a", "facility-b"])
         fa_ca_priv, fa_ca_cert = _parse_ca_credentials(fed_pki.facilities["facility-a"])
         fb_ca_priv, fb_ca_cert = _parse_ca_credentials(fed_pki.facilities["facility-b"])
+    # Share keys are verified against the federation root (ADR-0079).
+    trusted_root = (
+        certificate_from_pem(config["root_certificate_pem"].encode("ascii"))
+        if config and "root_certificate_pem" in config
+        else root_anchor.certificate
+    )
 
     # Dr. Bob @ Facility A (Cardiologist)
     bob_priv, bob_pub = generate_ec_keypair()
@@ -411,22 +419,33 @@ def run_scenario(
     share1 = em_shares[0]
     share3 = em_shares[2]
 
-    # Deposit Share 3 with Audit Service
+    # Deposit Share 3 with Audit Service, sealed to its share key (ADR-0079)
+    audit_recipient = fetch_share_recipient(
+        client, endpoints.audit, kind="audit", trusted_root=trusted_root
+    )
     audit_reg_res = client.post(
         f"{endpoints.audit}/breakglass/shares",
         json={
             "share_key": record_id,
-            "x": share3[0],
-            "share_hex": share3[1].hex(),
+            "sealed_share": sealed_json(
+                share3, record_id=record_id, recipient=audit_recipient
+            ),
         },
     )
     audit_reg_res.raise_for_status()
     log(f"  * Share 3 deposited in Audit Service custody for record {record_id}")
     if endpoints.custodian:
         # Share 1 in clinician custody, so expiry can rotate it (ADR-0069).
+        custodian = fetch_share_recipient(
+            client, endpoints.custodian, kind="custodian", trusted_root=trusted_root
+        )
         client.post(
             f"{endpoints.custodian}/records/{record_id}/shares",
-            json={"x": share1[0], "share_hex": share1[1].hex()},
+            json={
+                "sealed_share": sealed_json(
+                    share1, record_id=record_id, recipient=custodian
+                )
+            },
         ).raise_for_status()
         log(f"  * Share 1 deposited in clinician custody for record {record_id}")
 
@@ -543,6 +562,11 @@ def run_scenario(
     log("[7/9] Releasing Share 3 from Audit Service & Unlocking...")
     # Request Share 3 release from Audit Service (log-before-release)
     corr_id = "corr-bg-alice-001"
+    # Share 3 is sealed to Facility B's gate (ADR-0079).
+    gate_statement = fetch_share_key(client, endpoints.facility_b)
+    gate = verify_key_statement(
+        gate_statement, trusted_root=trusted_root, kind="facility"
+    )
     release_res = client.post(
         f"{endpoints.audit}/breakglass/release",
         json={
@@ -560,22 +584,24 @@ def run_scenario(
             "assertion": assertion.model_dump(mode="json"),
             "clinician_certificate_pem": carol_cert_pem,
             "justification": justification,
+            "recipient": gate_statement.model_dump(mode="json"),
         },
     )
     release_res.raise_for_status()
     release_data = release_res.json()
-    rel_x = release_data["x"]
-    rel_share_hex = release_data["share_hex"]
+    rel_sealed = release_data["sealed_share"]
+    rel_x = rel_sealed["x"]
     new_seq = release_data["entry"]["seq"]
     log(
         f"  * Audit Service committed entry to hash chain (new seq={new_seq})\n"
         f"  * Share 3 released: x={rel_x}"
     )
 
-    # Submit 2 shares (Share 1 from Carol + Share 3 from Audit) to Facility B
+    # Submit 2 shares (Share 1 from Carol + Share 3 from Audit) to Facility B,
+    # both sealed to its gate: no share bytes on the wire (ADR-0079).
     shares_payload = [
-        (share1[0], share1[1].hex()),
-        (rel_x, rel_share_hex),
+        sealed_json(share1, record_id=record_id, recipient=gate),
+        rel_sealed,
     ]
 
     # Carol's own signed transition, not a private key, goes on the wire
@@ -585,7 +611,7 @@ def run_scenario(
         json={
             "assertion": assertion.model_dump(mode="json"),
             "clinician_certificate_pem": carol_cert_pem,
-            "shares": shares_payload,
+            "sealed_shares": shares_payload,
             "pre_rewrap_key": carol_pre_pub,
             "transition_event": transition_event.model_dump(mode="json"),
             "correlation_id": corr_id,
@@ -623,17 +649,23 @@ def run_scenario(
         log(f"  * Emergency search returned status {search_res.status_code}")
 
     # Revocation crosses the wire too (PROJECT §4A(1): "normal read,
-    # revocation, or break-glass"; review N4). The request carries the old DEK
-    # in the clear on the plain profile, which claim 1 must catch. The
-    # facility refuses it while the record is emergency-open (409) or cannot
-    # persist it on Postgres yet (501, F10); either way the bytes were sent.
-    patient_priv, _patient_pub = generate_ec_keypair()
+    # revocation, or break-glass"; review N4). Like the custodian, the script
+    # sends the patient's signed event and certificate, never the key or the
+    # DEK (review D6); the authoring keyring it carries is what claim 1 on
+    # the plain profile must catch. The facility refuses it while the record
+    # is emergency-open (409); either way the bytes were sent.
+    revoke_event = create_transition_event(
+        record_id=record_id,
+        from_state=LifecycleState.GRANTED,
+        to_state=LifecycleState.REVOKED,
+        actor_id="pat-101",
+        signing_key=pat_priv,
+    )
     revoke_res = client.post(
         f"{endpoints.facility_a}/records/{record_id}/revoke",
         json={
-            "actor_id": "pat-101",
-            "actor_signing_key_pem": private_key_to_pem(patient_priv).decode("ascii"),
-            "old_dek_b64": base64.b64encode(recovered_dek).decode("ascii"),
+            "transition_event": revoke_event.model_dump(mode="json"),
+            "actor_certificate_pem": pat_cert_pem,
             "new_clinical_policy": clinical_policy.model_dump(mode="json"),
             "owner_authority_id": "authority-net",
             "attribute_keyring": authoring_keyring_b64,
@@ -701,6 +733,12 @@ def run_scenario(
                 "emergency_key": ("emergency_key", emergency_key),
                 "share1": ("share", share1[1]),
                 "share3": ("share", share3[1]),
+                # Not a secret: the sealed share 3 as the audit service sent
+                # it, which claim 2 times against the audit COMMIT (ADR-0079).
+                "share3_sealed": (
+                    "sealed_share",
+                    base64.b64decode(rel_sealed["ciphertext_b64"]),
+                ),
                 "attr_key:authority-med:role:physician": (
                     "attribute_key",
                     k_physician,

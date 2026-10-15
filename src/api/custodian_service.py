@@ -56,6 +56,17 @@ from uuid import uuid4
 import httpx
 from audit.chain import verify_entry_signature
 from breakglass.assertion import clinical_context_digest
+from breakglass.emergency_key import Share
+from breakglass.exceptions import SealedShareError
+from breakglass.share_sealing import (
+    SealedShare,
+    ShareKeyStatement,
+    ShareRecipient,
+    ShareSealingKey,
+    make_key_statement,
+    open_sealed_share,
+    verify_key_statement,
+)
 from consent.service import (
     create_consent_grant,
     create_consent_request,
@@ -80,6 +91,7 @@ from custodian import (
     prepare_unlock,
     provision_emergency_key,
     sign_emergency_transition,
+    sign_revocation_transition,
 )
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from pre.exceptions import PREError
@@ -105,6 +117,8 @@ from api.custodian_schemas import (
     ReadRecordResult,
     ReplaceShareRequest,
     RevokeConsentPayload,
+    RevokeRecordPayload,
+    RevokeRecordResult,
     SharePresented,
     SignConsentRequestPayload,
     SignConsentRequestResponse,
@@ -118,6 +132,7 @@ from api.service_auth import (
     SignedRequestAuth,
     install_service_auth,
 )
+from api.share_transport import SHARE_KEY_PATH, sealed_json, serve_share_key
 
 _logger = logging.getLogger(__name__)
 
@@ -136,6 +151,7 @@ CUSTODIAN_PERMISSIONS: dict[tuple[str, str], frozenset[str]] = {
     ("POST", "/subjects/{subject_id}/consent/decide"): _PORTAL,
     ("POST", "/subjects/{subject_id}/consent/revoke"): _PORTAL,
     ("POST", "/subjects/{subject_id}/read"): _PORTAL,
+    ("POST", "/subjects/{subject_id}/revoke"): _PORTAL,
     ("POST", "/subjects/{subject_id}/records"): _PORTAL,
     ("POST", "/subjects/{subject_id}/breakglass"): _PORTAL,
 }
@@ -590,6 +606,7 @@ def create_custodian_app(
     identity: ServiceIdentity,
     service_root: Certificate,
     state_loader: StateLoader | None = None,
+    share_key: ShareSealingKey | None = None,
 ) -> FastAPI:
     """Create and configure the Key Custodian Service application.
 
@@ -640,6 +657,40 @@ def create_custodian_app(
         },
     )
     app.state.record_loader = record_loader
+    # Shares reach this service sealed to this key (ADR-0079).
+    sealing_key = share_key or ShareSealingKey.generate()
+
+    def open_share(record_id: str, sealed: SealedShare) -> Share:
+        try:
+            return open_sealed_share(
+                sealed,
+                record_id=record_id,
+                service_id=identity.service_id,
+                key=sealing_key,
+            )
+        except SealedShareError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
+
+    def share_key_of(
+        http: httpx.Client, base_url: str, kind: str
+    ) -> tuple[dict[str, Any], ShareRecipient]:
+        """A holder's or facility's share-key statement, verified (ADR-0079)."""
+        statement = _get(http, f"{base_url}{SHARE_KEY_PATH}", what=f"{kind} share key")
+        try:
+            recipient = verify_key_statement(
+                ShareKeyStatement.model_validate(statement),
+                trusted_root=service_root,
+                kind=kind,
+            )
+        except (ValidationError, SealedShareError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"{kind} share key did not verify: {exc}",
+            ) from exc
+        return statement, recipient
+
     if root_certificate_pem:
         app.state.vault.set_trust(
             root_certificate_pem,
@@ -718,20 +769,14 @@ def create_custodian_app(
         record_id: str, payload: DepositShareRequest, vault: VaultDep
     ) -> DepositShareResponse:
         """Deposit share 1 (attending-clinician custody) for one record."""
+        share = open_share(record_id, payload.sealed_share)
         try:
-            share_bytes = bytes.fromhex(payload.share_hex)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"invalid hex share: {exc}",
-            ) from exc
-        try:
-            vault.put_share(record_id, (payload.x, share_bytes))
+            vault.put_share(record_id, share)
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail=str(exc)
             ) from exc
-        return DepositShareResponse(record_id=record_id, x=payload.x)
+        return DepositShareResponse(record_id=record_id, x=share[0])
 
     @app.put(
         "/records/{record_id}/shares",
@@ -756,15 +801,9 @@ def create_custodian_app(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="a share is replaced only during its record's expiry rotation",
             )
+        share = open_share(record_id, payload.sealed_share)
         try:
-            share_bytes = bytes.fromhex(payload.share_hex)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"invalid hex share: {exc}",
-            ) from exc
-        try:
-            vault.replace_share(record_id, (payload.x, share_bytes), payload.generation)
+            vault.replace_share(record_id, share, payload.generation)
         except KeyError as exc:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
@@ -773,7 +812,7 @@ def create_custodian_app(
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail=str(exc)
             ) from exc
-        return DepositShareResponse(status="replaced", record_id=record_id, x=payload.x)
+        return DepositShareResponse(status="replaced", record_id=record_id, x=share[0])
 
     # --- Public read-back --------------------------------------------------
 
@@ -956,6 +995,64 @@ def create_custodian_app(
         )
 
     @app.post(
+        "/subjects/{subject_id}/revoke",
+        response_model=RevokeRecordResult,
+        responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+    )
+    def revoke_record(
+        subject_id: str,
+        payload: RevokeRecordPayload,
+        vault: VaultDep,
+        endpoints: EndpointsDep,
+        http: HttpDep,
+    ) -> RevokeRecordResult:
+        """Revoke access to the patient's record by key rotation (P3-7).
+
+        The patient's key signs the event here and stays here (review D6);
+        the facility verifies the event against the patient's certificate and
+        unwraps the current DEK itself, so neither a key nor a DEK is sent.
+        """
+        material = _require_subject(vault, subject_id)
+        _require_kind(material, "patient")
+        owner_creds = [
+            c
+            for c in material.credentials
+            if c.attribute.name == "owner" and c.attribute.value == subject_id
+        ]
+        if not owner_creds:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"patient {subject_id!r} holds no owner credential",
+            )
+        owner_authority_id = owner_creds[0].issuer_id
+        facility_url = _facility_url(endpoints, payload.facility_id)
+        certificate_pem = _patient_certificate(material)
+        leaves = _policy_leaves(payload.new_clinical_policy)
+        leaves.append((owner_authority_id, "owner", subject_id))
+        keyring = _authoring_keyring(http, endpoints, leaves)
+        event = sign_revocation_transition(
+            signing_key=material.signing_key,
+            record_id=payload.record_id,
+            patient_id=subject_id,
+        )
+        data = _post(
+            http,
+            f"{facility_url}/records/{payload.record_id}/revoke",
+            {
+                "transition_event": event.model_dump(mode="json"),
+                "actor_certificate_pem": certificate_pem,
+                "new_clinical_policy": payload.new_clinical_policy.model_dump(
+                    mode="json"
+                ),
+                "owner_authority_id": owner_authority_id,
+                "attribute_keyring": keyring,
+                "correlation_id": payload.correlation_id or str(uuid4()),
+            },
+            what="record revocation",
+        )
+        return RevokeRecordResult.model_validate(data)
+
+    @app.post(
         "/subjects/{subject_id}/records",
         response_model=IngestResult,
         status_code=status.HTTP_201_CREATED,
@@ -1063,7 +1160,7 @@ def create_custodian_app(
 
         # 2-of-3 emergency key: share 3 to the audit service (commit-before-
         # release custody), share 1 to clinician custody here, share 2 unused
-        # (home authority) -- the same split the seed performs.
+        # (home authority, reserved: ADR-0074) -- the same split the seed performs.
         emergency = provision_emergency_key()
         share1, share3 = emergency.clinician_share, emergency.audit_share
 
@@ -1086,10 +1183,16 @@ def create_custodian_app(
         # without its break-glass shares, because the emergency key is gone
         # once this request ends. Neither holder overwrites an existing share,
         # so a duplicate record_id is refused (409) before anything is stored.
+        _, audit_recipient = share_key_of(http, endpoints.audit, "audit")
         _post(
             http,
             f"{endpoints.audit}/breakglass/shares",
-            {"share_key": record_id, "x": share3[0], "share_hex": share3[1].hex()},
+            {
+                "share_key": record_id,
+                "sealed_share": sealed_json(
+                    share3, record_id=record_id, recipient=audit_recipient
+                ),
+            },
             what="audit share deposit",
         )
         try:
@@ -1253,7 +1356,10 @@ def create_custodian_app(
         )
         assertion = unlock_material.assertion
 
-        # 2. Share 3: the audit service commits first, releases second.
+        # 2. Share 3: the audit service commits first, releases second, and
+        # seals it to the facility's gate, so this process never holds shares
+        # 1 and 3 together in the clear (ADR-0079).
+        gate_statement, gate = share_key_of(http, facility_url, "facility")
         seq_before = vault.audit_seq_before_release()
         release = _post(
             http,
@@ -1282,6 +1388,7 @@ def create_custodian_app(
                 "clinician_certificate_pem": material.certificate_pem,
                 "justification": payload.justification,
                 "sensitive_justification": payload.sensitive_justification,
+                "recipient": gate_statement,
             },
             what="audit share release",
         )
@@ -1290,7 +1397,7 @@ def create_custodian_app(
             SharePresented(holder=SHARE_HOLDER_CLINICIAN, x=share1[0]),
             SharePresented(
                 holder=SHARE_HOLDER_AUDIT,
-                x=release["x"],
+                x=release["sealed_share"]["x"],
                 audit_entry_seq=release["entry"]["seq"],
             ),
         ]
@@ -1321,9 +1428,9 @@ def create_custodian_app(
                 # The facility validates this chain against its own configured
                 # root and CAs; it never accepts trust anchors from a caller (F1).
                 "clinician_certificate_pem": material.certificate_pem,
-                "shares": [
-                    [share1[0], share1[1].hex()],
-                    [release["x"], release["share_hex"]],
+                "sealed_shares": [
+                    sealed_json(share1, record_id=payload.record_id, recipient=gate),
+                    release["sealed_share"],
                 ],
                 "pre_rewrap_key": material.pre_public_key,
                 "transition_event": (
@@ -1412,4 +1519,17 @@ def create_custodian_app(
             public_routes=CUSTODIAN_PUBLIC_ROUTES,
         ),
     )
+    app.state.share_key = sealing_key
+    app.state.share_recipient = ShareRecipient(
+        identity.service_id, sealing_key.public_key
+    )
+    statement = make_key_statement(
+        sealing_key,
+        service_id=identity.service_id,
+        kind=identity.kind,
+        signing_key=identity.signing_key,
+        certificate_pem=identity.certificate_pem,
+    )
+    app.state.share_key_statement = statement
+    serve_share_key(app, statement)
     return app

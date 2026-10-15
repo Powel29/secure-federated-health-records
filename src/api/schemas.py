@@ -8,9 +8,10 @@ payloads.
 
 from __future__ import annotations
 
+from breakglass.share_sealing import SealedShare
 from contracts.clinical import ClinicalMetadata
 from contracts.consent import ConsentGrant, ConsentRequest
-from contracts.enums import LifecycleState, ReasonCode
+from contracts.enums import LifecycleState
 from contracts.lifecycle import TransitionEvent
 from contracts.messaging import EmergencyAssertion
 from contracts.policy import PolicyTree
@@ -71,20 +72,6 @@ class ReadRecordResponse(BaseModel):
 # --- Consent Endpoints --------------------------------------------------------
 
 
-class CreateConsentRequestPayload(BaseModel):
-    """Request body to issue a new ConsentRequest."""
-
-    patient_id: str
-    requester_id: str
-    scope: list[str]
-    purpose: str
-    ttl_days: int = Field(default=7, gt=0, le=365)
-    requester_signing_key_pem: str = Field(
-        ...,
-        description="PEM-encoded ECDSA private key of the requester",
-    )
-
-
 class SubmitConsentGrantPayload(BaseModel):
     """Request body submitting a patient-signed ConsentGrant."""
 
@@ -92,16 +79,6 @@ class SubmitConsentGrantPayload(BaseModel):
     patient_certificate_pem: str = Field(
         ...,
         description="Patient certificate (PEM) from a configured facility CA",
-    )
-
-
-class RevokeConsentGrantPayload(BaseModel):
-    """Request body revoking an existing ConsentGrant."""
-
-    prior_grant: ConsentGrant
-    patient_signing_key_pem: str = Field(
-        ...,
-        description="PEM-encoded ECDSA private key of the patient",
     )
 
 
@@ -118,19 +95,20 @@ class ConsentResponse(BaseModel):
 
 
 class RevokeRecordRequest(BaseModel):
-    """Request payload to cryptographically rotate a record's DEK."""
+    """Request payload to cryptographically rotate a record's DEK.
 
-    actor_id: str = Field(
+    Carries no private key and no DEK (review D6): the patient's custodian
+    signs ``transition_event`` with the patient's key, and the facility
+    unwraps the current DEK itself through the record's policy.
+    """
+
+    transition_event: TransitionEvent = Field(
         ...,
-        description="Party performing revocation (patient or home authority)",
+        description="The patient's signed GRANTED -> REVOKED event for this record",
     )
-    actor_signing_key_pem: str = Field(
+    actor_certificate_pem: str = Field(
         ...,
-        description="PEM-encoded ECDSA private key of actor",
-    )
-    old_dek_b64: str = Field(
-        ...,
-        description="Base64-encoded pre-revocation DEK",
+        description="Patient certificate (PEM) the event is verified against",
     )
     new_clinical_policy: PolicyTree = Field(
         ...,
@@ -145,7 +123,6 @@ class RevokeRecordRequest(BaseModel):
         description="Keyring mapping 'auth_id:name:val' to base64 key bytes",
     )
     correlation_id: str | None = None
-    reason_code: ReasonCode | None = None
     new_policy_id: str | None = None
 
 
@@ -182,9 +159,12 @@ class BreakglassUnlockRequest(BaseModel):
         ...,
         description="PEM-encoded X.509 certificate of attending clinician",
     )
-    shares: list[tuple[int, str]] = Field(
+    sealed_shares: list[SealedShare] = Field(
         ...,
-        description="List of (x_coordinate, hex_encoded_share) threshold shares",
+        description=(
+            "Threshold shares, each sealed to this facility's share key "
+            "(ADR-0079); no share bytes cross the wire"
+        ),
     )
     pre_rewrap_key: int = Field(
         ...,

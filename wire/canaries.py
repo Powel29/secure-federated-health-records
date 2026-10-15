@@ -6,7 +6,7 @@ every form it could plausibly travel in over our HTTP/JSON APIs, and the
 reassembled streams are searched for all of them:
 
 - raw bytes
-- hex, lower and upper case (shares travel as ``share_hex``)
+- hex, lower and upper case
 - base64, standard and URL-safe, at all three byte alignments -- a secret
   embedded inside a larger base64 blob only matches if the search accounts
   for where it starts within a 3-byte group

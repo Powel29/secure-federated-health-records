@@ -1,6 +1,6 @@
 # ADR-0012: Shrink proxy re-encryption to one-direction re-wrap
 
-Status: Accepted (2026-08-18)
+Status: Accepted (2026-08-18); "unidirectional" / "without decryption" wording superseded by ADR-0076
 
 ## Context
 PRE was scoped as cross-facility key handoff (hospital A → hospital B). Under one

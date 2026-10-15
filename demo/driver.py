@@ -27,8 +27,11 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from api.share_transport import fetch_share_key, fetch_share_recipient, sealed_json
+from breakglass.share_sealing import verify_key_statement
 from contracts.enums import ReasonCode
 from crypto_core import (
+    certificate_from_pem,
     generate_ec_keypair,
     sha256_digest,
 )
@@ -92,6 +95,11 @@ class Style:
     @property
     def BLUE(self) -> str:  # noqa: N802
         return self._c("\033[34m")
+
+
+def _seed_root(seeded_data: dict[str, Any]) -> Any:
+    """The federation root the seed ran under: share keys are verified by it."""
+    return certificate_from_pem(seeded_data["root_cert_pem"].encode("ascii"))
 
 
 def _fingerprint(data: bytes | str) -> str:
@@ -288,7 +296,11 @@ def standalone_federation(
     facilities = {"facility-a": url_fa, "facility-b": url_fb}
 
     app_audit = create_audit_app(
-        conn, actor_id="audit-service", service_root=root_cert, trust=trust
+        conn,
+        actor_id="audit-service",
+        service_root=root_cert,
+        trust=trust,
+        identity=identities["audit-service"],
     )
 
     def expiry(facility_id: str, timer_key: Any) -> EmergencyExpiryManager:
@@ -331,6 +343,7 @@ def standalone_federation(
                 authorities=authorities,
                 custodian_url=url_cust,
                 audit_url=audit_url,
+                trusted_root=root_cert,
             ),
         )
 
@@ -533,12 +546,22 @@ def run_demo_scenario(
             verbose=False,
         )
         if endpoints.custodian:
-            # Share 1 in clinician custody, so expiry can rotate it (ADR-0069).
+            # Share 1 in clinician custody, so expiry can rotate it (ADR-0069),
+            # sealed to the custodian's verified share key (ADR-0079).
+            custodian = fetch_share_recipient(
+                client,
+                endpoints.custodian,
+                kind="custodian",
+                trusted_root=_seed_root(seeded_data),
+            )
             for record_id, meta in seeded_data["records"].items():
-                x, share_bytes = meta["share1"]
                 client.post(
                     f"{endpoints.custodian}/records/{record_id}/shares",
-                    json={"x": x, "share_hex": share_bytes.hex()},
+                    json={
+                        "sealed_share": sealed_json(
+                            meta["share1"], record_id=record_id, recipient=custodian
+                        )
+                    },
                 ).raise_for_status()
 
     dataset = seeded_data["dataset"]
@@ -699,6 +722,12 @@ def run_demo_scenario(
         "(Log-Before-Release):"
     )
     corr_id = "demo-corr-breakglass-001"
+    # Share 3 is sealed to Facility B's gate, whose key the audit service
+    # verifies against the federation root (ADR-0079).
+    gate_statement = fetch_share_key(client, endpoints.facility_b)
+    gate = verify_key_statement(
+        gate_statement, trusted_root=_seed_root(seeded_data), kind="facility"
+    )
     release_res = client.post(
         f"{endpoints.audit}/breakglass/release",
         json={
@@ -715,19 +744,21 @@ def run_demo_scenario(
             "assertion": assertion.model_dump(mode="json"),
             "clinician_certificate_pem": house_info["certificate_pem"],
             "justification": justification,
+            "recipient": gate_statement.model_dump(mode="json"),
         },
     )
     release_res.raise_for_status()
     rel_data = release_res.json()
-    rel_x = rel_data["x"]
-    rel_share_hex = rel_data["share_hex"]
+    rel_sealed = rel_data["sealed_share"]
+    rel_x = rel_sealed["x"]
     new_seq = rel_data["entry"]["seq"]
 
     print(
         f"     {s.GREEN}[✓] AUDIT COMMIT SUCCESSFUL:{s.RESET} New hash chain entry "
         f"committed at {s.BOLD}Seq #{new_seq}{s.RESET} BEFORE release.\n"
         f"     [{s.GREEN}Share 3: Released Custody{s.RESET}]   "
-        f"x={rel_x}, Fingerprint={_fingerprint(bytes.fromhex(rel_share_hex))}"
+        f"x={rel_x}, sealed to Facility B's gate, "
+        f"Fingerprint={_fingerprint(rel_sealed['ciphertext_b64'])}"
     )
 
     # 3. Unlock record at Facility B
@@ -736,7 +767,10 @@ def run_demo_scenario(
         json={
             "assertion": assertion.model_dump(mode="json"),
             "clinician_certificate_pem": house_info["certificate_pem"],
-            "shares": [(share1[0], share1[1].hex()), (rel_x, rel_share_hex)],
+            "sealed_shares": [
+                sealed_json(share1, record_id="rec-001", recipient=gate),
+                rel_sealed,
+            ],
             "pre_rewrap_key": house_info["pre_public_key"],
             "transition_event": transition_event.model_dump(mode="json"),
             "correlation_id": corr_id,

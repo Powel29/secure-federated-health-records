@@ -47,6 +47,22 @@ MED_AUTHORITY_ID = "authority-med"
 NET_AUTHORITY_ID = "authority-net"
 
 
+def _signed_revocation(record, actor_id, signing_key):
+    """The actor's signed GRANTED -> REVOKED event and the key it verifies by.
+
+    Revocation takes a pre-signed event (review D6): the signer's private key
+    never reaches ``revoke_record_access``.
+    """
+    event = create_transition_event(
+        record_id=record.record_id,
+        from_state=LifecycleState.GRANTED,
+        to_state=LifecycleState.REVOKED,
+        actor_id=actor_id,
+        signing_key=signing_key,
+    )
+    return {"transition_event": event, "actor_public_key": signing_key.public_key()}
+
+
 def _leaf(name: str, value: str, authority_id: str) -> PolicyTree:
     return PolicyTree(
         node_type=PolicyNodeType.LEAF,
@@ -100,12 +116,11 @@ def _revoked_fixture(patient_id: str, plaintext: bytes):
     revoked = revoke_record_access(
         current_record=ingested.record,
         current_wrapping=ingested.dek_wrapping,
-        old_dek=old_dek,
+        current_compiled_policy=ingested.compiled_policy,
         new_clinical_policy=clinical,
         owner_authority_id=NET_AUTHORITY_ID,
         attribute_keyring=keyring,
-        actor_id=patient_id,
-        actor_signing_key=signing_priv,
+        **_signed_revocation(ingested.record, patient_id, signing_priv),
         correlation_id=f"rev-{patient_id}",
     )
     return {
@@ -357,7 +372,6 @@ class TestRevocationAuthorizationSecurity:
                 (NET_AUTHORITY_ID, "owner", patient_id): b"o" * 32,
             },
         )
-        old_dek = b"d" * 32  # caller holding old dek
 
         clinician_priv, _ = generate_ec_keypair()
         # Negative test: Clinician signs with valid ECDSA key,
@@ -368,15 +382,16 @@ class TestRevocationAuthorizationSecurity:
             revoke_record_access(
                 current_record=ingested.record,
                 current_wrapping=ingested.dek_wrapping,
-                old_dek=old_dek,
+                current_compiled_policy=ingested.compiled_policy,
                 new_clinical_policy=ingested.policy_tree,
                 owner_authority_id=NET_AUTHORITY_ID,
                 attribute_keyring={
                     (MED_AUTHORITY_ID, "role", "physician"): b"k" * 32,
                     (NET_AUTHORITY_ID, "owner", patient_id): b"o" * 32,
                 },
-                actor_id="clinician-dr-mallory",
-                actor_signing_key=clinician_priv,
+                **_signed_revocation(
+                    ingested.record, "clinician-dr-mallory", clinician_priv
+                ),
                 correlation_id="rev-sec-clinician",
             )
 
@@ -400,7 +415,6 @@ class TestRevocationAuthorizationSecurity:
                 (NET_AUTHORITY_ID, "owner", patient_id): b"o" * 32,
             },
         )
-        old_dek = b"d" * 32
 
         foreign_auth_priv, _ = generate_ec_keypair()
 
@@ -410,15 +424,16 @@ class TestRevocationAuthorizationSecurity:
             revoke_record_access(
                 current_record=ingested.record,
                 current_wrapping=ingested.dek_wrapping,
-                old_dek=old_dek,
+                current_compiled_policy=ingested.compiled_policy,
                 new_clinical_policy=ingested.policy_tree,
                 owner_authority_id=NET_AUTHORITY_ID,
                 attribute_keyring={
                     (MED_AUTHORITY_ID, "role", "physician"): b"k" * 32,
                     (NET_AUTHORITY_ID, "owner", patient_id): b"o" * 32,
                 },
-                actor_id=MED_AUTHORITY_ID,
-                actor_signing_key=foreign_auth_priv,
+                **_signed_revocation(
+                    ingested.record, MED_AUTHORITY_ID, foreign_auth_priv
+                ),
                 correlation_id="rev-sec-foreign",
             )
 
@@ -438,15 +453,79 @@ class TestRevocationAuthorizationSecurity:
         second_revocation = revoke_record_access(
             current_record=fix["revoked"].rotated_record,
             current_wrapping=fix["revoked"].rotated_wrapping,
-            old_dek=unwrap_dek(
-                fix["revoked"].rotated_wrapping, fix["revoked"].new_root_secret
-            ),
+            current_compiled_policy=fix["revoked"].compiled_policy,
             new_clinical_policy=fix["revoked"].policy_tree,
             owner_authority_id=NET_AUTHORITY_ID,
             attribute_keyring=fix["keyring"],
-            actor_id=NET_AUTHORITY_ID,
-            actor_signing_key=net_priv,
+            **_signed_revocation(
+                fix["revoked"].rotated_record, NET_AUTHORITY_ID, net_priv
+            ),
             correlation_id="rev-sec-home-auth-positive",
         )
         assert second_revocation.transition_event.actor_id == NET_AUTHORITY_ID
         assert second_revocation.rotated_wrapping.generation == 2
+
+
+class TestRevocationNeedsTheActorsOwnSignature:
+    """Review D6: revocation takes a signed event, never the signer's key.
+
+    Each test removes one property the signed-event control relies on and
+    asserts the rotation refuses before anything is re-encrypted.
+    """
+
+    def _ingested(self, patient_id: str):
+        med, net, clinical = _setup_federation()
+        keyring = _full_keyring(med, net, patient_id)
+        ingested = ingest_record(
+            plaintext=b"signed revocation payload",
+            patient_id=patient_id,
+            facility_id="fac-central",
+            owner_authority_id=NET_AUTHORITY_ID,
+            clinical_policy=clinical,
+            attribute_keyring=keyring,
+        )
+        return ingested, keyring, clinical
+
+    def _revoke(self, ingested, keyring, clinical, **signed):
+        return revoke_record_access(
+            current_record=ingested.record,
+            current_wrapping=ingested.dek_wrapping,
+            current_compiled_policy=ingested.compiled_policy,
+            new_clinical_policy=clinical,
+            owner_authority_id=NET_AUTHORITY_ID,
+            attribute_keyring=keyring,
+            correlation_id="rev-sec-signed",
+            **signed,
+        )
+
+    def test_sec_event_signed_by_another_key_is_refused(self) -> None:
+        """An attacker signs the patient's revocation with their own key."""
+        patient_id = "pat-sec-sig-1"
+        ingested, keyring, clinical = self._ingested(patient_id)
+        attacker_priv, _ = generate_ec_keypair()
+        _, patient_pub = generate_ec_keypair()
+        forged = _signed_revocation(ingested.record, patient_id, attacker_priv)
+        forged["actor_public_key"] = patient_pub
+        with pytest.raises(InvalidSignatureError):
+            self._revoke(ingested, keyring, clinical, **forged)
+
+    def test_sec_event_for_another_record_is_refused(self) -> None:
+        """A valid revocation of record A cannot rotate record B."""
+        patient_id = "pat-sec-sig-2"
+        ingested, keyring, clinical = self._ingested(patient_id)
+        other, _, _ = self._ingested(patient_id)
+        priv, _ = generate_ec_keypair()
+        signed = _signed_revocation(other.record, patient_id, priv)
+        with pytest.raises(ValueError, match="GRANTED -> REVOKED for record"):
+            self._revoke(ingested, keyring, clinical, **signed)
+
+    def test_sec_keyring_without_current_access_cannot_rotate(self) -> None:
+        """No DEK is accepted from the caller: a keyring that cannot open the
+        current policy cannot rotate the record, even with a valid event."""
+        patient_id = "pat-sec-sig-3"
+        ingested, keyring, clinical = self._ingested(patient_id)
+        priv, _ = generate_ec_keypair()
+        signed = _signed_revocation(ingested.record, patient_id, priv)
+        wrong = {label: b"x" * 32 for label in keyring}
+        with pytest.raises((PolicyDeniedError, ValueError)):
+            self._revoke(ingested, wrong, clinical, **signed)
