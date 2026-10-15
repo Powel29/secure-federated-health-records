@@ -491,6 +491,7 @@ positive control: `test_share_released_only_after_successful_commit`.)*
 *What:* The capture harness and the two modes (plain-HTTP and TLS) that record network traffic for the required traffic-analysis module.
 *Needs first:* P4-3.
 *Done when:* both modes produce a capture file per scenario.
+*Blocked (2026-10-15):* the harness (`wire/capture.py`) is in place, but no capture has been taken: Wireshark/`dumpcap` and Npcap are not installed on the machines tried, and Npcap is a driver someone must install by hand. Since ADR-0066 every request also carries signed `X-Request-Envelope` / `X-Service-Certificate` headers; bodies are unchanged, so the analyser's checks still apply as written.
 
 **P4-7 · Patient portal (web UI)** *(new — replaces dashboard)* — Avaneeth — 10h ✅ *(built by Ojas with the other portal tasks; Avaneeth to review)*
 *What:* The patient's web page (Django + Bootstrap): see who has access to their records, approve or deny incoming access requests, revoke a grant, and view the history of who accessed what — including any break-glass. **Also view their own uploaded records:** the patient reads a record via the `owner:<patient_id>` attribute leaf on the record's policy tree (ADR-0016), served by the home authority; the decrypted PDF is streamed to the browser for that request only, never persisted or logged. This is the patient half of the three-portal UI that replaces the old terminal dashboard.
@@ -507,12 +508,12 @@ positive control: `test_share_released_only_after_successful_commit`.)*
 *Needs first:* P4-8 shell, P3-10 (assertion contract), P3-13 (audit event types — Ojas adds `patient.lookup`).
 *Done when:* a clinician can search by name and DOB, pick from a candidate list, and the resolved `patient_id` is carried into a signed `EmergencyAssertion`; ambiguous matches show all candidates; PII lives only in the portal DB and never in the crypto store (ADR-0011 / ADR-0033); the search view holds no keys and grants no access on its own (a negative test proves that portal login without a valid assertion decrypts nothing); every lookup — including empty ones — appears in the audit chain. ✅ *(`accounts.PatientDirectory` (given_name, family_name, date_of_birth, subject_id = crypto `patient_id`), `clinician:identify` + `select_candidate` views; ambiguous matches all shown and never auto-selected (the seed adds a namesake `pat-777` to prove it); every lookup and every selection appended as `patient.lookup` (hashed query, candidate ids only) *before* results are shown — if the append fails the results are withheld (503). `audit.events.EVENT_PATIENT_LOOKUP` added. Negative tests: selection outside the candidate set is refused; a login without a signed assertion decrypts nothing.)*
 
-**P4-9 · Admin / audit portal (web UI)** *(new — replaces dashboard)* — Ojas — 8h
+**P4-9 · Admin / audit portal (web UI)** *(new — replaces dashboard)* — Ojas — 8h ✅
 *What:* The oversight web page: browse the audit log by correlation ID, view the state of the federation and its services, and review completed break-glass cases. Read-only over the audit and state data.
 *Needs first:* P4-2, P3-3, P3-13.
 *Done when:* an admin can pull up a whole access flow by correlation ID and review break-glass cases in the browser; the portal is read-only and holds no keys. ✅ *(`portal/admin_audit/`: overview with chain length + genesis-to-head verification from the audit service, trace any flow by correlation id with per-link `prev_hash` check and the joined case/consent/notification rows, break-glass case review derived from the chain and the ledger (failed-closed attempts included), federation process health + store contents + trust topology, registrations (approval still reaches only the ADR-0021 stub). Read-only throughout; no POST changes access. Tests: `portal/admin_audit/tests.py` [5].)*
 
-**P4-10 · Patient notifications** *(new)* — Ojas — 4h
+**P4-10 · Patient notifications** *(new)* — Ojas — 4h ✅
 *What:* Alert the patient when their records are accessed under break-glass and when a grant is revoked. A notification event is emitted and surfaced in the patient portal (and logged in the audit chain).
 *Needs first:* P3-5, P3-7, P3-13.
 *Done when:* break-glass and revocation each produce a patient notification, visible in the patient portal and recorded in the audit log. ✅ *(`portal_core/notify.py` + `ledger.PatientNotification`: break-glass, revocation and incoming consent requests each create a notification row and append a `patient.notification` entry (identifiers only) to the chain; `audit_seq` is stored on the row, and a row the chain could not record is shown as "not yet in chain" rather than hidden. Surfaced as the alerts card on the patient overview with links to the access-history row. `audit.events.EVENT_PATIENT_NOTIFICATION` added. Tests in `portal/patient/tests.py` and `portal/clinician/tests.py`.)*
@@ -522,27 +523,31 @@ positive control: `test_share_released_only_after_successful_commit`.)*
 
 ### Phase 5 — Testing and hardening
 
-**P5-1 · Security test suite** *(was P5-1)* — Ojas — 15h
+**P5-1 · Security test suite** *(was P5-1)* — Ojas — 15h ✅ *(Ojas to review)*
 *What:* The eleven "attack fails" tests — each proves a security claim by showing the system refuses. These are the evidence for the paper. Includes the **patient-self-access fail-closed test** (ADR-0016): a logged-in patient is refused decryption when the `owner:<patient_id>` attribute is absent, proving portal login alone never releases a DEK.
 *Needs first:* P4-4.
 *Done when:* all eleven negative tests pass and each maps to a specific paper claim.
 *Progress (2026-10-07):* implemented by Powel; Ojas (owner) to review (ADR-0046). All eleven claims are tagged (`@pytest.mark.claim`) with module- and system-level tests; `python -m tests.security.claims --table` prints the claim table and `python -m tests.security.mutations` shows each holding test going red with its control off. **Today: 5 hold (C1, C2, C5, C8, C11), 6 fail at system level** as strict xfails against review findings — C3 (F2/D1), C4 (F9/D3), C6 (F11/D7), C7 (D8), C9 (F34/D5), C10 (F14). C8 flipped 2026-10-08 with the F22 fix (durable consumed ids). P5-1 closes as those fixes land and the markers come off. Evidence and open items: `docs/review/p5-1-evidence.md` (C2/C5 mutation rows still need a Postgres run).
+*Done (2026-10-15):* **all eleven claims hold at system level; no xfails remain.** C6 and C10 flipped with the review fixes before this; C3 (ADR-0067, the audit service validates the assertion), C4 (ADR-0069, full rotation at expiry), C7 (ADR-0068, clinician-signed transition) and C9 (ADR-0066, signed service requests, keyless reads refused before storage) flip here. `python -m tests.security.mutations` with Postgres exits 0: every claim-tagged test goes red under at least one mutation of its control, none decorative (new mutations C3b, C4b, C9a, C9b).
 
-**P5-2 · Benchmark harness** *(was P5-2)* — Nandini — 12h
+**P5-2 · Benchmark harness** *(was P5-2)* — Nandini — 12h ✅ *(Nandini to review)*
 *What:* Measure and plot performance — timings, ciphertext expansion — reproducibly from one command.
 *Needs first:* P4-4.
 *Done when:* every benchmark number is produced and reproducible from one command.
+*Done (2026-10-15):* `DATABASE_URL=... python -m bench.run_benchmarks` runs again: the break-glass step had broken on PR #40's justification rule; it now sends the justification bound into the signed assertion and the clinician-signed transition (ADR-0068), and signs every request (ADR-0066). `bench/results/` is regenerated. **Caveat for the paper:** this run is native Windows, where the HTTP benchmarks measure ~170 ms; `main`'s own code measures the same here, so that is the machine, not signing (the previous results, ~15 ms, came from WSL). Regenerate on the paper's reference machine before quoting latencies.
 
 **P5-3 · Search leakage analysis** *(was P5-3)* — Nandini — 6h
 *What:* Measure exactly what the server can infer from search traffic (access patterns, frequency, volume) — from real captures, not argument.
 *Needs first:* P3-8, P3-9, P5-5.
 *Done when:* the measured leakage is quantified for the paper.
+*Blocked (2026-10-15):* needs real captures, so it waits on P4-6's tools. ADR-0069 adds one fact to measure: every expiry re-derives a record's whole search index under a new key, so tokens from different emergencies of the same record no longer match each other.
 
-**P5-4 · Edge cases** *(was P5-4)* — Nandini — 5h
+**P5-4 · Edge cases** *(was P5-4)* — Nandini — 5h ✅
 *What:* Handle the awkward cases — clock skew, missing shares, malformed input — and test them.
 *Needs first:* P4-4.
 *Done when:* each case is handled and tested.
 *Open (2026-10-07):* missing and malformed shares are handled and tested (`tests/breakglass/test_gate.py::TestOpenEmergencyAccessEdgeCases`). **Clock skew is not.** `breakglass.validate_emergency_assertion` rejects an expired assertion but accepts one whose `issued_at` is in the future, so a fast clinician clock silently extends the assertion's effective lifetime. Proposed fix: reject `issued_at > now + MAX_CLOCK_SKEW` (about 2 minutes) with a negative test. That adds a check ARCHITECTURE.md §8 does not specify, so it needs an ADR, and Powel (`breakglass` owner) has deferred the decision. P5-4 — and the Phase 5 gate — stays open until it is either implemented or recorded as out of scope with a reason.
+*Done (2026-10-15):* clock skew was closed by ADR-0049/0056: an assertion whose `issued_at` is more than `ASSERTION_CLOCK_SKEW` (30 s) ahead, or whose lifetime exceeds `MAX_ASSERTION_TTL`, is refused (`tests/security/test_phase3_assertion_security.py::...::test_future_dated_assertion_rejected` and the lifetime tests beside it). Service requests (ADR-0066) and clinician-signed transitions (ADR-0068) apply the same bounds (`tests/api/test_service_auth.py::test_an_old_envelope_is_refused`).
 
 **P5-5 · Traffic analysis (PyShark)** *(was P5-5)* — Nandini — 13h
 *What:* Code that reads the captured traffic and automatically checks the wire-level claims — no plaintext leaks, no share released before its log entry, break-glass visible only as metadata. This is the required course module, delivered as code not screenshots.

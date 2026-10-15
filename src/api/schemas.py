@@ -190,18 +190,16 @@ class BreakglassUnlockRequest(BaseModel):
         ...,
         description="Clinician's ElGamal PRE public key",
     )
-    lifecycle_signing_key_pem: str = Field(
-        ...,
-        description="PEM-encoded ECDSA private key for signing TransitionEvent",
-    )
-    correlation_id: str | None = None
-    baseline_wrapping_key_b64: str = Field(
-        ...,
+    transition_event: TransitionEvent | None = Field(
+        default=None,
         description=(
-            "Base64-encoded baseline wrapping key; required so every unlock "
-            "registers an expiry session (F7)"
+            "The record's -> EMERGENCY_OPEN transition, signed with the "
+            "clinician's own key inside the custodian (ADR-0068). Required to "
+            "open; ignored when joining an open session. No private key is "
+            "ever sent."
         ),
     )
+    correlation_id: str | None = None
     emergency_duration_seconds: float | None = Field(
         default=None,
         gt=0,
@@ -239,6 +237,13 @@ class BreakglassUnlockResponse(BaseModel):
         description="When the session ends; the facility may shorten the request (F6)",
     )
     message: str = "Emergency access granted and DEK re-wrapped"
+
+
+class LifecycleStateResponse(BaseModel):
+    """A record's stored lifecycle state (the custodian signs transitions from it)."""
+
+    record_id: str
+    state: LifecycleState
 
 
 # --- Search & Discovery Endpoints ---------------------------------------------

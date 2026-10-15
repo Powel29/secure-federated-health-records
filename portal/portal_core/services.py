@@ -1,11 +1,16 @@
 """HTTP clients for the federation services the portals call (ADR-0043).
 
-The portals never import ``src/`` and never touch a key. Every action that
-needs one goes to the Key Custodian, which signs or performs the call on the
-authenticated subject's behalf; everything else (submitting a signed grant,
-discovery, emergency search, chain reads, appending portal-originated audit
-events) goes straight to the owning service. All URLs come from Django
-settings (config allowlist, CONVENTIONS.md §2 rule 8).
+The portals never touch a subject's key. Every action that needs one goes
+to the Key Custodian, which signs or performs the call on the authenticated
+subject's behalf; everything else (submitting a signed grant, discovery,
+emergency search, chain reads, appending portal-originated audit events) goes
+straight to the owning service. All URLs come from Django settings (config
+allowlist, CONVENTIONS.md §2 rule 8).
+
+Every call is signed with the portal's own *service* identity (ADR-0066):
+``api.service_auth`` from ``src/`` is the one import the portal makes, so the
+signing goes through ``crypto_core`` like every other signature. That key
+identifies the portal process; it decides no access and opens no record.
 
 Fail closed: a timeout, connection error, or non-2xx raises
 :class:`ServiceError` with the upstream ``detail`` so a page can show the
@@ -16,6 +21,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -50,8 +57,32 @@ class ServiceStatus:
     detail: str
 
 
+@lru_cache(maxsize=1)
+def _service_auth() -> httpx.Auth | None:
+    """Sign every request as the portal (ADR-0066); ``None`` if unconfigured.
+
+    Without an identity the requests go out unsigned and every service refuses
+    them with 401, which surfaces as a :class:`ServiceError` -- fail closed.
+    """
+    if not settings.SERVICE_KEY_FILE or not settings.SERVICE_CERT_FILE:
+        return None
+    from api.service_auth import ServiceIdentity, SignedRequestAuth
+
+    identity = ServiceIdentity.from_pem(
+        key_pem=Path(settings.SERVICE_KEY_FILE).read_bytes(),
+        certificate_pem=Path(settings.SERVICE_CERT_FILE).read_bytes(),
+    )
+    recipients = {
+        settings.CUSTODIAN_URL: "custodian",
+        settings.AUDIT_SERVICE_URL: "audit-service",
+        **{url: fid for fid, url in settings.FACILITY_URLS.items()},
+        **{url: aid for aid, url in settings.AUTHORITY_URLS.items()},
+    }
+    return SignedRequestAuth(identity, recipients)
+
+
 def _client() -> httpx.Client:
-    return httpx.Client(timeout=settings.SERVICE_TIMEOUT_SECONDS)
+    return httpx.Client(timeout=settings.SERVICE_TIMEOUT_SECONDS, auth=_service_auth())
 
 
 def _detail(resp: httpx.Response) -> str:
@@ -166,6 +197,7 @@ def custodian_breakglass(
     emergency_duration_seconds: float | None = None,
     justification: str = "",
     sensitive_justification: str = "",
+    join_only: bool = False,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "patient_id": patient_id,
@@ -176,6 +208,7 @@ def custodian_breakglass(
         "justification": justification,
         "sensitive_justification": sensitive_justification,
         "assertion_ttl_seconds": settings.ASSERTION_TTL_SECONDS,
+        "join_only": join_only,
     }
     if facility_id:
         body["facility_id"] = facility_id

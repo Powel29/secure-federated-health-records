@@ -154,6 +154,11 @@ AUTHORITY_URLS = _url_map(
     )
 )
 SERVICE_TIMEOUT_SECONDS = float(os.environ.get("SERVICE_TIMEOUT_SECONDS", "8"))
+# The portal's own service identity (ADR-0066): it signs every call the portal
+# makes, so a service can tell the portal from any other caller. It is not a
+# subject's key and opens nothing (ADR-0014). Unset, every call is refused.
+SERVICE_KEY_FILE = os.environ.get("SERVICE_KEY_FILE", "")
+SERVICE_CERT_FILE = os.environ.get("SERVICE_CERT_FILE", "")
 # Break-glass time-box the clinician portal requests, in seconds (ADR-0056).
 # Four hours by default; request 60-120 seconds explicitly for a timer demo.
 EMERGENCY_DURATION_SECONDS = float(

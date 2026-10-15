@@ -39,6 +39,8 @@ FEDERATION_CONFIG_PATH = REPO_ROOT / "deploy" / "pki" / "federation.json"
 # Public trust anchors the facilities load at startup (review F1); written by
 # step 2, before any facility starts.
 TRUST_DIR = REPO_ROOT / "deploy" / "pki" / "trust"
+# Each service's request-signing key and certificate (ADR-0066), also step 2.
+SERVICES_DIR = REPO_ROOT / "deploy" / "pki" / "services"
 
 _AUDIT_PORT = 8020
 _CUSTODIAN_PORT = 8030  # Key Custodian, ADR-0043 (the portals' key agent)
@@ -56,7 +58,14 @@ class ServiceSpec:
     extra_env: dict[str, str]
 
 
+def _identity_env(service_id: str) -> dict[str, str]:
+    return bootstrap.service_env(SERVICES_DIR, service_id, TRUST_DIR)
+
+
 def _default_specs(database_url: str, audit_base_url: str) -> list[ServiceSpec]:
+    authority_urls = ",".join(
+        f"{aid}={_base_url(port)}" for aid, port in _AUTHORITY_PORTS.items()
+    )
     specs = [
         ServiceSpec(
             authority_id,
@@ -69,6 +78,7 @@ def _default_specs(database_url: str, audit_base_url: str) -> list[ServiceSpec]:
                     if authority_id == "authority-med"
                     else "specialty,facility,owner"
                 ),
+                **_identity_env(authority_id),
             },
         )
         for authority_id, port in _AUTHORITY_PORTS.items()
@@ -78,7 +88,12 @@ def _default_specs(database_url: str, audit_base_url: str) -> list[ServiceSpec]:
             "audit",
             "audit",
             _AUDIT_PORT,
-            {"DATABASE_URL": database_url, "AUDIT_ACTOR_ID": "audit-service"},
+            {
+                "DATABASE_URL": database_url,
+                "AUDIT_ACTOR_ID": "audit-service",
+                "FACILITY_CA_CERTS_DIR": str(TRUST_DIR / "facility-cas"),
+                **_identity_env("audit-service"),
+            },
         )
     )
     specs.extend(
@@ -90,8 +105,10 @@ def _default_specs(database_url: str, audit_base_url: str) -> list[ServiceSpec]:
                 "FACILITY_ID": facility_id,
                 "DATABASE_URL": database_url,
                 "AUDIT_SERVICE_URL": audit_base_url,
-                "FEDERATION_ROOT_CERT": str(TRUST_DIR / "root.crt"),
+                "AUTHORITY_URLS": authority_urls,
+                "CUSTODIAN_URL": _base_url(_CUSTODIAN_PORT),
                 "FACILITY_CA_CERTS_DIR": str(TRUST_DIR / "facility-cas"),
+                **_identity_env(facility_id),
             },
         )
         for facility_id, port in _FACILITY_PORTS.items()
@@ -104,12 +121,11 @@ def _default_specs(database_url: str, audit_base_url: str) -> list[ServiceSpec]:
             {
                 "DATABASE_URL": database_url,
                 "AUDIT_SERVICE_URL": audit_base_url,
-                "AUTHORITY_URLS": ",".join(
-                    f"{aid}={_base_url(port)}" for aid, port in _AUTHORITY_PORTS.items()
-                ),
+                "AUTHORITY_URLS": authority_urls,
                 "FACILITY_URLS": ",".join(
                     f"{fid}={_base_url(port)}" for fid, port in _FACILITY_PORTS.items()
                 ),
+                **_identity_env("custodian"),
             },
         )
     )
@@ -177,6 +193,15 @@ def start_federation(
         print("[2/7] generating federation PKI (root anchor + facility CAs)...")
         root, pki = bootstrap.generate_federation_pki(list(_FACILITY_PORTS))
         bootstrap.write_trust_bundle(TRUST_DIR, pki)
+        identities = bootstrap.issue_service_identities(root)
+        bootstrap.write_service_identities(SERVICES_DIR, identities)
+        client = bootstrap.bootstrap_client(
+            identities["bootstrap"],
+            authorities={aid: _base_url(p) for aid, p in _AUTHORITY_PORTS.items()},
+            facilities={fid: _base_url(p) for fid, p in _FACILITY_PORTS.items()},
+            audit=audit_base_url,
+            custodian=_base_url(_CUSTODIAN_PORT),
+        )
 
         print("[3/7] starting authority services...")
         for spec in specs:
@@ -188,7 +213,7 @@ def start_federation(
         print("      registering authorities with the root anchor...")
         authority_certificates = {
             authority_id: bootstrap.register_authority(
-                _base_url(port), root, authority_id
+                _base_url(port), root, authority_id, client=client
             )
             for authority_id, port in _AUTHORITY_PORTS.items()
         }
@@ -218,6 +243,7 @@ def start_federation(
             audit=audit_base_url,
             facility_a=_base_url(8001),
             facility_b=_base_url(8002),
+            custodian=_base_url(_CUSTODIAN_PORT),
         )
         print("      registering federation members and seeding synthetic data...")
         bootstrap.populate_registry(
@@ -236,7 +262,7 @@ def start_federation(
         print(f"      federation config written to {FEDERATION_CONFIG_PATH}")
         if bootstrap.seed_enabled():
             summary = bootstrap.seed_federation(
-                endpoints, config, _base_url(_CUSTODIAN_PORT)
+                endpoints, config, _base_url(_CUSTODIAN_PORT), client=client
             )
             print(f"      {summary}")
         else:

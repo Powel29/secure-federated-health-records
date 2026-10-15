@@ -18,7 +18,6 @@ import datetime
 from api.hospital import create_hospital_app
 from consent.service import create_consent_grant, create_consent_request
 from contracts.enums import ConsentStatus
-from fastapi.testclient import TestClient
 
 
 class TestHospitalReadEndpoint:
@@ -266,11 +265,16 @@ class TestHospitalReadEndpoint:
         # Same seeded repo, but this app points at an unreachable audit service.
         app = create_hospital_app(
             facility_id="facility-a",
+            rotation_ports=test_setup["rotation"].ports,
+            service_root=test_setup["pki"]["root"].certificate,
             repository=test_setup["repo"],
             expiry_manager=test_setup["expiry_manager"],
             audit_service_url="http://127.0.0.1:1",
+            identity=test_setup["pki"]["services"].identity("facility-a"),
         )
-        client = TestClient(app, raise_server_exceptions=False)
+        client = test_setup["pki"]["services"].client(
+            app, "facility-a", raise_server_exceptions=False
+        )
         attrs = test_setup["attrs"]
 
         owner_keyring = {
@@ -314,10 +318,16 @@ class TestHospitalReadEndpoint:
 
         app = create_hospital_app(
             facility_id="facility-a",
+            rotation_ports=test_setup["rotation"].ports,
+            service_root=test_setup["pki"]["root"].certificate,
             repository=test_setup["repo"],
             expiry_manager=test_setup["expiry_manager"],
         )
-        response = TestClient(app).post("/records/rec-001/read", json=body)
+        response = (
+            test_setup["pki"]["services"]
+            .client(app, "facility-a")
+            .post("/records/rec-001/read", json=body)
+        )
 
         assert response.status_code == 503
         assert "plaintext_b64" not in response.text

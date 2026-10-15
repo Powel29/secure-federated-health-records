@@ -115,6 +115,35 @@ def _threshold_one(mp: pytest.MonkeyPatch) -> None:
     mp.setattr(breakglass.gate, "THRESHOLD", 1)
 
 
+def _audit_skips_assertion_checks(mp: pytest.MonkeyPatch) -> None:
+    """The audit service releases share 3 without validating the assertion."""
+    import api.audit_service
+    from api.hospital import FacilityTrust
+
+    mp.setattr(api.audit_service, "validate_emergency_assertion", lambda **k: None)
+    mp.setattr(api.audit_service, "validate_clinical_context", lambda *a: None)
+    mp.setattr(
+        FacilityTrust,
+        "issuing_ca",
+        lambda self, leaf: next(iter(self.facility_cas.items()), None),
+    )
+
+
+def _expiry_does_not_rotate(mp: pytest.MonkeyPatch) -> None:
+    """Expiry re-baselines without replacing any key (the pre-ADR-0069 state)."""
+    import api.rotation
+    from lifecycle.expiry import RotationOutcome
+
+    def nothing(self, session):
+        return RotationOutcome(
+            rotated_record=session.current_record,
+            baseline_wrapping=session.emergency_wrapping,
+            emergency_wrapping=session.emergency_wrapping,
+        )
+
+    mp.setattr(api.rotation.FacilityRotator, "__call__", nothing)
+
+
 def _key_outlives_session(mp: pytest.MonkeyPatch) -> None:
     from lifecycle.expiry import EmergencyExpiryManager
 
@@ -194,6 +223,21 @@ def _skip_transition_signature(mp: pytest.MonkeyPatch) -> None:
     mp.setattr(lifecycle.state_machine, "verify", lambda *a, **k: None)
 
 
+def _any_caller_is_bootstrap(mp: pytest.MonkeyPatch) -> None:
+    """Service authentication waves every request through as bootstrap."""
+    import api.service_auth
+
+    caller = api.service_auth.CallerIdentity("bootstrap", "bootstrap")
+    mp.setattr(api.service_auth, "authenticate_request", lambda *a, **k: caller)
+
+
+def _read_loads_before_checking(mp: pytest.MonkeyPatch) -> None:
+    """read_record touches the store before refusing a keyless requester."""
+    import api.hospital
+
+    mp.setattr(api.hospital, "_presents_no_key", lambda payload: False)
+
+
 def _forget_consumed_ids(mp: pytest.MonkeyPatch) -> None:
     from breakglass.replay import ConsumedAssertionIds
 
@@ -214,9 +258,19 @@ MUTATIONS: dict[str, list[Mutation]] = {
             "C2a", "share released despite a failed commit", _release_without_commit
         )
     ],
-    "C3": [Mutation("C3a", "gate threshold lowered to one share", _threshold_one)],
+    "C3": [
+        Mutation("C3a", "gate threshold lowered to one share", _threshold_one),
+        Mutation(
+            "C3b",
+            "audit service releases without validating the assertion",
+            _audit_skips_assertion_checks,
+        ),
+    ],
     "C4": [
-        Mutation("C4a", "emergency key outlives its session", _key_outlives_session)
+        Mutation("C4a", "emergency key outlives its session", _key_outlives_session),
+        Mutation(
+            "C4b", "expiry re-baselines without rotating", _expiry_does_not_rotate
+        ),
     ],
     "C5": [
         Mutation("C5a", "entry signatures not checked", _skip_entry_signature),
@@ -234,15 +288,23 @@ MUTATIONS: dict[str, list[Mutation]] = {
         Mutation("C7a", "transition signature not checked", _skip_transition_signature)
     ],
     "C8": [Mutation("C8a", "consumed assertion ids forgotten", _forget_consumed_ids)],
+    "C9": [
+        Mutation(
+            "C9a", "service authentication lets any caller in", _any_caller_is_bootstrap
+        ),
+        Mutation(
+            "C9b",
+            "read loads the record before the key check",
+            _read_loads_before_checking,
+        ),
+    ],
     "C10": [Mutation("C10a", "credential validation skipped", _skip_credential_checks)],
 }
 _BY_ID = {m.id: m for group in MUTATIONS.values() for m in group}
 
-# C9 has no holding test to mutate (BOLA is xfail today). C11's control is the
-# absence of key material -- there is no switch to flip; its tests carry a
-# positive control (the owner key does open the record) instead.
+# C11's control is the absence of key material -- there is no switch to flip;
+# its tests carry a positive control (the owner key does open the record).
 NOT_MUTATED = {
-    "C9": "no holding test yet (xfail on F34)",
     "C11": "control is the absence of the owner key; covered by a positive control",
 }
 

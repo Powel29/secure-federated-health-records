@@ -16,7 +16,6 @@ import pytest
 from api.audit_client import AuditServiceError
 from api.hospital import create_hospital_app
 from contracts.enums import LifecycleState
-from fastapi.testclient import TestClient
 from search.service import derive_search_token
 
 
@@ -48,11 +47,16 @@ class TestHospitalSearchEndpoints:
 
         app = create_hospital_app(
             facility_id="facility-a",
+            rotation_ports=test_setup["rotation"].ports,
+            service_root=test_setup["pki"]["root"].certificate,
             repository=repo,
             expiry_manager=expiry_manager,
             audit_service_url="http://audit-down:9999",
+            identity=test_setup["pki"]["services"].identity("facility-a"),
         )
-        client = TestClient(app, raise_server_exceptions=False)
+        client = test_setup["pki"]["services"].client(
+            app, "facility-a", raise_server_exceptions=False
+        )
 
         def _dead(*args, **kwargs):
             raise httpx.ConnectError("connection refused")
@@ -98,8 +102,6 @@ class TestHospitalSearchEndpoints:
             actor_id="dr-alice",
             correlation_id="corr-search-001",
             emergency_key=test_setup["em_key"],
-            baseline_wrapping_key=b"k_base_32bytes_sample_key_001!",
-            baseline_wrapping=test_setup["wrapping"],
             emergency_wrapping=test_setup["em_wrapping"],
             current_record=test_setup["record"],
             return_state=LifecycleState.GRANTED,
@@ -132,8 +134,6 @@ class TestHospitalSearchEndpoints:
             actor_id="dr-alice",
             correlation_id="corr-search-002",
             emergency_key=test_setup["em_key"],
-            baseline_wrapping_key=b"k_base_32bytes_sample_key_001!",
-            baseline_wrapping=test_setup["wrapping"],
             emergency_wrapping=test_setup["em_wrapping"],
             current_record=test_setup["record"],
             return_state=LifecycleState.GRANTED,

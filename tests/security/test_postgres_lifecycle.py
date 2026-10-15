@@ -25,6 +25,7 @@ from storage.repositories import insert_authority, insert_facility, insert_patie
 
 from tests.api.conftest import (  # noqa: F401
     RecordingAuditSink,
+    RecordingRotationPorts,
     attribute_materials,
     federation_pki,
     make_trust,
@@ -78,6 +79,7 @@ def store(federation_pki, attribute_materials):  # noqa: F811
         PostgresStorageRepository(admin), attribute_materials, federation_pki
     )
     opened: list[psycopg.Connection] = [admin]
+    rotation = RecordingRotationPorts(attribute_materials["attr_keyring"])
 
     def facility_process(duration: float = 60.0) -> TestClient:
         """One facility process: its own connection, replay store and timer."""
@@ -92,13 +94,15 @@ def store(federation_pki, attribute_materials):  # noqa: F811
             expiry_manager=manager,
             trust=make_trust(federation_pki),
             audit_sink=RecordingAuditSink(),
+            rotation_ports=rotation.ports,
         )
-        return TestClient(app)
+        return federation_pki["services"].client(app, "facility-a")
 
     yield {
         "admin": admin,
         "repo": PostgresStorageRepository(admin),
         "process": facility_process,
+        "rotation": rotation,
         "pki": federation_pki,
         "attrs": attribute_materials,
         **seeded,
@@ -109,7 +113,7 @@ def store(federation_pki, attribute_materials):  # noqa: F811
 
 def _hospital(store) -> dict:
     """The dict shape _unlock_payload expects."""
-    return {"pki": store["pki"], "shares": store["shares"]}
+    return {"pki": store["pki"], "shares": store["shares"], "repo": store["repo"]}
 
 
 def test_concurrent_breakglass_one_wins(store):
@@ -209,12 +213,16 @@ def test_tampered_genesis_stops_the_audit_service(store):
     service to be healthy, so nothing else starts either.
     """
     admin = store["admin"]
-    create_audit_app(admin, actor_id="audit-boot")  # writes the genesis entry
+    create_audit_app(
+        admin, actor_id="audit-boot", service_root=store["pki"]["root"].certificate
+    )  # writes the genesis entry
     with admin.cursor() as cur:
         cur.execute("UPDATE audit_log SET actor_id = 'forged' WHERE seq = 0")
 
     with pytest.raises(Exception) as excinfo:  # noqa: B017 -- any verify error
-        create_audit_app(admin, actor_id="audit-boot")
+        create_audit_app(
+            admin, actor_id="audit-boot", service_root=store["pki"]["root"].certificate
+        )
     assert type(excinfo.value).__name__ in {
         "InvalidSignatureError",
         "TamperedEntryError",

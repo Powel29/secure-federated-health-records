@@ -226,6 +226,53 @@ def _compile_node(
     raise PolicyCompileError(f"unknown policy node type {node.node_type!r}")
 
 
+def policy_tree_of(compiled: CompiledPolicy) -> PolicyTree:
+    """The access-policy tree ``compiled`` was compiled from (ADR-0069).
+
+    A compiled layout keeps every node's type and every leaf's attribute and
+    owning authority, so the tree can be read back and compiled again under a
+    fresh root secret. Nothing secret is read: leaf ciphertexts are ignored.
+
+    Raises:
+        PolicyCompileError: The layout contains an unknown node.
+    """
+    return _tree_of(compiled.root)
+
+
+def _tree_of(node: CompiledNode) -> PolicyTree:
+    if isinstance(node, CompiledLeaf):
+        return PolicyTree(
+            node_type=PolicyNodeType.LEAF,
+            attribute=node.attribute,
+            authority_id=node.authority_id,
+        )
+    if isinstance(node, CompiledInternal):
+        return PolicyTree(
+            node_type=node.node_type,
+            children=tuple(_tree_of(child) for child in node.children),
+        )
+    raise PolicyCompileError(f"unknown compiled node {type(node).__name__}")
+
+
+def policy_leaves(tree: PolicyTree) -> list[AttributeKey]:
+    """Every ``(authority_id, name, value)`` leaf of ``tree``, without repeats."""
+    leaves: list[AttributeKey] = []
+
+    def walk(node: PolicyTree) -> None:
+        if node.node_type is PolicyNodeType.LEAF:
+            if node.attribute is None or node.authority_id is None:
+                raise PolicyCompileError("leaf node missing attribute or authority_id")
+            key = _leaf_key(node.attribute, node.authority_id)
+            if key not in leaves:
+                leaves.append(key)
+            return
+        for child in node.children:
+            walk(child)
+
+    walk(tree)
+    return leaves
+
+
 def reconstruct_root_secret(
     compiled: CompiledPolicy,
     holder_keyring: AttributeKeyring,

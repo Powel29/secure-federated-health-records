@@ -86,6 +86,7 @@ def append_entry(
     event_data: dict[str, Any],
     actor_id: str,
     correlation_id: str,
+    auth: httpx.Auth | None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     """POST one entry to the Audit Service's ``/entries`` endpoint.
@@ -99,6 +100,9 @@ def append_entry(
             rule 3); this function does not enforce that, only forwards it.
         actor_id: The party responsible for the logged event.
         correlation_id: Groups this entry with the rest of its logical flow.
+        auth: Signs the request as this process's service identity
+            (``api.service_auth.SignedRequestAuth``, ADR-0066). Required: the
+            audit service refuses unsigned appends, so ``None`` only fails.
         timeout: HTTP request timeout in seconds.
 
     Returns:
@@ -128,6 +132,7 @@ def append_entry(
             },
             timeout=timeout,
             verify=_tls_verify(),
+            auth=auth,
         )
         resp.raise_for_status()
     except httpx.HTTPError as exc:
@@ -142,6 +147,7 @@ def append_entry(
 def make_lifecycle_audit_logger(
     audit_service_url: str,
     *,
+    auth: httpx.Auth | None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> Callable[[dict[str, Any]], None]:
     """Build the ``audit_logger`` callback ``EmergencyExpiryManager`` expects.
@@ -152,6 +158,7 @@ def make_lifecycle_audit_logger(
 
     Args:
         audit_service_url: Base URL of the standalone Audit Service.
+        auth: Signs each append as the facility (ADR-0066).
         timeout: Per-request HTTP timeout in seconds.
 
     Returns:
@@ -170,6 +177,7 @@ def make_lifecycle_audit_logger(
             event_data=entry,
             actor_id=entry["actor_id"],
             correlation_id=entry["correlation_id"],
+            auth=auth,
             timeout=timeout,
         )
 

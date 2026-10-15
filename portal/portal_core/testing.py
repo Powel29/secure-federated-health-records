@@ -9,6 +9,7 @@ crypto core, which has its own suites under ``tests/``.
 
 from __future__ import annotations
 
+import re
 import secrets
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -42,6 +43,25 @@ def clinician(username: str = "house", subject_id: str = "doc-201") -> User:
 
 def admin(username: str = "auditor") -> User:
     return make_user(username, Role.ADMIN, f"admin-{username}")
+
+
+def declare_token(response: Any) -> str:
+    """The one-time declare token a rendered break-glass form carries (ADR-0065)."""
+    match = re.search(
+        r'name="declare_token" value="([^"]+)"', response.content.decode("utf-8")
+    )
+    if match is None:
+        raise AssertionError("the break-glass form carries no declare token")
+    return match.group(1)
+
+
+def arm_declare(client: Any) -> str:
+    """Put a declare token in a test client's session, as a form render would."""
+    token = secrets.token_urlsafe(16)
+    session = client.session
+    session["clinician.declare_token"] = token
+    session.save()
+    return token
 
 
 def refuse(status: int, detail: str, service: str = "custodian") -> ServiceError:

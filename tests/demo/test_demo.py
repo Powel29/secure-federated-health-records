@@ -149,7 +149,9 @@ def test_seed_synthetic_data_integration():
         endpoints = fed["endpoints"]
         config = fed["config"]
 
-        seeded = seed_synthetic_data(endpoints=endpoints, config=config, verbose=True)
+        seeded = seed_synthetic_data(
+            endpoints=endpoints, config=config, client=fed["client"], verbose=True
+        )
 
         assert "dataset" in seeded
         assert "records" in seeded
@@ -181,6 +183,7 @@ def test_full_demo_scenario_8_acts():
             step_mode=False,
             no_color=True,
             verbose=True,
+            client=fed["client"],
         )
 
         assert success is True

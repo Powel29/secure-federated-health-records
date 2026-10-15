@@ -33,7 +33,6 @@ import datetime
 import pytest
 from contracts.enums import LifecycleState
 from crypto_core import InvalidSignatureError, generate_ec_keypair
-from crypto_core.symmetric import generate_key
 from lifecycle.exceptions import (
     EmergencySessionExpiredError,
     IllegalTransitionError,
@@ -42,7 +41,16 @@ from lifecycle.exceptions import (
 from lifecycle.expiry import EmergencyExpiryManager
 from lifecycle.state_machine import create_transition_event, verify_transition_event
 from records.exceptions import DecryptionError, UnwrappingError
-from records.service import decrypt_record, encrypt_record, unwrap_dek, wrap_dek
+from records.service import decrypt_record, unwrap_dek
+from search.service import SearchTermsError, open_search_terms
+from shamir.split import combine_shares
+
+from tests.rotation_support import (
+    SEARCH_TERMS,
+    PlanRotator,
+    build_rotation_scenario,
+    rotated_dek,
+)
 
 FAKE_START = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
 
@@ -61,42 +69,10 @@ class _FakeClock:
 
 
 def _build_scenario(record_id: str = "rec-expiry-security-001") -> dict:
-    """One record's DEK, wrapped both under a policy-root ('baseline') key and
-    under a break-glass emergency key -- the shape an already-open emergency
-    session carries.
-    """
-    plaintext = b'{"note": "synthetic security-test record for P3-6"}'
-    baseline_key = generate_key(32)
-    emergency_key = generate_key(32)
-
-    record, dek = encrypt_record(
-        plaintext=plaintext,
-        patient_id="pat-security-001",
-        facility_id="fac-security-001",
-        policy_id="policy-security-001",
-        record_id=record_id,
+    """One ingested record and the material an open emergency session holds."""
+    return build_rotation_scenario(
+        record_id, patient_id="pat-security-001", facility_id="fac-security-001"
     )
-    baseline_wrapping = wrap_dek(
-        dek=dek,
-        record_id=record_id,
-        wrapping_key=baseline_key,
-        wrapped_for="policy-security-001",
-    )
-    emergency_wrapping = wrap_dek(
-        dek=dek,
-        record_id=record_id,
-        wrapping_key=emergency_key,
-        wrapped_for="emergency",
-    )
-    return {
-        "plaintext": plaintext,
-        "dek": dek,
-        "baseline_key": baseline_key,
-        "emergency_key": emergency_key,
-        "record": record,
-        "baseline_wrapping": baseline_wrapping,
-        "emergency_wrapping": emergency_wrapping,
-    }
 
 
 def _register(
@@ -108,13 +84,14 @@ def _register(
     duration_seconds=None,
     return_state=LifecycleState.GRANTED,
 ):
+    # Expiry runs the real rotation for this scenario (ADR-0069).
+    scenario.setdefault("rotator", PlanRotator(scenario))
+    manager.attach_rotator(scenario["rotator"])
     return manager.register_session(
         record_id=scenario["record"].record_id,
         actor_id=actor_id,
         correlation_id=correlation_id,
         emergency_key=scenario["emergency_key"],
-        baseline_wrapping_key=scenario["baseline_key"],
-        baseline_wrapping=scenario["baseline_wrapping"],
         emergency_wrapping=scenario["emergency_wrapping"],
         current_record=scenario["record"],
         return_state=return_state,
@@ -197,7 +174,7 @@ class TestOldEmergencyKeyCannotUnwrapNewDekWrapping:
         manager = EmergencyExpiryManager(signing_key=signing_key, clock=clock)
         result = _register_and_expire(manager, scenario, clock)
 
-        new_dek = unwrap_dek(result.rotated_wrapping, scenario["baseline_key"])
+        new_dek = rotated_dek(scenario, result)
         assert len(new_dek) == 32
 
     def test_old_emergency_key_cannot_unwrap_rotated_wrapping(
@@ -373,3 +350,112 @@ class TestEmergencyCannotUndoRevocation:
                 _register(manager, scenario, return_state=bad)
         with pytest.raises(SessionNotFoundError):
             manager.get_active_emergency_key(scenario["record"].record_id)
+
+
+# ---------------------------------------------------------------------------
+# Full rotation (ADR-0069, review D3-a): every old key is dead
+# ---------------------------------------------------------------------------
+
+
+class TestRotationReplacesEveryKey:
+    """Paper claim (C4): after expiry nothing from the emergency -- the old
+    emergency key, its shares, the old policy root, the old search tokens --
+    opens or finds anything. Each negative test has its positive control."""
+
+    def _expire(self, scenario, signing_keys, clock):
+        signing_key, _ = signing_keys
+        manager = EmergencyExpiryManager(signing_key=signing_key, clock=clock)
+        result = _register_and_expire(manager, scenario, clock)
+        return result, scenario["rotator"].last
+
+    def test_positive_control_new_shares_open_the_new_emergency_wrapping(
+        self, scenario, signing_keys, clock
+    ) -> None:
+        result, plan = self._expire(scenario, signing_keys, clock)
+        new_key = combine_shares([plan.share(1), plan.share(3)], k=2)
+        assert unwrap_dek(result.emergency_wrapping, new_key) == rotated_dek(
+            scenario, result
+        )
+
+    def test_old_shares_do_not_open_the_new_emergency_wrapping(
+        self, scenario, signing_keys, clock
+    ) -> None:
+        result, _ = self._expire(scenario, signing_keys, clock)
+        old_shares = scenario["shares"]
+        old_key = combine_shares([old_shares[0], old_shares[2]], k=2)
+        assert old_key == scenario["emergency_key"]  # they still combine...
+        with pytest.raises(UnwrappingError):  # ...to a key that opens nothing
+            unwrap_dek(result.emergency_wrapping, old_key)
+
+    def test_emergency_wrapping_moves_up_one_generation(
+        self, scenario, signing_keys, clock
+    ) -> None:
+        result, plan = self._expire(scenario, signing_keys, clock)
+        assert result.emergency_wrapping.generation == (
+            scenario["emergency_wrapping"].generation + 1
+        )
+        assert plan.generation == result.emergency_wrapping.generation
+
+    def test_old_policy_root_cannot_unwrap_the_new_policy_wrapping(
+        self, scenario, signing_keys, clock
+    ) -> None:
+        result, _ = self._expire(scenario, signing_keys, clock)
+        assert rotated_dek(scenario, result)  # positive: the new root opens it
+        with pytest.raises(UnwrappingError):
+            unwrap_dek(result.rotated_wrapping, scenario["baseline_key"])
+
+    def test_old_search_tokens_are_gone_from_the_new_index(
+        self, scenario, signing_keys, clock
+    ) -> None:
+        _, plan = self._expire(scenario, signing_keys, clock)
+        assert len(plan.search_tokens) == len(SEARCH_TERMS)  # still indexed
+        assert not set(plan.search_tokens) & set(scenario["search_tokens"].values())
+
+    def test_search_terms_open_only_under_the_new_dek(
+        self, scenario, signing_keys, clock
+    ) -> None:
+        result, plan = self._expire(scenario, signing_keys, clock)
+        record_id = scenario["record"].record_id
+        assert plan.sealed_search_terms is not None
+        assert open_search_terms(
+            plan.sealed_search_terms, rotated_dek(scenario, result), record_id
+        ) == list(SEARCH_TERMS)
+        with pytest.raises(SearchTermsError):
+            open_search_terms(plan.sealed_search_terms, scenario["dek"], record_id)
+
+    def test_a_retried_expiry_finishes_the_same_rotation(
+        self, scenario, signing_keys, clock
+    ) -> None:
+        """A failure after the plan is made must not mint a second key whose
+        shares would not match the ones already handed out (ADR-0069)."""
+        signing_key, _ = signing_keys
+        calls = {"n": 0}
+        inner = PlanRotator(scenario)
+
+        def flaky(session):
+            outcome = inner(session)
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("share holder unreachable")
+            return outcome
+
+        manager = EmergencyExpiryManager(
+            signing_key=signing_key, clock=clock, rotator=flaky
+        )
+        manager.register_session(
+            record_id=scenario["record"].record_id,
+            actor_id="dr-alice",
+            correlation_id="corr-retry",
+            emergency_key=scenario["emergency_key"],
+            emergency_wrapping=scenario["emergency_wrapping"],
+            current_record=scenario["record"],
+            return_state=LifecycleState.GRANTED,
+            duration_seconds=5.0,
+        )
+        clock.advance(5)
+        with pytest.raises(RuntimeError):
+            manager.expire_session(scenario["record"].record_id)
+        clock.advance(120)
+        manager.expire_session(scenario["record"].record_id)
+        assert len(inner.plans) == 2
+        assert inner.plans[0] is inner.plans[1]

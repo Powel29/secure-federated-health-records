@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import json
+import secrets
 from datetime import date, timedelta
 from typing import Any
 from uuid import uuid4
@@ -64,6 +65,9 @@ REASON_CODES = [
 ]
 REQUEST_TTL_DAYS = 7
 _DISCOVERY_SESSION_KEY = "clinician.discovery"
+# One-time token for the declare form (ADR-0065): a reloaded or re-sent
+# declaration finds it already spent and opens nothing.
+_DECLARE_TOKEN_KEY = "clinician.declare_token"
 
 
 def _session_safe(meta: dict[str, Any]) -> dict[str, Any]:
@@ -336,6 +340,27 @@ def _identified(request: Any) -> dict[str, Any]:
     return ident
 
 
+def _form(request: Any, ctx: dict[str, Any], status: int = 200) -> HttpResponse:
+    """Render the break-glass form with a fresh one-time declare token.
+
+    Every render replaces the token, so only the newest form can declare and
+    a declaration can be sent once (ADR-0065).
+    """
+    token = secrets.token_urlsafe(32)
+    request.session[_DECLARE_TOKEN_KEY] = token
+    ctx["declare_token"] = token
+    return render(request, "clinician/breakglass.html", ctx, status=status)
+
+
+def _spend_declare_token(request: Any) -> bool:
+    """Consume the session's declare token; ``True`` only if the form sent it."""
+    expected = request.session.pop(_DECLARE_TOKEN_KEY, None)
+    sent = request.POST.get("declare_token", "")
+    return bool(expected) and secrets.compare_digest(
+        expected.encode("utf-8"), sent.encode("utf-8")
+    )
+
+
 @role_required(Role.CLINICIAN)
 def breakglass(request: Any) -> HttpResponse:
     ctx = _base_ctx(request, "Emergency break-glass")
@@ -350,7 +375,7 @@ def breakglass(request: Any) -> HttpResponse:
             "That patient was not selected through a logged directory lookup — "
             "identify the patient first."
         )
-        return render(request, "clinician/breakglass.html", ctx, status=400)
+        return _form(request, ctx, status=400)
     directory = (
         PatientDirectory.objects.filter(subject_id=patient_id).first()
         if patient_id
@@ -368,30 +393,41 @@ def breakglass(request: Any) -> HttpResponse:
         }
     )
     if request.method != "POST":
-        return render(request, "clinician/breakglass.html", ctx)
+        return _form(request, ctx)
 
     action = request.POST.get("action")
     if not patient_id:
         ctx["error"] = (
             "Identify the patient first — an assertion is bound to a patient_id."
         )
-        return render(request, "clinician/breakglass.html", ctx, status=400)
+        return _form(request, ctx, status=400)
 
     if action == "discover":
         try:
             found = _discover(ctx["facility_id"], patient_id)
         except ServiceError as exc:
             ctx["error"] = f"Discovery refused — {exc.service}: {exc.detail}"
-            return render(request, "clinician/breakglass.html", ctx, status=502)
+            return _form(request, ctx, status=502)
         session = request.session.get(_DISCOVERY_SESSION_KEY) or {}
         session[patient_id] = found
         request.session[_DISCOVERY_SESSION_KEY] = session
         ctx["discovered"] = found
         for record in found:
             record["label"] = record_label(record)
-        return render(request, "clinician/breakglass.html", ctx)
+        return _form(request, ctx)
 
     # action == "declare": one declaration may cover several records (ADR-0061).
+    # The one-time token is spent before anything else, so a reload of this
+    # POST's response, or any re-send, declares nothing (ADR-0065).
+    if action != "declare":
+        ctx["error"] = "Unknown action."
+        return _form(request, ctx, status=400)
+    if not _spend_declare_token(request):
+        ctx["error"] = (
+            "This declaration was already sent, or the form is out of date. "
+            "Nothing was opened; review the records and declare again if needed."
+        )
+        return _form(request, ctx, status=409)
     record_ids = [
         rid.strip()
         for rid in (
@@ -417,11 +453,11 @@ def breakglass(request: Any) -> HttpResponse:
         ctx["error"] = (
             "Choose at least one discovered record and a reason, and explain the immediate clinical need (at least 20 characters)."
         )
-        return render(request, "clinician/breakglass.html", ctx, status=400)
+        return _form(request, ctx, status=400)
     by_id = {r["record_id"]: r for r in discovery or []}
     if not set(record_ids) <= by_id.keys():
         ctx["error"] = "Choose records from this patient's discovery results."
-        return render(request, "clinician/breakglass.html", ctx, status=400)
+        return _form(request, ctx, status=400)
 
     episode = (
         CareEpisode.objects.filter(pk=request.session.get("clinician.episode")).first()
@@ -467,12 +503,7 @@ def breakglass(request: Any) -> HttpResponse:
                 "failed_case": case,
             }
         )
-        return render(
-            request,
-            "clinician/breakglass.html",
-            ctx,
-            status=403 if exc.is_denial else 503,
-        )
+        return _form(request, ctx, status=403 if exc.is_denial else 503)
 
     # The decrypted payload is shown on this response only -- never stored.
     ctx = _case_ctx(request, case)
@@ -751,6 +782,9 @@ def _show_record(case: BreakglassCase, ctx: dict[str, Any]) -> int:
             facility_id=case.facility_id,
             justification=case.justification,
             sensitive_justification=case.sensitive_justification,
+            # A page view joins the open session or fails; it never opens a
+            # new emergency, even if the window closed a moment ago (ADR-0065).
+            join_only=True,
         )
     except ServiceError as exc:
         ctx["view_error"] = f"{exc.service}: {exc.detail}"

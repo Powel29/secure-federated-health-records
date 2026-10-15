@@ -268,16 +268,29 @@ contracts (T02) -> crypto_core -> records -> lifecycle -> breakglass -> search -
      `h_i = SHA-256(h_{i-1} ‖ event ‖ timestamp ‖ actor)` first, and only then
      returns its share along with the new chain head.** If the log write fails,
      no share is returned and break-glass fails closed.
-4. Any 2 of 3 reconstruct the emergency key. `lifecycle` records the signed
-   Granted → Emergency-open transition (C9).
+
+     Each share holder validates the emergency assertion itself before it
+     releases anything: the audit service runs the same five-point check
+     against its own trust anchors and requires the assertion's signed context
+     digest to name this record (ADR-0067).
+4. Any 2 of 3 reconstruct the emergency key. `lifecycle` records the
+   Granted → Emergency-open transition, signed by the clinician's own key
+   inside the custodian and verified against their certificate before any
+   share is combined (C9, ADR-0068).
 5. Cross-facility handoff: the record key is re-wrapped to the out-of-network
    clinician via proxy re-encryption, without the proxy ever seeing plaintext
    (C3).
 6. **Emergency search** becomes available: tokens are derived from the emergency
    key via HKDF, so the capability exists only in this state (C12).
 7. Time-box expires. `lifecycle` performs Emergency-open → Expired → forced
-   rotation back to baseline with no administrator action (C9). Search tokens
-   are dead because the key they derive from is gone.
+   rotation back to baseline with no administrator action (C9). The rotation
+   replaces every key (ADR-0069): a new DEK and re-encrypted record, the same
+   policy tree compiled under a new root secret, a new emergency key whose new
+   shares go to the custodian and the audit service, and the search index
+   re-derived under it from the record's term list (sealed under the DEK at
+   ingest). It is stored before the record returns to baseline. Search tokens
+   are dead because the key they derive from is gone, and the old shares open
+   nothing.
 
 ### Trust boundaries
 
@@ -491,17 +504,32 @@ portal DB, never in the crypto store (ADR-0011).
 
 ### Replay protection
 
-Emergency assertions, share requests, and transition events each carry a
-one-time ID. A consumed-ID store rejects reuse. Without this, a captured
-break-glass request could be replayed for repeated emergency sessions, which
-would defeat the time-boxing that the state machine exists to enforce.
+Emergency assertions, share requests, transition events and every
+service-to-service request each carry a one-time ID. A consumed-ID store
+rejects reuse. Without this, a captured break-glass request could be replayed
+for repeated emergency sessions, which would defeat the time-boxing that the
+state machine exists to enforce.
+
+### Service identity and signed requests
+
+Every federation process (facilities, the audit service, the authorities, the
+custodian, the portal and the bootstrap job) holds a key and a certificate
+signed directly by the federation root: CN = service id, OU =
+`service:<kind>`. Every call between them carries that certificate and a
+signed one-time `RequestEnvelope` binding caller, recipient, method, path,
+body and time; the body itself travels unchanged. The callee checks all of it
+before any route code runs, then allows the call only if the route permits the
+caller's kind (ADR-0066, reversing the service-signing cut of ADR-0015). The
+portal's key identifies the portal process; it is not a subject's key and
+opens nothing, so ADR-0014 stands.
 
 ### Object-level authorization
 Endpoints authorise the caller for the *specific* patient/record before doing
-work, but the cryptographic layer is the real backstop: an unauthorised caller
-cannot decrypt regardless. The residual risk is metadata leakage and patient-ID
-enumeration, so this is verified by a **test** in the security suite (P5-1)
-rather than a separate middleware layer (strictness pass, ADR-0015).
+work: only a key agent may read, and a requester presenting no attribute key
+is refused before the record, its wrapping or its policy is loaded
+(ADR-0066). The cryptographic layer is the real backstop: an unauthorised
+caller cannot decrypt regardless. This is verified by a **test** in the
+security suite (P5-1, claim C9).
 
 
 ### Credential lifecycle

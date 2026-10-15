@@ -8,17 +8,18 @@ session's ``expires_at`` passes, emits two *signed* ``TransitionEvent``\\ s
 through the shared :class:`~lifecycle.state_machine.LifecycleStateMachine` --
 ``EMERGENCY_OPEN -> EXPIRED`` and then ``EXPIRED`` back to the state the
 record was in before break-glass (``GRANTED`` or ``REVOKED``, ADR-0058) -- and, between
-the two, forces a fresh DEK and re-encrypts the record's payload so nothing
-wrapped under the (retired) emergency key can decrypt the record's ciphertext
-going forward.
+the two, runs the forced rotation: a fresh DEK, a fresh policy root secret, a
+fresh emergency key with new shares for its holders, and a search index
+rebuilt under it (ADR-0069), so nothing from before -- old shares, old
+wrappings, old search tokens -- opens anything afterwards.
 
-The manager owns none of the cryptographic material for the record itself;
-callers hand it everything a break-glass unlock (P3-5, ``breakglass.gate``)
-already produced -- the reconstructed emergency key, the DEK wrapped under it,
-and the DEK wrapped under the policy root secret the record rotates *back*
-to. This module does not import ``breakglass`` at all: it consumes plain
-``bytes``/``DEKWrapping``/``Record`` values so it has no opinion on how the
-emergency session was opened, only on how it ends.
+The rotation itself needs the facility's store, the authorities' authoring
+keys and the share holders, so the facility supplies it as a *rotator*
+(:meth:`EmergencyExpiryManager.attach_rotator`); ``lifecycle.rotation``
+computes it. The manager only decides *when*: it calls the rotator between
+the two transitions and does not re-baseline until the rotator returns. A
+manager with no rotator never re-baselines -- the session stays closed and is
+retried (fail closed). This module does not import ``breakglass`` at all.
 
 Signing identity: every emitted event's ``actor_id`` is ``timer_actor_id``
 ("system:hsm-timer" by default), a dedicated timer-service identity per
@@ -61,10 +62,10 @@ from contracts import TransitionEvent
 from contracts.enums import LifecycleState
 from contracts.records import DEKWrapping, Record
 from crypto_core.types import ECPrivateKey
-from records.service import decrypt_record, encrypt_record, unwrap_dek, wrap_dek
 
 from lifecycle.exceptions import (
     EmergencySessionExpiredError,
+    RotationNotConfiguredError,
     SessionNotExpiredError,
     SessionNotFoundError,
     StateConflictError,
@@ -99,13 +100,9 @@ def _utcnow() -> datetime.datetime:
 class EmergencySession:
     """One record's active break-glass window, tracked until it expires.
 
-    Carries *two* DEK wrappings so expiry can rotate cleanly: the DEK wrapped
-    under the emergency key (what the clinician currently holds) and the DEK
-    wrapped under the pre-break-glass policy root secret (what the record
-    rotates back *to*, and under which key it was wrapped before this session
-    ever opened). ``baseline_wrapping_key`` is carried alongside so
-    :meth:`EmergencyExpiryManager.expire_session` can produce the *new*
-    baseline wrapping directly, without re-entering the policy engine.
+    Carries what the forced rotation at expiry starts from: the reconstructed
+    emergency key, the DEK wrapped under it, and the record as it stood when
+    the session opened (ADR-0069).
     """
 
     record_id: str
@@ -115,8 +112,6 @@ class EmergencySession:
     actor_id: str
     correlation_id: str
     emergency_key: bytes = field(repr=False)
-    baseline_wrapping_key: bytes = field(repr=False)
-    baseline_wrapping: DEKWrapping
     emergency_wrapping: DEKWrapping
     current_record: Record
     # The state the record was in before break-glass; expiry returns it there
@@ -136,6 +131,12 @@ class EmergencySession:
     # Events already in the audit chain: a retry after a store failure only
     # repeats the store write, never the append.
     audited_event_ids: set[str] = field(default_factory=set)
+    # The rotator's own progress (ADR-0069): its plan is computed once and
+    # kept here, so a retry finishes the same rotation instead of minting a
+    # second emergency key whose shares would not match the first.
+    rotation_plan: Any = field(default=None, repr=False)
+    rotation_steps: set[str] = field(default_factory=set)
+    rotation: RotationOutcome | None = None
 
     def is_expired(self, now: datetime.datetime) -> bool:
         """Whether ``now`` is at or past ``expires_at`` -- inclusive, fail closed."""
@@ -144,6 +145,20 @@ class EmergencySession:
     def remaining_seconds(self, now: datetime.datetime) -> float:
         """Seconds left before expiry; never negative."""
         return max(0.0, (self.expires_at - now).total_seconds())
+
+
+@dataclass(frozen=True)
+class RotationOutcome:
+    """What the forced rotation left in the store (no key material)."""
+
+    rotated_record: Record
+    baseline_wrapping: DEKWrapping
+    emergency_wrapping: DEKWrapping
+
+
+# ``rotator(session)`` -- runs (or finishes) the forced rotation for one
+# expiring session and returns what it stored. Raises to be retried.
+Rotator = Callable[[EmergencySession], RotationOutcome]
 
 
 @dataclass(frozen=True)
@@ -156,8 +171,8 @@ class ExpiryResult:
         rebaselined_event: Signed ``EXPIRED -> return_state`` transition
             (``GRANTED`` or ``REVOKED``), emitted after the forced key rotation.
         rotated_record: Fresh ciphertext under a freshly generated DEK.
-        rotated_wrapping: The new DEK wrapped under the session's
-            ``baseline_wrapping_key``, ``generation = old_generation + 1``.
+        rotated_wrapping: The new DEK wrapped under a fresh policy root secret.
+        emergency_wrapping: The new DEK wrapped under a fresh emergency key.
         audit_entries: One metadata dict per emitted transition, in emission
             order. Always populated regardless of whether ``audit_logger``
             was configured -- see the module docstring on the Phase 4 seam.
@@ -168,6 +183,7 @@ class ExpiryResult:
     rebaselined_event: TransitionEvent
     rotated_record: Record
     rotated_wrapping: DEKWrapping
+    emergency_wrapping: DEKWrapping
     audit_entries: list[dict[str, Any]]
 
 
@@ -197,6 +213,7 @@ class EmergencyExpiryManager:
         default_duration_seconds: float = _DEFAULT_DURATION_SECONDS,
         audit_logger: Callable[[dict[str, Any]], None] | None = None,
         state_writer: StateWriter | None = None,
+        rotator: Rotator | None = None,
         clock: Callable[[], datetime.datetime] | None = None,
     ) -> None:
         """Configure the timer.
@@ -226,6 +243,9 @@ class EmergencyExpiryManager:
             state_writer: Optional compare-and-set into the facility's store,
                 called after ``audit_logger`` for each transition (review N1).
                 ``create_hospital_app`` attaches its repository's writer.
+            rotator: Runs the forced rotation between the two transitions
+                (ADR-0069). ``create_hospital_app`` attaches the facility's;
+                without one, no session ever returns to baseline.
             clock: Optional zero-arg callable returning the current UTC
                 time, for deterministic tests. Defaults to
                 ``datetime.datetime.now(timezone.utc)``.
@@ -239,6 +259,7 @@ class EmergencyExpiryManager:
         self._default_duration_seconds = default_duration_seconds
         self._audit_logger = audit_logger
         self._state_writer = state_writer
+        self._rotator = rotator
         self._clock = clock if clock is not None else _utcnow
 
         self._sessions: dict[str, EmergencySession] = {}
@@ -256,6 +277,10 @@ class EmergencyExpiryManager:
         """The identity recorded as ``actor_id`` on every emitted event."""
         return self._timer_actor_id
 
+    def now(self) -> datetime.datetime:
+        """The manager's clock (the facility checks event freshness against it)."""
+        return self._clock()
+
     @property
     def default_duration_seconds(self) -> float:
         """The configured time-box; a caller may only shorten it (review F6)."""
@@ -264,6 +289,10 @@ class EmergencyExpiryManager:
     def attach_state_writer(self, state_writer: StateWriter) -> None:
         """Persist every emitted transition into a facility store (review N1)."""
         self._state_writer = state_writer
+
+    def attach_rotator(self, rotator: Rotator) -> None:
+        """Run the facility's forced rotation at every expiry (ADR-0069)."""
+        self._rotator = rotator
 
     def unregister_session(self, record_id: str) -> None:
         """Drop a session whose break-glass open failed after it was registered.
@@ -285,8 +314,6 @@ class EmergencyExpiryManager:
         actor_id: str,
         correlation_id: str,
         emergency_key: bytes,
-        baseline_wrapping_key: bytes,
-        baseline_wrapping: DEKWrapping,
         emergency_wrapping: DEKWrapping,
         current_record: Record,
         return_state: LifecycleState,
@@ -304,11 +331,6 @@ class EmergencyExpiryManager:
                 into the per-transition metadata this manager later emits.
             emergency_key: The reconstructed 256-bit emergency key (P3-5
                 ``open_emergency_access`` output).
-            baseline_wrapping_key: The policy root secret to re-wrap under at
-                expiry -- kept so rotation needs no further trip through the
-                policy engine.
-            baseline_wrapping: The record's DEK wrapping from *before*
-                break-glass opened -- what the record returns to.
             emergency_wrapping: The record's DEK wrapped under
                 ``emergency_key`` -- what the clinician currently holds.
             current_record: The record as it stands during the emergency
@@ -351,8 +373,6 @@ class EmergencyExpiryManager:
             actor_id=actor_id,
             correlation_id=correlation_id,
             emergency_key=emergency_key,
-            baseline_wrapping_key=baseline_wrapping_key,
-            baseline_wrapping=baseline_wrapping,
             emergency_wrapping=emergency_wrapping,
             current_record=current_record,
             return_state=return_state,
@@ -422,10 +442,9 @@ class EmergencyExpiryManager:
             4. Emit a signed ``EMERGENCY_OPEN -> EXPIRED`` transition through
                the shared state machine, which also consumes its
                ``event_id`` (ADR-0030).
-            5. Rotate: unwrap the old DEK from ``emergency_wrapping``,
-               decrypt the current payload, mint a fresh DEK, re-encrypt,
-               and wrap the fresh DEK under ``baseline_wrapping_key`` at
-               ``generation = old_generation + 1``.
+            5. Rotate: the rotator replaces the DEK, the policy root
+               secret, the emergency key and its shares, and the search
+               index, and stores the result (ADR-0069).
             6. Emit a signed ``EXPIRED -> return_state`` transition.
             7. Invoke ``audit_logger`` (if configured) for each transition.
             8. Best-effort zeroize: overwrite the session's ``emergency_key``
@@ -449,13 +468,12 @@ class EmergencyExpiryManager:
                 ``expires_at`` and ``force`` was not set.
 
         Security property:
-            Nothing that decrypted under the old (emergency) DEK can decrypt
-            ``rotated_record`` -- the AES-256-GCM ciphertext, nonce, and DEK
-            are all freshly generated (CONVENTIONS.md §2 rule 5). This is the
-            forward-secrecy property the time-boxing exists to provide,
-            *except* for whatever the emergency clinician already decrypted
-            and cached locally before rotation -- nothing at this layer
-            prevents that; it is a documented limitation (ADR-0035).
+            The record does not return to baseline until the rotation has been
+            stored: after that, nothing that opened the record before -- the
+            old DEK, root secret, emergency key or its shares, the old search
+            tokens -- opens anything (ADR-0069). What the emergency clinician
+            already decrypted and cached before rotation is not retractable;
+            that is a documented limitation (ADR-0035).
         """
         with self._lock:
             session = self._sessions.get(record_id)
@@ -519,28 +537,13 @@ class EmergencyExpiryManager:
             self._emit(session.expired_event, session)
             session.expired_emitted = True
 
-        # --- Step 5: forced key rotation ---------------------------------------
-        old_dek = unwrap_dek(session.emergency_wrapping, session.emergency_key)
-        plaintext = decrypt_record(session.current_record, old_dek)
-
-        rotated_record, fresh_dek = encrypt_record(
-            plaintext=plaintext,
-            patient_id=session.current_record.patient_id,
-            facility_id=session.current_record.facility_id,
-            policy_id=session.current_record.policy_id,
-            content_type=session.current_record.content_type,
-            aad=session.current_record.aad,
-            record_id=session.current_record.record_id,
-            created_at=session.current_record.created_at,
-            clinical=session.current_record.clinical,
-        )
-        rotated_wrapping = wrap_dek(
-            dek=fresh_dek,
-            record_id=record_id,
-            wrapping_key=session.baseline_wrapping_key,
-            wrapped_for=session.baseline_wrapping.wrapped_for,
-            generation=session.baseline_wrapping.generation + 1,
-        )
+        # --- Step 5: forced key rotation (ADR-0069) ----------------------------
+        if session.rotation is None:
+            if self._rotator is None:
+                raise RotationNotConfiguredError(
+                    f"no rotator configured; record {record_id!r} stays closed"
+                )
+            session.rotation = self._rotator(session)
 
         # --- Step 6: EXPIRED -> pre-emergency state (signed once) -------------
         if session.rebaselined_event is None:
@@ -563,8 +566,9 @@ class EmergencyExpiryManager:
             record_id=record_id,
             expired_event=session.expired_event,
             rebaselined_event=session.rebaselined_event,
-            rotated_record=rotated_record,
-            rotated_wrapping=rotated_wrapping,
+            rotated_record=session.rotation.rotated_record,
+            rotated_wrapping=session.rotation.baseline_wrapping,
+            emergency_wrapping=session.rotation.emergency_wrapping,
             audit_entries=[
                 self._transition_metadata(session.expired_event, session),
                 self._transition_metadata(session.rebaselined_event, session),

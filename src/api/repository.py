@@ -22,8 +22,10 @@ from contracts.lifecycle import TransitionEvent
 from contracts.records import DEKWrapping, Record
 from federation.discovery import find_record_ids_by_patient
 from lifecycle.exceptions import StateConflictError
+from lifecycle.rotation import RotationPlan
 from policy.engine import CompiledPolicy
 from psycopg.types.json import Jsonb
+from search.service import SealedSearchTerms
 from storage.policy_codec import decode_policy, encode_policy
 from storage.repositories import (
     consume_id,
@@ -32,6 +34,7 @@ from storage.repositories import (
     get_dek_wrapping,
     get_lifecycle_state,
     get_record,
+    get_sealed_search_terms,
     get_transition_event,
     has_consumed_id,
     insert_audit_entry,
@@ -40,6 +43,9 @@ from storage.repositories import (
     insert_record,
     insert_search_term,
     insert_transition_event,
+    put_sealed_search_terms,
+    replace_search_index,
+    rotate_record_ciphertext,
     transition_lifecycle_state,
     upsert_lifecycle_state,
 )
@@ -50,6 +56,13 @@ class RecordExistsError(Exception):
 
     The API maps this to 409. Overwriting would replace the record while its
     emergency shares still belong to the old one.
+    """
+
+
+class RotationConflictError(Exception):
+    """The record's ciphertext changed underneath a rotation (ADR-0069).
+
+    Nothing of the rotation was stored; the expiry is retried.
     """
 
 
@@ -182,6 +195,29 @@ class StorageRepository(Protocol):
         """Whether a one-time id has been consumed (diagnostics and tests only)."""
         ...
 
+    def put_sealed_search_terms(
+        self, record_id: str, sealed: SealedSearchTerms
+    ) -> None:
+        """Store (or replace) a record's sealed search terms (ADR-0069)."""
+        ...
+
+    def get_sealed_search_terms(self, record_id: str) -> SealedSearchTerms | None:
+        """A record's sealed search terms, or ``None`` if it has none."""
+        ...
+
+    def apply_rotation(self, plan: RotationPlan) -> None:
+        """Store a rotation atomically; a repeat of a stored one is a no-op.
+
+        Replaces the record's ciphertext only if it is still the one the plan
+        rotated, then adds the new wrappings and compiled policy and replaces
+        the search index and sealed terms, all in one transaction.
+
+        Raises:
+            RotationConflictError: The ciphertext is neither the rotated one
+                nor the plan's.
+        """
+        ...
+
 
 class InMemoryStorageRepository:
     """Thread-safe, fully in-memory repository implementation."""
@@ -200,6 +236,7 @@ class InMemoryStorageRepository:
         self.consent_requests: dict[UUID, ConsentRequest] = {}
         self.consent_grants: dict[UUID, ConsentGrant] = {}
         self.consumed_ids: set[tuple[str, UUID]] = set()
+        self.sealed_search_terms: dict[str, SealedSearchTerms] = {}
 
     def get_record(self, record_id: str) -> Record | None:
         with self._lock:
@@ -355,6 +392,36 @@ class InMemoryStorageRepository:
                 for grant in self.consent_grants.values()
                 if grant.patient_id == patient_id
             ]
+
+    def put_sealed_search_terms(
+        self, record_id: str, sealed: SealedSearchTerms
+    ) -> None:
+        with self._lock:
+            self.sealed_search_terms[record_id] = sealed
+
+    def get_sealed_search_terms(self, record_id: str) -> SealedSearchTerms | None:
+        with self._lock:
+            return self.sealed_search_terms.get(record_id)
+
+    def apply_rotation(self, plan: RotationPlan) -> None:
+        record_id = plan.record.record_id
+        with self._lock:
+            current = self.records.get(record_id)
+            if current is not None and current.nonce == plan.record.nonce:
+                return  # already stored by an earlier attempt
+            if current is None or current.nonce != plan.previous_nonce:
+                raise RotationConflictError(
+                    f"record {record_id!r} changed underneath its rotation"
+                )
+            self.records[record_id] = plan.record
+            self.insert_dek_wrapping(plan.baseline_wrapping)
+            self.insert_dek_wrapping(plan.emergency_wrapping)
+            self.compiled_policies[plan.record.policy_id] = plan.compiled_policy
+            self.search_index = [
+                (rid, term) for rid, term in self.search_index if rid != record_id
+            ] + [(record_id, token) for token in plan.search_tokens]
+            if plan.sealed_search_terms is not None:
+                self.sealed_search_terms[record_id] = plan.sealed_search_terms
 
 
 class PostgresStorageRepository:
@@ -514,3 +581,31 @@ class PostgresStorageRepository:
             "SELECT payload FROM consent_grants WHERE patient_id = %s", (patient_id,)
         ).fetchall()
         return [ConsentGrant.model_validate(row[0]) for row in rows]
+
+    def put_sealed_search_terms(
+        self, record_id: str, sealed: SealedSearchTerms
+    ) -> None:
+        put_sealed_search_terms(self._conn, record_id, sealed.ciphertext, sealed.nonce)
+
+    def get_sealed_search_terms(self, record_id: str) -> SealedSearchTerms | None:
+        row = get_sealed_search_terms(self._conn, record_id)
+        return SealedSearchTerms(ciphertext=row[0], nonce=row[1]) if row else None
+
+    def apply_rotation(self, plan: RotationPlan) -> None:
+        record_id = plan.record.record_id
+        with self._conn.transaction():
+            if not rotate_record_ciphertext(
+                self._conn, plan.record, expected_nonce=plan.previous_nonce
+            ):
+                current = get_record(self._conn, record_id)
+                if current is not None and current.nonce == plan.record.nonce:
+                    return  # already stored by an earlier attempt
+                raise RotationConflictError(
+                    f"record {record_id!r} changed underneath its rotation"
+                )
+            insert_dek_wrapping(self._conn, plan.baseline_wrapping)
+            insert_dek_wrapping(self._conn, plan.emergency_wrapping)
+            self.store_compiled_policy(plan.record.policy_id, plan.compiled_policy)
+            replace_search_index(self._conn, record_id, list(plan.search_tokens))
+            if plan.sealed_search_terms is not None:
+                self.put_sealed_search_terms(record_id, plan.sealed_search_terms)

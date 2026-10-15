@@ -15,8 +15,10 @@ Adversarial cases proved here:
   as two distinct shares.
 - Tampered share bytes reconstruct the wrong emergency key, and the wrong
   key fails to authenticate the record's DEK wrapping downstream.
-- The emitted TransitionEvent is signature-verifiable and legal per the
-  lifecycle state machine -- an emergency open is not an unsigned side effect.
+- The TransitionEvent the gate carries is signature-verifiable and legal per
+  the lifecycle state machine -- an emergency open is not an unsigned side
+  effect -- and the gate refuses one not signed by the clinician, or for
+  another record or state, before any share is combined (ADR-0068).
 """
 
 from __future__ import annotations
@@ -29,7 +31,8 @@ from breakglass.emergency_key import (
 from breakglass.exceptions import InsufficientSharesError
 from breakglass.gate import open_emergency_access
 from contracts.enums import LifecycleState, ReasonCode
-from crypto_core import generate_ec_keypair
+from crypto_core import InvalidSignatureError, generate_ec_keypair
+from lifecycle.exceptions import IllegalTransitionError
 from lifecycle.state_machine import (
     ConsumedEventIds,
     LifecycleStateMachine,
@@ -39,6 +42,8 @@ from pre.elgamal import generate_keypair as generate_pre_keypair
 from records.exceptions import UnwrappingError
 from records.service import wrap_dek
 from shamir.exceptions import SecretSharingError
+
+from tests.transitions import open_event
 
 RECORD_ID = "rec-emergency-security-001"
 
@@ -83,16 +88,24 @@ def scenario():
 
 
 def _open(scenario, shares_presented, **overrides):
-    """Helper: call open_emergency_access with sane defaults."""
+    """Helper: call open_emergency_access with sane defaults.
+
+    The transition is signed by the clinician (``lifecycle_priv`` here),
+    exactly as the custodian signs it (ADR-0068).
+    """
     defaults = dict(
         shares_presented=shares_presented,
         dek_wrapping=scenario["wrapping"],
         transition_source_state=LifecycleState.GRANTED,
         record_id=RECORD_ID,
-        actor_id="dr-alice",
-        correlation_id="corr-security-001",
-        reason_code=ReasonCode.CARDIAC_ARREST,
-        lifecycle_signing_key=scenario["lifecycle_priv"],
+        transition_event=open_event(
+            RECORD_ID,
+            LifecycleState.GRANTED,
+            "dr-alice",
+            ReasonCode.CARDIAC_ARREST,
+            scenario["lifecycle_priv"],
+        ),
+        actor_public_key=scenario["lifecycle_pub"],
         pre_rewrap_key=scenario["pre_pub"],
     )
     defaults.update(overrides)
@@ -239,3 +252,72 @@ class TestEmittedTransitionEventIntegrity:
         tampered = result.transition_event.model_copy(update={"actor_id": "dr-evil"})
         with pytest.raises(InvalidSignatureError):
             verify_transition_event(tampered, scenario["lifecycle_pub"])
+
+
+class TestGateRefusesAForeignTransition:
+    """Paper claim (C7, ADR-0068): only the clinician's own signed transition
+    for this record and state opens it, and the gate checks that before it
+    combines a single share."""
+
+    def _two(self, scenario):
+        return [scenario["facility_share"], scenario["authority_share"]]
+
+    def test_positive_control_clinicians_event_opens(self, scenario):
+        assert _open(scenario, self._two(scenario)).rewrapped_dek
+
+    def test_event_signed_by_another_key_is_refused(self, scenario):
+        other_priv, _ = generate_ec_keypair()
+        forged = open_event(
+            RECORD_ID,
+            LifecycleState.GRANTED,
+            "dr-alice",
+            ReasonCode.CARDIAC_ARREST,
+            other_priv,
+        )
+        with pytest.raises(InvalidSignatureError):
+            _open(scenario, self._two(scenario), transition_event=forged)
+
+    def test_event_for_another_record_is_refused(self, scenario):
+        elsewhere = open_event(
+            "rec-other",
+            LifecycleState.GRANTED,
+            "dr-alice",
+            ReasonCode.CARDIAC_ARREST,
+            scenario["lifecycle_priv"],
+        )
+        with pytest.raises(IllegalTransitionError):
+            _open(scenario, self._two(scenario), transition_event=elsewhere)
+
+    def test_event_from_another_state_is_refused(self, scenario):
+        stale = open_event(
+            RECORD_ID,
+            LifecycleState.REVOKED,
+            "dr-alice",
+            ReasonCode.CARDIAC_ARREST,
+            scenario["lifecycle_priv"],
+        )
+        with pytest.raises(IllegalTransitionError):
+            _open(scenario, self._two(scenario), transition_event=stale)
+
+    def test_refusal_happens_before_any_share_is_combined(self, scenario, monkeypatch):
+        import breakglass.gate as gate
+
+        combined: list[int] = []
+        real = gate.combine_shares
+
+        def spy(*args, **kwargs):
+            combined.append(1)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(gate, "combine_shares", spy)
+        other_priv, _ = generate_ec_keypair()
+        forged = open_event(
+            RECORD_ID,
+            LifecycleState.GRANTED,
+            "dr-alice",
+            ReasonCode.CARDIAC_ARREST,
+            other_priv,
+        )
+        with pytest.raises(InvalidSignatureError):
+            _open(scenario, self._two(scenario), transition_event=forged)
+        assert combined == []

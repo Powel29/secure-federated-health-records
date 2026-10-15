@@ -95,6 +95,14 @@ class DepositShareRequest(BaseModel):
     share_hex: str
 
 
+class ReplaceShareRequest(BaseModel):
+    """The next generation's share 1, from a record's rotation at expiry (ADR-0069)."""
+
+    x: int
+    share_hex: str
+    generation: int = Field(..., ge=1)
+
+
 class DepositShareResponse(BaseModel):
     status: str = "deposited"
     record_id: str

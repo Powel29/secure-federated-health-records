@@ -35,7 +35,6 @@ from crypto_core import (
     private_key_to_pem,
 )
 from crypto_core.symmetric import aes_gcm_decrypt
-from fastapi.testclient import TestClient
 from identity.certificates import (
     issue_clinician_certificate,
     issue_facility_ca_certificate,
@@ -45,6 +44,7 @@ from pre.elgamal import decapsulate_key
 from shamir.finite_field import PRIME_MODULUS
 
 from tests.api.conftest import RecordingAuditSink, make_trust
+from tests.transitions import open_event
 
 
 def _unwrap_rewrapped_dek(rewrapped_dek: bytes, pre_priv: int, record_id: str) -> bytes:
@@ -75,15 +75,38 @@ def _payload(
     shares=None,
     **extra,
 ) -> dict:
-    """A well-formed unlock request; keyword overrides build the attacks."""
+    """A well-formed unlock request; keyword overrides build the attacks.
+
+    Presents the shares the holders hold now: the ingest split, or the one
+    the latest expiry rotation handed out (ADR-0069).
+    """
     pki = test_setup["pki"]
     em_shares = test_setup["em_shares"]
+    deposits = test_setup["rotation"].deposits
+    if shares is None and deposits:
+        latest = deposits[-1]
+        shares = [
+            (latest["clinician_share"][0], latest["clinician_share"][1].hex()),
+            (latest["audit_share"][0], latest["audit_share"][1].hex()),
+        ]
+    key = signing_key or pki["alice_priv"]
     assertion = create_emergency_assertion(
         patient_id=patient_id,
         clinician_id=clinician_id,
         facility_id=facility_id,
         reason_code=ReasonCode.UNCONSCIOUS_PATIENT,
-        signing_key=signing_key or pki["alice_priv"],
+        signing_key=key,
+    )
+    # The clinician's own signed open, from the record's current state
+    # (ADR-0068); ignored when the record is already open and this joins.
+    state = test_setup["repo"].get_lifecycle_state("rec-001")
+    from_state = (
+        state
+        if state in (LifecycleState.GRANTED, LifecycleState.REVOKED)
+        else LifecycleState.GRANTED
+    )
+    event = open_event(
+        "rec-001", from_state, clinician_id, ReasonCode.UNCONSCIOUS_PATIENT, key
     )
     body = {
         "assertion": assertion.model_dump(mode="json"),
@@ -99,10 +122,7 @@ def _payload(
             ]
         ),
         "pre_rewrap_key": pki["alice_pre_pub"],
-        "lifecycle_signing_key_pem": private_key_to_pem(pki["life_priv"]).decode(
-            "ascii"
-        ),
-        "baseline_wrapping_key_b64": base64.b64encode(b"\x07" * 32).decode("ascii"),
+        "transition_event": event.model_dump(mode="json"),
     }
     body.update(extra)
     return body
@@ -235,6 +255,19 @@ class TestHospitalBreakglassEndpoint:
         test_setup["expiry_manager"].expire_session("rec-001", force=True)
         assert repo.get_lifecycle_state("rec-001") == LifecycleState.GRANTED
 
+        # The rotation handed new shares to the holders (ADR-0069); the shares
+        # presented before expiry open nothing any more.
+        old = test_setup["em_shares"]
+        stale = client.post(
+            "/records/rec-001/breakglass",
+            json=_payload(
+                test_setup,
+                shares=[(old[0][0], old[0][1].hex()), (old[1][0], old[1][1].hex())],
+            ),
+        )
+        assert stale.status_code == 403, stale.text
+        assert "rewrapped_dek_b64" not in stale.text
+
         second = client.post("/records/rec-001/breakglass", json=_payload(test_setup))
         assert second.status_code == 200, second.text
 
@@ -323,13 +356,17 @@ class TestConfiguredTrust:
         sink = RecordingAuditSink()
         app = create_hospital_app(
             facility_id="facility-a",
+            rotation_ports=test_setup["rotation"].ports,
+            service_root=test_setup["pki"]["root"].certificate,
             repository=test_setup["repo"],
             expiry_manager=test_setup["expiry_manager"],
             trust=make_trust(pki, {pki["alice_cert"].serial_number}),
             audit_sink=sink,
         )
-        response = TestClient(app).post(
-            "/records/rec-001/breakglass", json=_payload(test_setup)
+        response = (
+            test_setup["pki"]["services"]
+            .client(app, "facility-a")
+            .post("/records/rec-001/breakglass", json=_payload(test_setup))
         )
         assert response.status_code == 403
         assert "CertificateRevokedError" in response.json()["detail"]
@@ -355,18 +392,25 @@ class TestConfiguredTrust:
     def test_breakglass_without_trust_or_expiry_manager_refused(self, test_setup):
         """No configured trust or no timer: 503, never an unbounded unlock (F1/F7)."""
         pki = test_setup["pki"]
+        rotation = test_setup["rotation"].ports
+        expiry = test_setup["expiry_manager"]
         for kwargs in (
-            {"expiry_manager": test_setup["expiry_manager"]},
-            {"trust": make_trust(pki)},
+            {"expiry_manager": expiry, "rotation_ports": rotation},
+            {"trust": make_trust(pki), "rotation_ports": rotation},
+            # No rotation: a session that cannot be rotated must not open.
+            {"trust": make_trust(pki), "expiry_manager": expiry},
         ):
             app = create_hospital_app(
                 facility_id="facility-a",
+                service_root=pki["root"].certificate,
                 repository=test_setup["repo"],
                 audit_sink=RecordingAuditSink(),
                 **kwargs,
             )
-            response = TestClient(app).post(
-                "/records/rec-001/breakglass", json=_payload(test_setup)
+            response = (
+                test_setup["pki"]["services"]
+                .client(app, "facility-a")
+                .post("/records/rec-001/breakglass", json=_payload(test_setup))
             )
             assert response.status_code == 503
         _assert_no_side_effects(test_setup, test_setup["audit_sink"])
@@ -395,10 +439,15 @@ class TestTimeBox:
         assert response.status_code == 422
         _assert_no_side_effects(test_setup, test_setup["audit_sink"])
 
-    def test_breakglass_without_baseline_key_rejected(self, test_setup):
-        """The time-box can no longer be skipped by omitting the baseline key (F7)."""
-        payload = _payload(test_setup)
-        del payload["baseline_wrapping_key_b64"]
+    def test_a_private_key_in_the_request_is_refused(self, test_setup):
+        """No private key travels to the facility any more (ADR-0068): the old
+        ``lifecycle_signing_key_pem`` field is a 422, not silently ignored."""
+        payload = _payload(
+            test_setup,
+            lifecycle_signing_key_pem=private_key_to_pem(
+                test_setup["pki"]["life_priv"]
+            ).decode("ascii"),
+        )
         response = test_setup["client"].post(
             "/records/rec-001/breakglass", json=payload
         )
@@ -418,13 +467,17 @@ class TestFailureLeavesNoTrace:
 
         app = create_hospital_app(
             facility_id="facility-a",
+            rotation_ports=test_setup["rotation"].ports,
+            service_root=test_setup["pki"]["root"].certificate,
             repository=test_setup["repo"],
             expiry_manager=test_setup["expiry_manager"],
             trust=make_trust(test_setup["pki"]),
             audit_sink=failing_sink,
         )
-        response = TestClient(app).post(
-            "/records/rec-001/breakglass", json=_payload(test_setup)
+        response = (
+            test_setup["pki"]["services"]
+            .client(app, "facility-a")
+            .post("/records/rec-001/breakglass", json=_payload(test_setup))
         )
         assert response.status_code == 503
         assert "rewrapped_dek_b64" not in response.text
@@ -619,13 +672,17 @@ class TestJoinOpenSession:
 
         app = create_hospital_app(
             facility_id="facility-a",
+            rotation_ports=test_setup["rotation"].ports,
+            service_root=test_setup["pki"]["root"].certificate,
             repository=test_setup["repo"],
             expiry_manager=test_setup["expiry_manager"],
             trust=make_trust(test_setup["pki"]),
             audit_sink=failing_sink,
         )
-        response = TestClient(app).post(
-            "/records/rec-001/breakglass", json=_payload(test_setup)
+        response = (
+            test_setup["pki"]["services"]
+            .client(app, "facility-a")
+            .post("/records/rec-001/breakglass", json=_payload(test_setup))
         )
 
         assert response.status_code == 503

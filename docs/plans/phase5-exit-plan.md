@@ -104,12 +104,12 @@ under its mutation, C2/C5 included.
 
 | Claim | Fix | Owner(s) | Needs | Size | Test that flips |
 |---|---|---|---|---|---|
-| C3 ⏳ | F2: the audit service validates the assertion, binds share to patient, one-time `request_id`; F4: no share overwrite | Ojas, Avaneeth | D1 (+ D2 wording) | M | `test_c3_audit_service_releases_no_share_without_a_valid_assertion` |
-| C4 ⏳ | F9: expiry replaces the emergency wrapping and shares; search re-keyed | Powel, Avaneeth, Nandini, Ojas | D3 | L | `test_c4_pre_expiry_shares_do_not_restore_search`; also update `tests/api/test_breakglass.py::…reopens_after_the_timebox_expired`, which asserts today's behaviour |
+| C3 ✅ | F2: the audit service validates the assertion, binds share to patient, one-time `request_id`; F4: no share overwrite | Ojas, Avaneeth | D1 (+ D2 wording) | M | `test_c3_audit_service_releases_no_share_without_a_valid_assertion` |
+| C4 ✅ | F9: expiry replaces the emergency wrapping and shares; search re-keyed | Powel, Avaneeth, Nandini, Ojas | D3 | L | `test_c4_pre_expiry_shares_do_not_restore_search`; also update `tests/api/test_breakglass.py::…reopens_after_the_timebox_expired`, which asserts today's behaviour |
 | C6 ⏳ | F11 step 1: `_apply_and_persist` through `LifecycleStateMachine` for revoke, break-glass and expiry; F12 compare-and-set (**primitive + lock done**; wiring is part of F11) | Avaneeth, Powel | D7 | M | `test_c6_api_refuses_revocation_of_an_emergency_open_record` |
-| C7 ⏳ | F11 step 2 / D8-a: pre-signed event from the custodian; remove `lifecycle_signing_key_pem` from the API | Avaneeth, Powel, Ojas | D8 | M | `test_c7_breakglass_event_verifies_against_the_clinicians_certificate` |
+| C7 ✅ | F11 step 2 / D8-a: pre-signed event from the custodian; remove `lifecycle_signing_key_pem` from the API | Avaneeth, Powel, Ojas | D8 | M | `test_c7_breakglass_event_verifies_against_the_clinicians_certificate` |
 | C8 ✅ | F22: `consumed_ids` table + repository-backed stores for assertions, requests and transition events. **Done on `proposal/phase5-fixes`; marker removed; C8 holds.** Still to add: a Postgres variant of the restart test | Powel, Avaneeth | — | M | `test_c8_replayed_assertion_rejected_after_facility_restart` |
-| C9 ⏳ | F34: caller ↔ patient check before any repo call; denial logged | Avaneeth | **D5-a** | M | `test_c9_bola_…_denied_before_crypto_or_db` |
+| C9 ✅ | F34: caller ↔ patient check before any repo call; denial logged | Avaneeth | **D5-a** | M | `test_c9_bola_…_denied_before_crypto_or_db` |
 | C10 ⏳ | F14: interim allowlist of authoring callers (ships with F16 — F16 is **done**), then a signed envelope under D5-a. Interim is now pending a trust-boundary decision (F14-i) | Ojas | D5, F14-i | S→M | `test_c10_attribute_key_not_released_without_a_valid_credential` |
 | C1 | F10: revoke works on Postgres, authz from a verified identity, goes through the state machine, audited. **Add a Postgres variant** of `test_c1_…` (today only the in-memory path is tested) | Avaneeth, Powel | D4, D3 | L | new `test_c1_…_postgres` |
 | C2, C5 | No fix expected. **Observe them running**: run the suite and `python -m tests.security.mutations C2 C5` with Postgres, then replace the "skipped" rows in `p5-1-evidence.md` | Ojas (or whoever has the evidence machine) | A2 | S | — |

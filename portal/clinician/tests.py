@@ -24,6 +24,7 @@ from portal_core.testing import (
     TEST_PASSWORD,
     AuditLog,
     clinician,
+    declare_token,
     patched,
     patient,
     refuse,
@@ -269,6 +270,7 @@ class BreakglassTests(TestCase):
                 "/clinician/breakglass/",
                 {
                     "action": "declare",
+                    "declare_token": declare_token(disc),
                     "patient_id": "pat-101",
                     "record_id": "rec-001",
                     "reason_code": "unconscious_patient",
@@ -334,7 +336,7 @@ class BreakglassTests(TestCase):
                 "portal_core.store_reader.record_meta", return_value=RECORD_META
             ),
         ):
-            self.client.post(
+            disc = self.client.post(
                 "/clinician/breakglass/",
                 {"action": "discover", "patient_id": "pat-101"},
             )
@@ -342,6 +344,7 @@ class BreakglassTests(TestCase):
                 "/clinician/breakglass/",
                 {
                     "action": "declare",
+                    "declare_token": declare_token(disc),
                     "patient_id": "pat-101",
                     "record_id": "rec-001",
                     "reason_code": "stroke",
@@ -391,6 +394,118 @@ class BreakglassTests(TestCase):
         self.assertEqual(case.status, CaseStatus.EXPIRED)
 
 
+class RedeclareLoopTests(TestCase):
+    """ADR-0065: a reloaded or re-sent declaration opens nothing a second time.
+
+    The case page used to be the response to the declare POST, and its expiry
+    refresh called ``location.reload()`` -- which re-sends that POST, so every
+    window opened a new break-glass, re-released share 3 and re-notified the
+    patient.
+    """
+
+    def setUp(self) -> None:
+        clinician()
+        patient()
+        _directory()
+        self.client.login(username="house", password=TEST_PASSWORD)
+        self.audit = AuditLog()
+        with patched(
+            audit_append=self.audit,
+            custodian_subject=mock.Mock(return_value=SUBJECT_CLINICIAN),
+        ):
+            self.client.post(
+                "/clinician/identify/",
+                {
+                    "family_name": "Vance",
+                    "date_of_birth": "1982-04-15",
+                    "given_name": "Alice",
+                },
+            )
+            self.client.post("/clinician/identify/select/", {"patient_id": "pat-101"})
+        self.services = self.enterContext(
+            patched(
+                facility_discover=mock.Mock(return_value=["rec-001"]),
+                custodian_breakglass=mock.Mock(return_value=UNLOCK),
+                audit_append=self.audit,
+                custodian_subject=mock.Mock(return_value=SUBJECT_CLINICIAN),
+            )
+        )
+        self.enterContext(
+            mock.patch(
+                "portal_core.store_reader.record_meta", return_value=RECORD_META
+            )
+        )
+        self.enterContext(
+            mock.patch(
+                "portal_core.store_reader.audit_by_correlation", return_value=[]
+            )
+        )
+        disc = self.client.post(
+            "/clinician/breakglass/", {"action": "discover", "patient_id": "pat-101"}
+        )
+        self.declaration = {
+            "action": "declare",
+            "declare_token": declare_token(disc),
+            "patient_id": "pat-101",
+            "record_id": "rec-001",
+            "reason_code": "unconscious_patient",
+            "justification": "Unresponsive on arrival; needs allergy history now.",
+        }
+
+    def _breakglass_notifications(self) -> int:
+        return PatientNotification.objects.filter(
+            kind=NotificationKind.BREAKGLASS
+        ).count()
+
+    def test_resent_declaration_is_refused_and_opens_nothing(self) -> None:
+        first = self.client.post("/clinician/breakglass/", self.declaration)
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(self.services["custodian_breakglass"].call_count, 1)
+
+        # What the old expiry reload did: the same POST, sent again.
+        again = self.client.post("/clinician/breakglass/", self.declaration)
+        self.assertEqual(again.status_code, 409)
+        self.assertContains(again, "already sent", status_code=409)
+        self.assertEqual(self.services["custodian_breakglass"].call_count, 1)
+        self.assertEqual(BreakglassCase.objects.count(), 1)
+        self.assertEqual(self._breakglass_notifications(), 1)
+
+    def test_declaration_without_a_token_is_refused(self) -> None:
+        no_token = {k: v for k, v in self.declaration.items() if k != "declare_token"}
+        resp = self.client.post("/clinician/breakglass/", no_token)
+        self.assertEqual(resp.status_code, 409)
+        self.services["custodian_breakglass"].assert_not_called()
+        self.assertFalse(BreakglassCase.objects.exists())
+        self.assertEqual(self._breakglass_notifications(), 0)
+
+    def test_a_forged_token_is_refused(self) -> None:
+        forged = {**self.declaration, "declare_token": "not-the-session-token"}
+        resp = self.client.post("/clinician/breakglass/", forged)
+        self.assertEqual(resp.status_code, 409)
+        self.services["custodian_breakglass"].assert_not_called()
+
+    def test_case_page_refreshes_to_its_own_url_not_the_post(self) -> None:
+        resp = self.client.post("/clinician/breakglass/", self.declaration)
+        case = BreakglassCase.objects.get()
+        case_url = f"/clinician/cases/{case.pk}/"
+        body = resp.content.decode("utf-8")
+        # The expiry refresh navigates to the case URL (a GET) ...
+        self.assertIn(f'setAttribute("data-reload-on-expiry", "{case_url}")', body)
+        self.assertIn("window.location.replace(reload)", body)
+        self.assertNotIn("window.location.reload()", body)
+        # ... and the address bar already shows it, so a manual reload is a GET.
+        self.assertIn(f'history.replaceState(null, "", "{case_url}")', body)
+
+    def test_viewing_a_case_only_joins_and_never_opens(self) -> None:
+        self.client.post("/clinician/breakglass/", self.declaration)
+        case = BreakglassCase.objects.get()
+        self.services["custodian_breakglass"].reset_mock()
+        self.client.get(f"/clinician/cases/{case.pk}/")
+        self.assertIs(
+            self.services["custodian_breakglass"].call_args.kwargs["join_only"], True
+        )
+
+
 class ViewOnOpenTests(TestCase):
     """Opening a live case shows the record through the custodian, every time."""
 
@@ -438,6 +553,7 @@ class ViewOnOpenTests(TestCase):
             facility_id=self.case.facility_id,
             justification=self.case.justification,
             sensitive_justification=self.case.sensitive_justification,
+            join_only=True,
         )
         self.services["facility_emergency_search"].assert_not_called()
         self.assertEqual(BreakglassCase.objects.count(), 1)

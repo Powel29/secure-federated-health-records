@@ -13,6 +13,8 @@ Invariants:
   orchestrate domain calls and persist state; they do not compute ciphers.
 - Parameterised queries / repository pattern only.
 - Fail closed on unauthorized access, invalid signatures, or missing shares.
+- Every route but ``/health`` takes only signed requests from a federation
+  service whose kind the route allows (ADR-0066, ``api.service_auth``).
 """
 
 from __future__ import annotations
@@ -52,9 +54,14 @@ from audit.events import (
 )
 from breakglass import (
     ConsumedAssertionIds,
+    ConsumedRequestIds,
     validate_emergency_assertion,
 )
-from breakglass.assertion import validate_clinical_context
+from breakglass.assertion import (
+    ASSERTION_CLOCK_SKEW,
+    MAX_ASSERTION_TTL,
+    validate_clinical_context,
+)
 from breakglass.emergency_key import Share
 from breakglass.exceptions import (
     AssertionExpiredError,
@@ -104,10 +111,12 @@ from lifecycle.exceptions import (
     EmergencySessionExpiredError,
     IllegalTransitionError,
     MissingReasonCodeError,
+    ReplayedEventError,
     SessionNotFoundError,
     StateConflictError,
 )
 from lifecycle.expiry import EmergencyExpiryManager
+from lifecycle.state_machine import verify_transition_event
 from policy.engine import decrypt_record_via_policy
 from policy.exceptions import PolicyCompileError, PolicyDeniedError
 from records.exceptions import (
@@ -136,6 +145,7 @@ from api.repository import (
     RecordExistsError,
     StorageRepository,
 )
+from api.rotation import FacilityRotator, RotationPorts
 from api.schemas import (
     BreakglassUnlockRequest,
     BreakglassUnlockResponse,
@@ -147,6 +157,7 @@ from api.schemas import (
     HealthResponse,
     IngestRecordRequest,
     IngestRecordResponse,
+    LifecycleStateResponse,
     ReadRecordRequest,
     ReadRecordResponse,
     RevokeConsentGrantPayload,
@@ -156,8 +167,36 @@ from api.schemas import (
     SearchRecordsResponse,
     SubmitConsentGrantPayload,
 )
+from api.service_auth import (
+    ServiceAuthConfig,
+    ServiceIdentity,
+    SignedRequestAuth,
+    install_service_auth,
+)
 
 _logger = logging.getLogger(__name__)
+
+AUDIT_SERVICE_ID = "audit-service"
+
+# Which kinds of federation service may call each route (ADR-0066). Every key
+# path is also the custodian's or a bootstrap/demo script's; the portal calls
+# only what it needs with no key material in the body.
+_CUSTODIAN = frozenset({"custodian", "bootstrap"})
+_PORTAL = frozenset({"portal", "bootstrap"})
+FACILITY_PERMISSIONS: dict[tuple[str, str], frozenset[str]] = {
+    ("POST", "/records/{record_id}/read"): _CUSTODIAN,
+    ("POST", "/consent/requests"): _CUSTODIAN,
+    ("POST", "/consent/grants"): _CUSTODIAN | _PORTAL,
+    ("POST", "/consent/grants/revoke"): _CUSTODIAN,
+    ("POST", "/records/{record_id}/revoke"): _CUSTODIAN,
+    ("POST", "/records/{record_id}/breakglass"): _CUSTODIAN,
+    ("GET", "/records/{record_id}/lifecycle"): _CUSTODIAN,
+    ("GET", "/patients/{patient_id}/records"): _CUSTODIAN | _PORTAL,
+    ("POST", "/search/records"): _CUSTODIAN,
+    ("POST", "/records/{record_id}/emergency-search"): _PORTAL,
+    ("POST", "/records/ingest"): _CUSTODIAN,
+}
+FACILITY_PUBLIC_ROUTES = frozenset({("GET", "/health")})
 
 
 def get_repo(request: Request) -> StorageRepository:
@@ -227,6 +266,7 @@ def _log_event(
     actor_id: str,
     correlation_id: str,
     sink: AuditSink | None = None,
+    audit_auth: SignedRequestAuth | None = None,
     in_process_logger: Callable[..., Any] | None = None,
     **in_process_kwargs: object,
 ) -> None:
@@ -246,6 +286,7 @@ def _log_event(
             event_data=event_data,
             actor_id=actor_id,
             correlation_id=correlation_id,
+            auth=audit_auth,
         )
     elif (
         in_process_logger and isinstance(repo, PostgresStorageRepository) and audit_key
@@ -280,6 +321,7 @@ def _log_denial(
     audit_key: ECPrivateKey | None,
     *,
     sink: AuditSink | None = None,
+    audit_auth: SignedRequestAuth | None = None,
     record_id: str,
     requester_id: str,
     denied_by: str,
@@ -302,6 +344,7 @@ def _log_denial(
             repo,
             audit_key,
             sink=sink,
+            audit_auth=audit_auth,
             event_type=EVENT_ACCESS_DENIED,
             event_data={
                 "record_id": record_id,
@@ -334,6 +377,7 @@ def _log_granted(
     audit_key: ECPrivateKey | None,
     *,
     sink: AuditSink | None = None,
+    audit_auth: SignedRequestAuth | None = None,
     record_id: str,
     requester_id: str,
     access_via: str,
@@ -352,6 +396,7 @@ def _log_granted(
         repo,
         audit_key,
         sink=sink,
+        audit_auth=audit_auth,
         event_type=EVENT_ACCESS_GRANTED,
         event_data={
             "record_id": record_id,
@@ -373,6 +418,7 @@ def _log_discovery(
     audit_key: ECPrivateKey | None,
     *,
     sink: AuditSink | None = None,
+    audit_auth: SignedRequestAuth | None = None,
     patient_id: str,
     requester_id: str,
     record_ids: list[str],
@@ -384,6 +430,7 @@ def _log_discovery(
         repo,
         audit_key,
         sink=sink,
+        audit_auth=audit_auth,
         event_type=EVENT_FEDERATION_DISCOVERY,
         event_data={
             "patient_id_hash": patient_id_hash(patient_id),
@@ -406,6 +453,7 @@ def _log_rewrap(
     audit_key: ECPrivateKey | None,
     *,
     sink: AuditSink | None = None,
+    audit_auth: SignedRequestAuth | None = None,
     record_id: str,
     source_facility_id: str,
     target_actor_id: str,
@@ -417,6 +465,7 @@ def _log_rewrap(
         repo,
         audit_key,
         sink=sink,
+        audit_auth=audit_auth,
         event_type=EVENT_FEDERATION_REWRAP,
         event_data={
             "record_id": record_id,
@@ -430,6 +479,15 @@ def _log_rewrap(
         source_facility_id=source_facility_id,
         target_actor_id=target_actor_id,
     )
+
+
+def _presents_no_key(payload: ReadRecordRequest) -> bool:
+    """Whether a read request carries no attribute key at all (review F34).
+
+    Such a requester can decrypt nothing, so the read is refused before the
+    record, its wrapping or its policy is loaded.
+    """
+    return not payload.holder_keyring
 
 
 def _parse_attribute_keyring(
@@ -466,6 +524,9 @@ def create_hospital_app(
     *,
     trust: FacilityTrust | None = None,
     audit_sink: AuditSink | None = None,
+    identity: ServiceIdentity | None = None,
+    rotation_ports: RotationPorts | None = None,
+    service_root: Certificate | None = None,
 ) -> FastAPI:
     """Create and configure a FastAPI application for a hospital node.
 
@@ -481,13 +542,39 @@ def create_hospital_app(
         audit_sink: Explicit in-memory audit destination for tests and
             standalone demos. With no audit destination at all, every
             log-before-release path fails closed with 503 (review F19).
+        identity: This facility's service identity, which signs its calls to
+            the audit service (ADR-0066). Required with ``audit_service_url``.
+        rotation_ports: The authority and share-holder calls the forced
+            rotation at expiry makes (ADR-0069). Without them break-glass is
+            refused with 503: a session that cannot be rotated must not open.
+        service_root: The federation root callers' service certificates must
+            chain to; defaults to ``trust.root``. One of the two is required.
 
     Returns:
         Configured FastAPI application instance.
+
+    Raises:
+        ValueError: No federation root to authenticate callers against, or an
+            audit service URL with no identity to sign appends with.
     """
     repo = repository or InMemoryStorageRepository()
+    root = service_root or (trust.root if trust is not None else None)
+    if root is None:
+        raise ValueError(
+            "a facility needs the federation root to authenticate its callers "
+            "(ADR-0066): pass trust or service_root"
+        )
+    if audit_service_url and identity is None:
+        raise ValueError("a facility that logs to the audit service must sign")
+    audit_auth = (
+        SignedRequestAuth(identity, {audit_service_url: AUDIT_SERVICE_ID})
+        if audit_service_url and identity is not None
+        else None
+    )
     if expiry_manager is not None:
         expiry_manager.attach_state_writer(repo.transition_lifecycle_state)
+        if rotation_ports is not None:
+            expiry_manager.attach_rotator(FacilityRotator(repo, rotation_ports))
     # Backed by the store so a facility restart does not re-open replay (F22).
     consumed_assertions = ConsumedAssertionIds(backend=repo)
     # Clinical labels are trusted only when their patient signature verifies
@@ -608,7 +695,31 @@ def create_hospital_app(
         audit_key: AuditKeyDep,
         audit_url: AuditUrlDep,
     ) -> ReadRecordResponse:
-        """Read and decrypt an encrypted health record under policy or consent."""
+        """Read and decrypt an encrypted health record under policy or consent.
+
+        Object-level authorization runs before any storage access (review F34,
+        ADR-0066): the caller is already an authenticated key agent, and a
+        requester presenting no attribute key can open nothing, so it is
+        refused before the record, its wrapping or its policy is loaded.
+        """
+        if _presents_no_key(payload):
+            _log_denial(
+                audit_url,
+                repo,
+                audit_key,
+                sink=audit_sink,
+                audit_auth=audit_auth,
+                record_id=record_id,
+                requester_id=payload.requester_id,
+                denied_by=DENIED_BY_POLICY,
+                reason="requester presented no attribute key",
+                actor_id=facility_id,
+                correlation_id=payload.correlation_id or str(uuid4()),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Policy denied: no attribute key presented for this record",
+            )
         record = repo.get_record(record_id)
         if not record:
             raise HTTPException(
@@ -630,6 +741,7 @@ def create_hospital_app(
                 repo,
                 audit_key,
                 sink=audit_sink,
+                audit_auth=audit_auth,
                 record_id=record_id,
                 requester_id=payload.requester_id,
                 denied_by=DENIED_BY_CONSENT,
@@ -711,6 +823,7 @@ def create_hospital_app(
                     repo,
                     audit_key,
                     sink=audit_sink,
+                    audit_auth=audit_auth,
                     record_id=record_id,
                     requester_id=payload.requester_id,
                     denied_by=DENIED_BY_CONSENT,
@@ -728,6 +841,7 @@ def create_hospital_app(
                     repo,
                     audit_key,
                     sink=audit_sink,
+                    audit_auth=audit_auth,
                     record_id=record_id,
                     requester_id=payload.requester_id,
                     denied_by=DENIED_BY_POLICY,
@@ -745,6 +859,7 @@ def create_hospital_app(
                     repo,
                     audit_key,
                     sink=audit_sink,
+                    audit_auth=audit_auth,
                     record_id=record_id,
                     requester_id=payload.requester_id,
                     denied_by=DENIED_BY_DEK_UNWRAP,
@@ -770,6 +885,7 @@ def create_hospital_app(
                     repo,
                     audit_key,
                     sink=audit_sink,
+                    audit_auth=audit_auth,
                     record_id=record_id,
                     requester_id=payload.requester_id,
                     denied_by=DENIED_BY_POLICY,
@@ -787,6 +903,7 @@ def create_hospital_app(
                     repo,
                     audit_key,
                     sink=audit_sink,
+                    audit_auth=audit_auth,
                     record_id=record_id,
                     requester_id=payload.requester_id,
                     denied_by=DENIED_BY_DEK_UNWRAP,
@@ -807,6 +924,7 @@ def create_hospital_app(
             repo,
             audit_key,
             sink=audit_sink,
+            audit_auth=audit_auth,
             record_id=record_id,
             requester_id=payload.requester_id,
             access_via=access_via,
@@ -947,6 +1065,7 @@ def create_hospital_app(
                 repo,
                 audit_key,
                 sink=audit_sink,
+                audit_auth=audit_auth,
                 record_id=record_id,
                 requester_id=payload.actor_id,
                 denied_by=DENIED_BY_REVOCATION_AUTHZ,
@@ -1021,6 +1140,7 @@ def create_hospital_app(
                 repo,
                 audit_key,
                 sink=audit_sink,
+                audit_auth=audit_auth,
                 record_id=record_id,
                 requester_id=payload.actor_id,
                 denied_by=DENIED_BY_REVOCATION_AUTHZ,
@@ -1112,6 +1232,7 @@ def create_hospital_app(
                 repo,
                 audit_key,
                 sink=audit_sink,
+                audit_auth=audit_auth,
                 record_id=record_id,
                 requester_id=clinician_id,
                 denied_by=denied_by,
@@ -1122,12 +1243,13 @@ def create_hospital_app(
             return HTTPException(status_code=code, detail=detail)
 
         exp_manager = app.state.expiry_manager
-        if trust is None or exp_manager is None:
+        if trust is None or exp_manager is None or rotation_ports is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=(
                     "break-glass is not configured on this facility: it needs "
-                    "configured trust anchors and an expiry manager"
+                    "configured trust anchors, an expiry manager and the "
+                    "rotation that expiry runs (ADR-0069)"
                 ),
             )
 
@@ -1136,22 +1258,10 @@ def create_hospital_app(
             cl_cert = certificate_from_pem(
                 payload.clinician_certificate_pem.encode("utf-8")
             )
-            lifecycle_priv = private_key_from_pem(
-                payload.lifecycle_signing_key_pem.encode("utf-8")
-            )
         except KeyFormatError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Certificate or key parsing failed: {exc}",
-            ) from exc
-        try:
-            base_wrapping_key = base64.b64decode(
-                payload.baseline_wrapping_key_b64, validate=True
-            )
-        except (ValueError, binascii.Error) as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid base64 baseline_wrapping_key: {exc}",
+                detail=f"Certificate parsing failed: {exc}",
             ) from exc
         shares_list: list[Share] = []
         for x, share_hex in payload.shares:
@@ -1177,6 +1287,7 @@ def create_hospital_app(
                 f"Emergency assertion refused: {reason}",
             )
         clinician_facility_id, ca_cert = issuer
+        clinician_pub = certificate_public_key(cl_cert)
         try:
             validate_emergency_assertion(
                 assertion=payload.assertion,
@@ -1285,10 +1396,6 @@ def create_hospital_app(
                 status.HTTP_404_NOT_FOUND,
                 f"No DEK wrapping found for record {record_id!r}",
             )
-        baseline_wrapping = (
-            repo.get_wrapping_for_record(record_id, wrapped_for=record.policy_id)
-            or wrapping
-        )
 
         def gate(
             call: Callable[[], EmergencyUnlockResult | bytes]
@@ -1317,7 +1424,11 @@ def create_hospital_app(
                     status.HTTP_403_FORBIDDEN,
                     f"Emergency unlock rejected: {exc}",
                 ) from exc
-            except (IllegalTransitionError, MissingReasonCodeError) as exc:
+            except (
+                IllegalTransitionError,
+                MissingReasonCodeError,
+                InvalidSignatureError,
+            ) as exc:
                 raise deny(
                     DENIED_BY_BREAKGLASS_TRANSITION,
                     str(exc),
@@ -1373,6 +1484,7 @@ def create_hospital_app(
                 repo,
                 audit_key,
                 sink=audit_sink,
+                audit_auth=audit_auth,
                 record_id=record_id,
                 source_facility_id=record.facility_id,
                 target_actor_id=clinician_id,
@@ -1398,6 +1510,63 @@ def create_hospital_app(
                 reason,
             )
 
+        # 4b. The transition the clinician signed (ADR-0068, D8-a): it must be
+        # theirs, for this record, from its current state, with the
+        # assertion's reason, recent -- all checked before any side effect.
+        event = payload.transition_event
+        if event is None:
+            reason = "opening needs the clinician-signed transition event"
+            raise deny(
+                DENIED_BY_BREAKGLASS_TRANSITION,
+                reason,
+                status.HTTP_400_BAD_REQUEST,
+                reason,
+            )
+        if event.from_state is not source_state:
+            reason = (
+                f"transition was signed from {event.from_state.value!r}; the "
+                f"record is {source_state.value!r} (sign it again)"
+            )
+            raise deny(
+                DENIED_BY_BREAKGLASS_TRANSITION,
+                reason,
+                status.HTTP_409_CONFLICT,
+                reason,
+            )
+        now = exp_manager.now()
+        if (
+            event.record_id != record_id
+            or event.to_state is not LifecycleState.EMERGENCY_OPEN
+            or event.actor_id != clinician_id
+            or event.reason_code is not payload.assertion.reason_code
+            or event.issued_at < now - MAX_ASSERTION_TTL
+            or event.issued_at > now + ASSERTION_CLOCK_SKEW
+        ):
+            reason = (
+                "transition event is not this clinician's recent "
+                "emergency_open of this record for the asserted reason"
+            )
+            raise deny(
+                DENIED_BY_BREAKGLASS_TRANSITION,
+                reason,
+                status.HTTP_400_BAD_REQUEST,
+                reason,
+            )
+        try:
+            verify_transition_event(event, clinician_pub)
+        except (
+            InvalidSignatureError,
+            IllegalTransitionError,
+            MissingReasonCodeError,
+        ) as exc:
+            raise deny(
+                DENIED_BY_BREAKGLASS_TRANSITION,
+                str(exc),
+                status.HTTP_400_BAD_REQUEST,
+                "Transition event does not verify against the clinician's "
+                f"certificate: {exc}",
+            ) from exc
+
         # 5. Claim the state (N1, F7): of two concurrent opens exactly one wins.
         try:
             repo.transition_lifecycle_state(
@@ -1413,6 +1582,20 @@ def create_hospital_app(
 
         session_registered = False
         try:
+            # 5b. Apply the event through the state machine, which consumes its
+            # one-time id: a replayed event opens nothing (§8).
+            try:
+                exp_manager.state_machine.apply_transition(
+                    source_state, event, clinician_pub
+                )
+            except ReplayedEventError as exc:
+                raise deny(
+                    DENIED_BY_BREAKGLASS_TRANSITION,
+                    str(exc),
+                    status.HTTP_400_BAD_REQUEST,
+                    f"Transition event replayed: {exc}",
+                ) from exc
+
             # 6. Open emergency access via 2-of-3 threshold gate
             unlock_result = gate(
                 lambda: open_emergency_access(
@@ -1420,10 +1603,8 @@ def create_hospital_app(
                     dek_wrapping=wrapping,
                     transition_source_state=source_state,
                     record_id=record_id,
-                    actor_id=clinician_id,
-                    correlation_id=corr_id,
-                    reason_code=payload.assertion.reason_code,
-                    lifecycle_signing_key=lifecycle_priv,
+                    transition_event=event,
+                    actor_public_key=clinician_pub,
                     pre_rewrap_key=payload.pre_rewrap_key,
                 )
             )
@@ -1435,6 +1616,7 @@ def create_hospital_app(
                 repo,
                 audit_key,
                 sink=audit_sink,
+                audit_auth=audit_auth,
                 record_id=record_id,
                 source_facility_id=record.facility_id,
                 target_actor_id=clinician_id,
@@ -1450,8 +1632,6 @@ def create_hospital_app(
                     opener_facility_id=clinician_facility_id,
                     correlation_id=corr_id,
                     emergency_key=unlock_result.emergency_key,
-                    baseline_wrapping_key=base_wrapping_key,
-                    baseline_wrapping=baseline_wrapping,
                     emergency_wrapping=wrapping,
                     current_record=record,
                     return_state=source_state,
@@ -1465,7 +1645,6 @@ def create_hospital_app(
             session_registered = True
 
             # 9. Record the signed event against the claimed state.
-            event = unlock_result.transition_event
             repo.insert_transition_event(event)
             repo.transition_lifecycle_state(
                 record_id,
@@ -1496,6 +1675,22 @@ def create_hospital_app(
             expires_at=session.expires_at,
         )
 
+    @app.get("/records/{record_id}/lifecycle", response_model=LifecycleStateResponse)
+    def lifecycle_state(record_id: str, repo: RepoDep) -> LifecycleStateResponse:
+        """The record's stored lifecycle state.
+
+        The custodian signs the clinician's ``EMERGENCY_OPEN`` transition from
+        it (ADR-0068). If the state moves before the transition arrives the
+        open is refused with 409 and the custodian signs again.
+        """
+        state = repo.get_lifecycle_state(record_id)
+        if state is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Record {record_id!r} not found",
+            )
+        return LifecycleStateResponse(record_id=record_id, state=state)
+
     # --- Search & Discovery Endpoints -----------------------------------------
 
     @app.get("/patients/{patient_id}/records", response_model=DiscoveryResponse)
@@ -1512,6 +1707,7 @@ def create_hospital_app(
             repo,
             audit_key,
             sink=audit_sink,
+            audit_auth=audit_auth,
             patient_id=patient_id,
             requester_id=facility_id,
             record_ids=record_ids,
@@ -1581,6 +1777,7 @@ def create_hospital_app(
                 repo,
                 audit_key,
                 sink=audit_sink,
+                audit_auth=audit_auth,
                 record_id=record_id,
                 requester_id=payload.requester_id,
                 denied_by=DENIED_BY_EMERGENCY_SEARCH,
@@ -1598,6 +1795,7 @@ def create_hospital_app(
             repo,
             audit_key,
             sink=audit_sink,
+            audit_auth=audit_auth,
             record_id=record_id,
             requester_id=payload.requester_id,
             access_via=ACCESS_VIA_EMERGENCY_SEARCH,
@@ -1701,6 +1899,10 @@ def create_hospital_app(
         )
         for _term, token in result.search_tokens.items():
             repo.insert_search_term(result.record.record_id, token)
+        if result.sealed_search_terms is not None:
+            repo.put_sealed_search_terms(
+                result.record.record_id, result.sealed_search_terms
+            )
 
         return IngestRecordResponse(
             record_id=result.record.record_id,
@@ -1710,4 +1912,15 @@ def create_hospital_app(
             search_terms_indexed=len(result.search_tokens),
         )
 
+    install_service_auth(
+        app,
+        ServiceAuthConfig(
+            service_id=facility_id,
+            trusted_root=root,
+            permissions=FACILITY_PERMISSIONS,
+            public_routes=FACILITY_PUBLIC_ROUTES,
+            # Backed by the store, so a restart does not reopen replay (F22).
+            replay=ConsumedRequestIds(backend=repo),
+        ),
+    )
     return app

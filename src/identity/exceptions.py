@@ -26,3 +26,12 @@ class PatientCertificateError(CryptoError):
     patient, or is revoked (ADR-0064). Chain failures raise
     :class:`ChainValidationError`.
     """
+
+
+class ServiceCertificateError(CryptoError):
+    """Raised when a certificate is not a valid federation service certificate.
+
+    Covers a certificate with no ``service:<kind>`` OU, an unknown kind, a CA
+    certificate, or one with no CN (ADR-0066). Chain failures raise
+    :class:`ChainValidationError`.
+    """

@@ -1,4 +1,4 @@
-"""The Compose deployment's hardening stays in place (review N12, N14, F1, F14).
+"""The Compose deployment's hardening stays in place (N12, N14, F1, ADR-0066).
 
 These read the deployment files rather than starting containers, so they run
 everywhere; each pins one property a later edit could silently undo.
@@ -64,11 +64,33 @@ def test_facilities_get_trust_anchors_from_the_pki_job(compose):
         assert not any("federation-pki.json" in v for v in service["volumes"])
 
 
-def test_authorities_allowlist_their_authoring_callers(compose):
-    """F14 interim: authoring keys go only to the named containers."""
-    for authority in ("authority-med", "authority-net"):
-        env = compose["services"][authority]["environment"]
-        assert "AUTHORING_CALLERS" in env
+SERVICE_IDS = {
+    "authority-med": "authority-med",
+    "authority-net": "authority-net",
+    "audit": "audit-service",
+    "facility-a": "facility-a",
+    "facility-b": "facility-b",
+    "custodian": "custodian",
+    "portal": "portal",
+}
+
+
+def test_every_service_mounts_only_its_own_signing_identity(compose):
+    """ADR-0066: each container signs as itself and holds no other's key."""
+    for name, service_id in SERVICE_IDS.items():
+        service = compose["services"][name]
+        env = service["environment"]
+        assert env["SERVICE_KEY_FILE"] == "/identity/service.key", name
+        assert env["SERVICE_CERT_FILE"] == "/identity/service.crt", name
+        identity_mounts = [v for v in service["volumes"] if "pki/services" in v]
+        assert identity_mounts == [f"./pki/services/{service_id}:/identity:ro"], name
+        assert not any(v.startswith("./pki:") for v in service["volumes"]), name
+
+
+def test_the_address_allowlist_is_gone(compose):
+    """F14's interim allowlist is replaced by signed requests (ADR-0066)."""
+    text = (DEPLOY / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "AUTHORING_CALLERS" not in text
 
 
 @pytest.mark.parametrize(

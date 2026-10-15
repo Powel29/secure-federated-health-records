@@ -54,6 +54,7 @@
 <form method="post" aria-labelledby="declare-h">
   {% csrf_token %}
   <input type="hidden" name="patient_id" value="{{ patient_id }}">
+  <input type="hidden" name="declare_token" value="{{ declare_token }}">
   <div class="callpoint-row">
     <section class="callpoint" aria-labelledby="declare-h">
       <div class="callpoint-label" id="declare-h">{% include "_icon.html" with name="glass" %}Break glass</div>

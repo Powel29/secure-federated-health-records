@@ -16,6 +16,7 @@ import base64
 import pytest
 from api.hospital import FacilityTrust, create_hospital_app
 from api.repository import InMemoryStorageRepository
+from api.rotation import RotationPorts
 from breakglass.emergency_key import generate_emergency_key, split_emergency_key
 from contracts.clinical import ClinicalMetadata
 from contracts.enums import LifecycleState, PolicyNodeType
@@ -24,7 +25,6 @@ from crypto_core import (
     certificate_to_pem,
     generate_ec_keypair,
 )
-from fastapi.testclient import TestClient
 from identity.certificates import (
     issue_clinician_certificate,
     issue_facility_ca_certificate,
@@ -35,6 +35,8 @@ from lifecycle.expiry import EmergencyExpiryManager
 from pre.elgamal import generate_keypair as generate_pre_keypair
 from records.ingest import ingest_record
 from records.labels import sign_clinical_labels
+
+from tests.service_pki import ServicePKI
 
 
 @pytest.fixture()
@@ -93,6 +95,8 @@ def federation_pki():
         "pat_cert_pem": certificate_to_pem(pat_cert).decode("ascii"),
         "life_priv": life_priv,
         "life_pub": life_pub,
+        # Root-issued service identities and signed clients (ADR-0066).
+        "services": ServicePKI(root),
     }
 
 
@@ -114,6 +118,34 @@ class FromHost:
         if scope["type"] in ("http", "websocket"):
             scope = {**scope, "client": (self.host, 50000)}
         await self.app(scope, receive, send)
+
+
+class RecordingRotationPorts:
+    """Rotation ports for tests (ADR-0069): authoring keys from a keyring, and
+    the shares the rotation hands out kept for the test to read."""
+
+    def __init__(self, keyring: dict[tuple[str, str, str], bytes]) -> None:
+        self.keyring = keyring
+        self.deposits: list[dict] = []
+
+    def author_keys(self, leaves):
+        return {leaf: self.keyring[leaf] for leaf in leaves}
+
+    def deposit_shares(self, record_id, generation, clinician_share, audit_share):
+        self.deposits.append(
+            {
+                "record_id": record_id,
+                "generation": generation,
+                "clinician_share": clinician_share,
+                "audit_share": audit_share,
+            }
+        )
+
+    @property
+    def ports(self) -> RotationPorts:
+        return RotationPorts(
+            author_keys=self.author_keys, deposit_shares=self.deposit_shares
+        )
 
 
 class RecordingAuditSink:
@@ -242,6 +274,9 @@ def test_setup(federation_pki, attribute_materials):
     )
     for _term, token in ingest_res.search_tokens.items():
         repo.insert_search_term(ingest_res.record.record_id, token)
+    repo.put_sealed_search_terms(
+        ingest_res.record.record_id, ingest_res.sealed_search_terms
+    )
 
     # The emergency wrapping ingest produced: the record's DEK under the
     # emergency key. (Wrapping the policy root secret here instead would hand
@@ -250,18 +285,22 @@ def test_setup(federation_pki, attribute_materials):
     repo.insert_dek_wrapping(em_wrapping)
 
     audit_sink = RecordingAuditSink()
+    rotation = RecordingRotationPorts(attribute_materials["attr_keyring"])
     app = create_hospital_app(
         facility_id="facility-a",
         repository=repo,
         expiry_manager=expiry_manager,
         trust=make_trust(federation_pki),
         audit_sink=audit_sink,
+        rotation_ports=rotation.ports,
     )
-    client = TestClient(app)
+    # Signed as bootstrap, which every facility route allows (ADR-0066).
+    client = federation_pki["services"].client(app, "facility-a")
 
     return {
         "repo": repo,
         "audit_sink": audit_sink,
+        "rotation": rotation,
         "app": app,
         "client": client,
         "expiry_manager": expiry_manager,

@@ -9,21 +9,16 @@ here; ``api.custodian_service`` only routes requests and calls these
 
 from __future__ import annotations
 
-import base64
 import datetime
 from dataclasses import dataclass, field
 
 from breakglass import create_emergency_assertion
 from breakglass.emergency_key import Share, generate_emergency_key, split_emergency_key
-from contracts import EmergencyAssertion, Record
-from contracts.enums import ReasonCode
-from crypto_core import (
-    generate_ec_keypair,
-    generate_key,
-    private_key_to_pem,
-    sha256_digest,
-)
+from contracts import EmergencyAssertion, Record, TransitionEvent
+from contracts.enums import LifecycleState, ReasonCode
+from crypto_core import sha256_digest
 from crypto_core.types import ECPrivateKey
+from lifecycle.state_machine import create_transition_event
 from pre import open_delivery_package
 from records.service import decrypt_record
 
@@ -53,12 +48,6 @@ class UnlockRequestMaterial:
     """What a clinician's side signs and presents for one break-glass unlock."""
 
     assertion: EmergencyAssertion
-    # A throwaway key signs the transition so the clinician's own key never
-    # leaves the custodian (ADR-0043); D8 decides who should sign it instead.
-    transition_signing_key_pem: str = field(repr=False)
-    # Not a key to anything: the facility's timer needs a value to register
-    # the time-box (ADR-0043 re-baseline gap, review F9).
-    baseline_wrapping_key_b64: str = field(repr=False)
 
 
 def prepare_unlock(
@@ -71,7 +60,7 @@ def prepare_unlock(
     assertion_ttl: datetime.timedelta,
     context_digest: str = "",
 ) -> UnlockRequestMaterial:
-    """Sign the emergency assertion and mint the per-unlock throwaway values."""
+    """Sign the clinician's emergency assertion."""
     assertion = create_emergency_assertion(
         patient_id=patient_id,
         clinician_id=clinician_id,
@@ -81,11 +70,35 @@ def prepare_unlock(
         ttl=assertion_ttl,
         clinical_context_digest=context_digest,
     )
-    transition_key, _ = generate_ec_keypair()
-    return UnlockRequestMaterial(
-        assertion=assertion,
-        transition_signing_key_pem=private_key_to_pem(transition_key).decode("ascii"),
-        baseline_wrapping_key_b64=base64.b64encode(generate_key()).decode("ascii"),
+    return UnlockRequestMaterial(assertion=assertion)
+
+
+def sign_emergency_transition(
+    *,
+    signing_key: ECPrivateKey,
+    record_id: str,
+    from_state: LifecycleState,
+    clinician_id: str,
+    reason_code: ReasonCode,
+) -> TransitionEvent:
+    """Sign the record's ``from_state -> EMERGENCY_OPEN`` as the clinician (D8-a).
+
+    Signed here, with the clinician's own key, so the key never leaves the
+    custodian (ADR-0043) and the event is attributable to the clinician who
+    opened the record (ADR-0068). The facility verifies it against the
+    clinician's certificate.
+
+    Raises:
+        IllegalTransitionError / MissingReasonCodeError: ``from_state`` cannot
+            reach ``EMERGENCY_OPEN``.
+    """
+    return create_transition_event(
+        record_id=record_id,
+        from_state=from_state,
+        to_state=LifecycleState.EMERGENCY_OPEN,
+        actor_id=clinician_id,
+        signing_key=signing_key,
+        reason_code=reason_code,
     )
 
 

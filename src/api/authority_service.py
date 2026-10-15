@@ -16,6 +16,9 @@ Invariants:
 - The authority's private signing key never leaves this process; only its
   public key (``GET /public-key``) and, once bootstrap has registered one,
   its certificate (``GET /certificate``) are ever returned.
+- Every route but health, public key and certificate read takes only a signed
+  request from a federation service whose kind the route allows (ADR-0066).
+  Authoring keys go to facilities, the custodian and bootstrap only.
 - Ephemeral by design: ARCHITECTURE.md §7 reseeds the whole federation fresh
   on every bootstrap run, so this service generates its own signing keypair
   at startup rather than loading one from disk (ADR-0039). Issued
@@ -27,10 +30,6 @@ from __future__ import annotations
 
 import base64
 import datetime
-import ipaddress
-import socket
-import threading
-import time
 from typing import Annotated
 
 from authority.exceptions import (
@@ -48,8 +47,10 @@ from authority.issuance import (
     issue_owner_credential,
     verify_credential,
 )
+from breakglass import ConsumedRequestIds
 from crypto_core import public_key_to_pem
 from crypto_core.exceptions import InvalidSignatureError
+from cryptography.x509 import Certificate
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 
 from api.authority_schemas import (
@@ -68,6 +69,7 @@ from api.authority_schemas import (
     VerifyCredentialRequest,
     VerifyCredentialResponse,
 )
+from api.service_auth import ServiceAuthConfig, install_service_auth
 
 
 def get_authority(request: Request) -> AttributeAuthority:
@@ -86,61 +88,27 @@ _CREDENTIAL_ERRORS = (
 )
 
 
-# Who may call /attribute-keys/author until service authentication exists
-# (review F14 interim; D5-a replaces this with signed request envelopes).
-# Only Compose narrows anything: there each service has its own address. In
-# deploy/run_local every process shares loopback, so this default admits any
-# local caller -- the interim control does not hold in that mode.
-DEFAULT_AUTHORING_CALLERS = frozenset({"127.0.0.1", "::1"})
+_ANY_SERVICE = frozenset({"facility", "custodian", "portal", "bootstrap"})
 
-# How long resolved allowlist hostnames are trusted before resolving again.
-_CALLER_RESOLVE_TTL_SECONDS = 30.0
-
-
-def _resolve_callers(callers: frozenset[str]) -> set[str]:
-    """IP addresses for each allowlist entry; hostnames resolve at call time."""
-    addresses: set[str] = set()
-    for entry in callers:
-        try:
-            addresses.add(str(ipaddress.ip_address(entry)))
-            continue
-        except ValueError:
-            pass
-        try:
-            infos = socket.getaddrinfo(entry, None)
-        except socket.gaierror:
-            continue  # an unresolvable name allows nobody
-        addresses.update(str(info[4][0]) for info in infos)
-    return addresses
-
-
-class _CallerAllowlist:
-    """Allowlist check with hostnames resolved at most once per TTL.
-
-    Not at startup: Compose starts the authorities before the custodian and
-    bootstrap containers exist, so their names do not resolve yet.
-    """
-
-    def __init__(self, callers: frozenset[str]) -> None:
-        self._callers = callers
-        self._lock = threading.Lock()
-        self._addresses: set[str] = set()
-        self._resolved_at: float | None = None
-
-    def allows(self, host: str | None) -> bool:
-        if host is None:
-            return False
-        if host in self._callers:  # literal match: no DNS lookup
-            return True
-        now = time.monotonic()
-        with self._lock:
-            if (
-                self._resolved_at is None
-                or now - self._resolved_at >= _CALLER_RESOLVE_TTL_SECONDS
-            ):
-                self._addresses = _resolve_callers(self._callers)
-                self._resolved_at = now
-            return host in self._addresses
+# Which kinds of federation service may call each route (ADR-0066). The
+# authoring key is the same key ``/attribute-keys/release`` gates behind a
+# credential (ADR-0026), so only the services that seal policies get it: the
+# custodian and bootstrap at ingest, a facility at its expiry rotation
+# (ADR-0069). This replaces the review F14 interim address allowlist.
+AUTHORITY_PERMISSIONS: dict[tuple[str, str], frozenset[str]] = {
+    ("PUT", "/certificate"): frozenset({"bootstrap"}),
+    ("POST", "/credentials/issue"): frozenset({"bootstrap"}),
+    ("POST", "/credentials/verify"): _ANY_SERVICE,
+    ("POST", "/credentials/status"): _ANY_SERVICE,
+    ("POST", "/credentials/{serial}/revoke"): frozenset({"bootstrap"}),
+    ("POST", "/attribute-keys/release"): frozenset({"custodian", "bootstrap"}),
+    ("POST", "/attribute-keys/author"): frozenset(
+        {"custodian", "facility", "bootstrap"}
+    ),
+}
+AUTHORITY_PUBLIC_ROUTES = frozenset(
+    {("GET", "/health"), ("GET", "/public-key"), ("GET", "/certificate")}
+)
 
 
 def create_authority_app(
@@ -148,7 +116,7 @@ def create_authority_app(
     owned_attribute_names: frozenset[str],
     authority: AttributeAuthority | None = None,
     *,
-    authoring_callers: frozenset[str] = DEFAULT_AUTHORING_CALLERS,
+    service_root: Certificate,
 ) -> FastAPI:
     """Create and configure the standalone Attribute Authority Service application.
 
@@ -160,16 +128,14 @@ def create_authority_app(
             supply a fixed one). Defaults to a freshly generated one --
             ARCHITECTURE.md §7 step 3: "each generates attribute key
             material."
-        authoring_callers: Addresses or hostnames allowed to fetch authoring
-            keys from ``/attribute-keys/author`` (review F14 interim).
-            Defaults to loopback only.
+        service_root: The federation root callers' service certificates must
+            chain to (ADR-0066). This service's id is ``authority_id``.
 
     Returns:
         A configured FastAPI application.
     """
     auth = authority or generate_authority(authority_id, owned_attribute_names)
 
-    caller_allowlist = _CallerAllowlist(authoring_callers)
     app = FastAPI(
         title=f"Attribute Authority Service ({authority_id})",
         description="Federated Break-Glass EHR -- multi-authority attribute issuance",
@@ -313,21 +279,15 @@ def create_authority_app(
 
     @app.post("/attribute-keys/author", response_model=AttributeKeyResponse)
     def author_attribute_key(
-        payload: AuthorAttributeKeyRequest, authority: AuthorityDep, request: Request
+        payload: AuthorAttributeKeyRequest, authority: AuthorityDep
     ) -> AttributeKeyResponse:
         """Mint (or fetch) the authoring-side key for an owned attribute leaf.
 
         The authoring key is the same key ``/attribute-keys/release`` gates
-        behind a credential (ADR-0026), so only allowlisted authoring services
-        may call this (review F14 interim). Those callers are trusted parties
-        by construction; signed service requests (D5-a) replace the address
-        check.
+        behind a credential (ADR-0026), so only a signed request from a
+        policy-sealing service kind reaches this (ADR-0066, replacing the
+        review F14 interim address allowlist).
         """
-        if not caller_allowlist.allows(request.client.host if request.client else None):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="caller is not an allowlisted authoring service",
-            )
         try:
             key = authority.attribute_key(payload.name, payload.value)
         except UnauthorizedAttributeError as exc:
@@ -341,4 +301,14 @@ def create_authority_app(
             key_b64=base64.b64encode(key).decode("ascii"),
         )
 
+    install_service_auth(
+        app,
+        ServiceAuthConfig(
+            service_id=authority_id,
+            trusted_root=service_root,
+            permissions=AUTHORITY_PERMISSIONS,
+            public_routes=AUTHORITY_PUBLIC_ROUTES,
+            replay=ConsumedRequestIds(),
+        ),
+    )
     return app

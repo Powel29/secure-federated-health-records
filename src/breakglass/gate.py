@@ -14,9 +14,10 @@ It performs, in order:
 3. Unwrap the record's DEK, which is AES-256-GCM wrapped under the emergency
    key (``contracts.records.DEKWrapping`` / ``records.service.unwrap_dek``).
 4. Re-wrap the recovered DEK for delivery to the emergency clinician.
-5. Emit a signed ``TransitionEvent`` moving the record from
-   ``transition_source_state`` to ``EMERGENCY_OPEN``
-   (``lifecycle.state_machine.create_transition_event``).
+5. Carry the ``TransitionEvent`` the clinician signed (ADR-0068, D8-a): the
+   custodian signs it with the clinician's own key, so the event is
+   attributable to them, and this gate verifies it against the clinician's
+   already-validated certificate before any share is combined.
 6. Return all three artefacts as a frozen result.
 
 Precondition (caller's responsibility, not re-checked here): the
@@ -56,11 +57,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from contracts import TransitionEvent
-from contracts.enums import LifecycleState, ReasonCode
+from contracts.enums import LifecycleState
 from contracts.records import DEKWrapping
 from crypto_core.symmetric import aes_gcm_encrypt
-from crypto_core.types import ECPrivateKey
-from lifecycle.state_machine import create_transition_event
+from crypto_core.types import ECPublicKey
+from lifecycle.exceptions import IllegalTransitionError
+from lifecycle.state_machine import verify_transition_event
 from pre.elgamal import encapsulate_key
 from records.service import unwrap_dek
 from shamir.exceptions import InvalidShareError
@@ -100,8 +102,8 @@ class EmergencyUnlockResult:
             as ``c1 (32B) || c2 (32B) || nonce (GCM_NONCE_BYTES) ||
             wrapped_dek`` (fixed-length framing; see module docstring,
             "Design note on step 4").
-        transition_event: The signed ``TransitionEvent`` moving the record
-            into ``EMERGENCY_OPEN``.
+        transition_event: The clinician-signed ``TransitionEvent`` moving
+            the record into ``EMERGENCY_OPEN`` (ADR-0068).
     """
 
     emergency_key: bytes = field(repr=False)
@@ -115,10 +117,8 @@ def open_emergency_access(
     dek_wrapping: DEKWrapping,
     transition_source_state: LifecycleState,
     record_id: str,
-    actor_id: str,
-    correlation_id: str,
-    reason_code: ReasonCode,
-    lifecycle_signing_key: ECPrivateKey,
+    transition_event: TransitionEvent,
+    actor_public_key: ECPublicKey,
     pre_rewrap_key: int,
 ) -> EmergencyUnlockResult:
     """Open emergency access to one record from presented threshold shares.
@@ -132,20 +132,13 @@ def open_emergency_access(
             emergency key.
         transition_source_state: The record's current lifecycle state
             (``GRANTED`` or ``REVOKED`` -- the two legal predecessors of
-            ``EMERGENCY_OPEN``; anything else is rejected by the state
-            machine).
+            ``EMERGENCY_OPEN``); the event must start from it.
         record_id: The record being opened.
-        actor_id: The clinician (or service) causing the transition -- bound
-            into the signed ``TransitionEvent``.
-        correlation_id: Caller's audit-correlation identifier
-            (``contracts.audit.AuditEntry.correlation_id``). This gate does
-            not audit-log itself (C10 is a separate module); the caller uses
-            this value to tie its own audit entry to this unlock.
-        reason_code: Clinical justification for the emergency open --
-            required by the state machine for any transition into
-            ``EMERGENCY_OPEN`` (``lifecycle.state_machine.validate_transition``).
-        lifecycle_signing_key: The actor's ECDSA-P256 private key, used to
-            sign the emitted ``TransitionEvent``.
+        transition_event: The ``TransitionEvent`` the clinician signed for
+            this open (ADR-0068). The caller still applies it through the
+            state machine, which consumes its one-time id.
+        actor_public_key: The clinician's public key, from the certificate
+            the caller already validated.
         pre_rewrap_key: The emergency clinician's ElGamal PRE public key
             (see module docstring, "Design note on step 4").
 
@@ -163,34 +156,37 @@ def open_emergency_access(
         records.exceptions.UnwrappingError: The reconstructed emergency key
             does not authenticate against ``dek_wrapping`` (wrong key --
             e.g. from tampered shares -- or tampered wrapping).
+        crypto_core.exceptions.InvalidSignatureError: The event is not
+            signed by ``actor_public_key``.
         lifecycle.exceptions.IllegalTransitionError /
-            MissingReasonCodeError: ``transition_source_state`` cannot
-            legally reach ``EMERGENCY_OPEN``, or no ``reason_code`` was given.
+            MissingReasonCodeError: The event is not this record's
+            ``transition_source_state -> EMERGENCY_OPEN``, or carries no
+            ``reason_code``.
 
     Security property:
-        Fail-closed at every step: share sufficiency is checked before any
-        reconstruction is attempted, DEK unwrap authenticates via AES-GCM
-        before any key material is re-wrapped, and the transition event is
-        only emitted -- meaning only signed -- once every prior step has
-        succeeded. This function does not itself validate the
+        Fail-closed at every step, and the event is checked first: a forged,
+        mis-signed or wrong-record event stops the gate before any share is
+        combined. Share sufficiency is checked before any reconstruction, and
+        the DEK unwrap authenticates via AES-GCM before any key material is
+        re-wrapped. This function does not itself validate the
         ``EmergencyAssertion`` that authorized the caller to collect shares
         in the first place; see the module precondition.
     """
+    # --- Step 5 first: the clinician's signed transition (ADR-0068) ---
+    verify_transition_event(transition_event, actor_public_key)
+    if (
+        transition_event.record_id != record_id
+        or transition_event.from_state is not transition_source_state
+        or transition_event.to_state is not LifecycleState.EMERGENCY_OPEN
+    ):
+        raise IllegalTransitionError(
+            "transition event is not this record's "
+            f"{transition_source_state.value} -> emergency_open"
+        )
+
     emergency_key, rewrapped_dek = _reconstruct_and_deliver(
         shares_presented, dek_wrapping, record_id, pre_rewrap_key
     )
-
-    # --- Step 5: Emit the signed EMERGENCY_OPEN transition ---
-    transition_event = create_transition_event(
-        record_id=record_id,
-        from_state=transition_source_state,
-        to_state=LifecycleState.EMERGENCY_OPEN,
-        actor_id=actor_id,
-        signing_key=lifecycle_signing_key,
-        reason_code=reason_code,
-    )
-
-    # correlation_id is not consumed here -- see Args docstring above.
 
     # --- Step 6: Return all artefacts ---
     return EmergencyUnlockResult(
