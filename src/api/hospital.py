@@ -73,11 +73,18 @@ from breakglass.exceptions import (
     FacilityMismatchError,
     InsufficientSharesError,
     ReplayedAssertionError,
+    SealedShareError,
 )
 from breakglass.gate import (
     EmergencyUnlockResult,
     join_emergency_access,
     open_emergency_access,
+)
+from breakglass.share_sealing import (
+    ShareRecipient,
+    ShareSealingKey,
+    make_key_statement,
+    open_sealed_share,
 )
 from consent.exceptions import (
     ConsentDeniedError,
@@ -89,7 +96,6 @@ from consent.exceptions import (
 from consent.service import (
     read_record_under_consent,
     verify_consent_grant,
-    verify_consent_request,
 )
 from contracts.enums import ConsentStatus, LifecycleState
 from crypto_core import (
@@ -108,8 +114,6 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from identity import (
     PatientCertificateError,
-    SubjectCertificateError,
-    validate_clinician_certificate,
     validate_patient_certificate,
 )
 from identity.exceptions import ChainValidationError
@@ -168,7 +172,6 @@ from api.schemas import (
     BreakglassUnlockRequest,
     BreakglassUnlockResponse,
     ConsentResponse,
-    CreateConsentRequestPayload,
     DiscoveryResponse,
     EmergencySearchRequest,
     ErrorResponse,
@@ -190,6 +193,7 @@ from api.service_auth import (
     SignedRequestAuth,
     install_service_auth,
 )
+from api.share_transport import serve_share_key
 
 _logger = logging.getLogger(__name__)
 
@@ -202,9 +206,6 @@ _CUSTODIAN = frozenset({"custodian", "bootstrap"})
 _PORTAL = frozenset({"portal", "bootstrap"})
 FACILITY_PERMISSIONS: dict[tuple[str, str], frozenset[str]] = {
     ("POST", "/records/{record_id}/read"): _CUSTODIAN,
-    ("POST", "/consent/requests"): _CUSTODIAN,
-    # A revoked grant is the patient's signed REVOKED grant, submitted here
-    # like any other decision; nobody sends the facility a key to sign one.
     ("POST", "/consent/grants"): _CUSTODIAN | _PORTAL,
     ("POST", "/records/{record_id}/revoke"): _CUSTODIAN,
     ("POST", "/records/{record_id}/breakglass"): _CUSTODIAN,
@@ -545,6 +546,7 @@ def create_hospital_app(
     identity: ServiceIdentity | None = None,
     rotation_ports: RotationPorts | None = None,
     service_root: Certificate | None = None,
+    share_key: ShareSealingKey | None = None,
 ) -> FastAPI:
     """Create and configure a FastAPI application for a hospital node.
 
@@ -567,6 +569,9 @@ def create_hospital_app(
             refused with 503: a session that cannot be rotated must not open.
         service_root: The federation root callers' service certificates must
             chain to; defaults to ``trust.root``. One of the two is required.
+        share_key: The key break-glass shares are sealed to (ADR-0079); fresh
+            by default. Published at ``GET /share-key``, signed with
+            ``identity``, when an identity is given.
 
     Returns:
         Configured FastAPI application instance.
@@ -584,6 +589,11 @@ def create_hospital_app(
         )
     if audit_service_url and identity is None:
         raise ValueError("a facility that logs to the audit service must sign")
+    if identity is not None and identity.service_id != facility_id:
+        raise ValueError(
+            f"service identity {identity.service_id!r} is not facility {facility_id!r}"
+        )
+    sealing_key = share_key or ShareSealingKey.generate()
     audit_auth = (
         SignedRequestAuth(identity, {audit_service_url: AUDIT_SERVICE_ID})
         if audit_service_url and identity is not None
@@ -970,57 +980,8 @@ def create_hospital_app(
 
     # --- Consent Endpoints ----------------------------------------------------
 
-    @app.post("/consent/requests", response_model=ConsentResponse)
-    def create_request(
-        payload: CreateConsentRequestPayload,
-        repo: RepoDep,
-    ) -> ConsentResponse:
-        """Register a ConsentRequest its clinician signed (ADR-0080).
-
-        Verified against the clinician's certificate from a configured CA;
-        the facility never holds the clinician's key.
-        """
-        req = payload.request
-        if trust is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="consent verification needs configured trust anchors",
-            )
-        try:
-            certificate = certificate_from_pem(
-                payload.requester_certificate_pem.encode("utf-8")
-            )
-        except KeyFormatError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid requester certificate PEM: {exc}",
-            ) from exc
-        try:
-            validate_clinician_certificate(
-                certificate,
-                clinician_id=req.requester_id,
-                facility_cas=trust.facility_cas,
-                trusted_root=trust.root,
-                revoked_serials=trust.revoked_serials,
-            )
-            verify_consent_request(req, certificate_public_key(certificate))
-        except (
-            ChainValidationError,
-            CertificateExpiredError,
-            SubjectCertificateError,
-            InvalidSignatureError,
-            ConsentExpiredError,
-        ) as exc:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Consent request refused ({exc.__class__.__name__}): {exc}",
-            ) from exc
-        repo.store_consent_request(req)
-        return ConsentResponse(
-            status="created",
-            request=req,
-            message="Consent request created and registered",
-        )
+    # Consent requests are signed by the requester's custodian, which holds
+    # the key (ADR-0043); the facility never takes a private key (review D6).
 
     @app.post("/consent/grants", response_model=ConsentResponse)
     def submit_grant(
@@ -1072,6 +1033,10 @@ def create_hospital_app(
                 else "Consent grant verified and stored"
             ),
         )
+
+    # A consent revocation is a REVOKED grant the patient's custodian signs
+    # and submits through POST /consent/grants (review D6): no route takes a
+    # patient's private key.
 
     # --- Revocation by Key Rotation Endpoint (P3-7, P3-12, ADR-0080) ---------
 
@@ -1134,9 +1099,7 @@ def create_hospital_app(
 
         # 1. Only the record's patient revokes, under their own certified key.
         try:
-            patient_pub = patient_key(
-                payload.patient_certificate_pem, record.patient_id
-            )
+            patient_pub = patient_key(payload.actor_certificate_pem, record.patient_id)
         except HTTPException as exc:
             raise deny(str(exc.detail), exc.status_code, str(exc.detail)) from exc
         compiled = repo.get_compiled_policy(record.policy_id)
@@ -1354,14 +1317,24 @@ def create_hospital_app(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Certificate parsing failed: {exc}",
             ) from exc
+        # Each share was sealed to this facility for this record (ADR-0079).
         shares_list: list[Share] = []
-        for x, share_hex in payload.shares:
+        for sealed in payload.sealed_shares:
             try:
-                shares_list.append((x, bytes.fromhex(share_hex)))
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid hex share for x={x}: {exc}",
+                shares_list.append(
+                    open_sealed_share(
+                        sealed,
+                        record_id=record_id,
+                        service_id=facility_id,
+                        key=sealing_key,
+                    )
+                )
+            except SealedShareError as exc:
+                raise deny(
+                    DENIED_BY_BREAKGLASS_GATE,
+                    str(exc),
+                    status.HTTP_400_BAD_REQUEST,
+                    f"Sealed share refused: {exc}",
                 ) from exc
         # A caller may shorten the configured time-box, never extend it (F6).
         configured = exp_manager.default_duration_seconds
@@ -2014,4 +1987,16 @@ def create_hospital_app(
             replay=ConsumedRequestIds(backend=repo),
         ),
     )
+    app.state.share_key = sealing_key
+    app.state.share_recipient = ShareRecipient(facility_id, sealing_key.public_key)
+    if identity is not None:
+        statement = make_key_statement(
+            sealing_key,
+            service_id=identity.service_id,
+            kind=identity.kind,
+            signing_key=identity.signing_key,
+            certificate_pem=identity.certificate_pem,
+        )
+        app.state.share_key_statement = statement
+        serve_share_key(app, statement)
     return app

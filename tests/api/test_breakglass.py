@@ -44,6 +44,7 @@ from pre.elgamal import decapsulate_key
 from shamir.finite_field import PRIME_MODULUS
 
 from tests.api.conftest import RecordingAuditSink, make_trust
+from tests.sealing import seal_all
 from tests.transitions import open_event
 
 
@@ -73,12 +74,15 @@ def _payload(
     signing_key=None,
     certificate=None,
     shares=None,
+    record_id: str = "rec-001",
+    target=None,
     **extra,
 ) -> dict:
     """A well-formed unlock request; keyword overrides build the attacks.
 
     Presents the shares the holders hold now: the ingest split, or the one
-    the latest expiry rotation handed out (ADR-0069).
+    the latest expiry rotation handed out (ADR-0069), each sealed to the
+    facility for ``record_id`` (ADR-0079).
     """
     pki = test_setup["pki"]
     em_shares = test_setup["em_shares"]
@@ -113,13 +117,20 @@ def _payload(
         "clinician_certificate_pem": certificate_to_pem(
             certificate or pki["alice_cert"]
         ).decode("ascii"),
-        "shares": (
-            shares
-            if shares is not None
-            else [
-                (em_shares[0][0], em_shares[0][1].hex()),
-                (em_shares[1][0], em_shares[1][1].hex()),
-            ]
+        "sealed_shares": seal_all(
+            target or test_setup["client"],
+            record_id,
+            [
+                (x, bytes.fromhex(share_hex))
+                for x, share_hex in (
+                    shares
+                    if shares is not None
+                    else [
+                        (em_shares[0][0], em_shares[0][1].hex()),
+                        (em_shares[1][0], em_shares[1][1].hex()),
+                    ]
+                )
+            ],
         ),
         "pre_rewrap_key": pki["alice_pre_pub"],
         "transition_event": event.model_dump(mode="json"),
@@ -187,6 +198,31 @@ class TestHospitalBreakglassEndpoint:
         # The threshold itself refused -- not a later format check on a
         # one-share "reconstruction" (the C3a mutation shows the difference).
         assert "requires 2 unique shares" in response.json()["detail"]
+        _assert_no_side_effects(test_setup, test_setup["audit_sink"])
+
+    def test_share_sealed_to_another_facility_is_refused(self, test_setup):
+        """ADR-0079: shares sealed to another facility's gate open nothing here;
+        refused (400) and audited before any state changes."""
+        from breakglass.share_sealing import (
+            ShareRecipient,
+            ShareSealingKey,
+            seal_share,
+        )
+
+        elsewhere = ShareRecipient("facility-b", ShareSealingKey.generate().public_key)
+        payload = _payload(test_setup)
+        payload["sealed_shares"] = [
+            seal_share(s, record_id="rec-001", recipient=elsewhere).model_dump(
+                mode="json"
+            )
+            for s in test_setup["em_shares"][:2]
+        ]
+        response = test_setup["client"].post(
+            "/records/rec-001/breakglass", json=payload
+        )
+        assert response.status_code == 400
+        assert "Sealed share refused" in response.json()["detail"]
+        assert "rewrapped_dek_b64" not in response.text
         _assert_no_side_effects(test_setup, test_setup["audit_sink"])
 
     @pytest.mark.claim("C8", level="system")
@@ -366,7 +402,7 @@ class TestConfiguredTrust:
         response = (
             test_setup["pki"]["services"]
             .client(app, "facility-a")
-            .post("/records/rec-001/breakglass", json=_payload(test_setup))
+            .post("/records/rec-001/breakglass", json=_payload(test_setup, target=app))
         )
         assert response.status_code == 403
         assert "CertificateRevokedError" in response.json()["detail"]
@@ -410,7 +446,9 @@ class TestConfiguredTrust:
             response = (
                 test_setup["pki"]["services"]
                 .client(app, "facility-a")
-                .post("/records/rec-001/breakglass", json=_payload(test_setup))
+                .post(
+                    "/records/rec-001/breakglass", json=_payload(test_setup, target=app)
+                )
             )
             assert response.status_code == 503
         _assert_no_side_effects(test_setup, test_setup["audit_sink"])
@@ -477,7 +515,7 @@ class TestFailureLeavesNoTrace:
         response = (
             test_setup["pki"]["services"]
             .client(app, "facility-a")
-            .post("/records/rec-001/breakglass", json=_payload(test_setup))
+            .post("/records/rec-001/breakglass", json=_payload(test_setup, target=app))
         )
         assert response.status_code == 503
         assert "rewrapped_dek_b64" not in response.text
@@ -682,7 +720,7 @@ class TestJoinOpenSession:
         response = (
             test_setup["pki"]["services"]
             .client(app, "facility-a")
-            .post("/records/rec-001/breakglass", json=_payload(test_setup))
+            .post("/records/rec-001/breakglass", json=_payload(test_setup, target=app))
         )
 
         assert response.status_code == 503
@@ -730,7 +768,7 @@ class TestEveryRefusalIsAudited:
             payload = _payload(test_setup, shares=[(x, s.hex()) for x, s in other[:2]])
         elif case == "unknown_record":
             path = "/records/rec-nope/breakglass"
-            payload = _payload(test_setup)
+            payload = _payload(test_setup, record_id="rec-nope")
         elif case == "other_patient":
             payload = _payload(test_setup, patient_id="patient-999")
         else:

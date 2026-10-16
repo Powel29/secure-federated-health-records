@@ -60,6 +60,7 @@ from breakglass import (
     validate_emergency_assertion,
 )
 from breakglass.assertion import validate_clinical_context
+from breakglass.emergency_key import Share
 from breakglass.exceptions import (
     AssertionExpiredError,
     AssertionLifetimeError,
@@ -67,6 +68,16 @@ from breakglass.exceptions import (
     ClinicianMismatchError,
     FacilityMismatchError,
     ReplayedAssertionError,
+    SealedShareError,
+)
+from breakglass.share_sealing import (
+    SealedShare,
+    ShareRecipient,
+    ShareSealingKey,
+    make_key_statement,
+    open_sealed_share,
+    seal_share,
+    verify_key_statement,
 )
 from contracts.enums import LifecycleState
 from crypto_core import certificate_from_pem, generate_ec_keypair, public_key_to_pem
@@ -100,7 +111,12 @@ from api.audit_schemas import (
     ReplaceShareRequest,
 )
 from api.hospital import FacilityTrust
-from api.service_auth import ServiceAuthConfig, install_service_auth
+from api.service_auth import (
+    ServiceAuthConfig,
+    ServiceIdentity,
+    install_service_auth,
+)
+from api.share_transport import serve_share_key
 
 AUDIT_SERVICE_ID = "audit-service"
 
@@ -150,7 +166,8 @@ def create_audit_app(
     bootstrap_genesis: bool = True,
     service_root: Certificate,
     trust: FacilityTrust | None = None,
-    service_id: str = AUDIT_SERVICE_ID,
+    identity: ServiceIdentity,
+    share_key: ShareSealingKey | None = None,
 ) -> FastAPI:
     """Create and configure the standalone Audit Service application.
 
@@ -177,7 +194,10 @@ def create_audit_app(
         trust: The root, facility CAs and revoked clinician serials this
             service validates emergency assertions against before releasing
             share 3 (ADR-0067). Without them every release is refused (503).
-        service_id: This service's id, the recipient every envelope names.
+        identity: This service's root-issued identity (ADR-0066): its id is
+            the recipient every envelope names, and its key signs the
+            share-key statement senders seal share 3 to (ADR-0079).
+        share_key: The key sealed shares are opened with; fresh by default.
 
     Returns:
         A configured FastAPI application. Its ``app.state.public_key`` is
@@ -190,6 +210,8 @@ def create_audit_app(
         hard boot precondition ARCHITECTURE.md §7 describes.
     """
     conn.autocommit = True
+    service_id = identity.service_id
+    sealing_key = share_key or ShareSealingKey.generate()
     key = signing_key if signing_key is not None else generate_ec_keypair()[0]
     public_key: ECPublicKey = key.public_key()
 
@@ -295,6 +317,17 @@ def create_audit_app(
 
     # --- Break-glass share custody (P3-4, headline precondition) -----------
 
+    def open_share(share_key: str, sealed: SealedShare) -> Share:
+        """A deposited share, opened with this service's key (ADR-0079)."""
+        try:
+            return open_sealed_share(
+                sealed, record_id=share_key, service_id=service_id, key=sealing_key
+            )
+        except SealedShareError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
+
     @app.post(
         "/breakglass/shares",
         response_model=RegisterShareResponse,
@@ -304,15 +337,9 @@ def create_audit_app(
         payload: RegisterShareRequest, shares: SharesDep
     ) -> RegisterShareResponse:
         """Hand this service custody of one break-glass share (share 3)."""
+        share = open_share(payload.share_key, payload.sealed_share)
         try:
-            share_bytes = bytes.fromhex(payload.share_hex)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"invalid hex share: {exc}",
-            ) from exc
-        try:
-            shares.put(payload.share_key, (payload.x, share_bytes))
+            shares.put(payload.share_key, share)
         except ShareAlreadyHeldError as exc:
             # Never overwrite a live record's share (review F4).
             raise HTTPException(
@@ -341,15 +368,9 @@ def create_audit_app(
                 detail="a share is replaced only by its record's expiry or "
                 "revocation rotation",
             )
+        share = open_share(share_key, payload.sealed_share)
         try:
-            share_bytes = bytes.fromhex(payload.share_hex)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"invalid hex share: {exc}",
-            ) from exc
-        try:
-            shares.replace(share_key, (payload.x, share_bytes), payload.generation)
+            shares.replace(share_key, share, payload.generation)
         except ShareNotFoundError as exc:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
@@ -458,6 +479,16 @@ def create_audit_app(
         (ADR-0067).
         """
         check_assertion(payload)
+        # Share 3 goes only to a root-certified facility's gate (ADR-0079).
+        try:
+            recipient = verify_key_statement(
+                payload.recipient, trusted_root=service_root, kind="facility"
+            )
+        except SealedShareError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"share recipient refused: {exc}",
+            ) from exc
         assertion = payload.assertion
         # The entry records what was validated, not what the caller said.
         event_data = {
@@ -493,8 +524,8 @@ def create_audit_app(
                     detail=f"log commit failed; share was not released: {exc}",
                 ) from exc
 
-        x, share_bytes = share
-        return ReleaseShareResponse(x=x, share_hex=share_bytes.hex(), entry=entry)
+        sealed = seal_share(share, record_id=payload.share_key, recipient=recipient)
+        return ReleaseShareResponse(sealed_share=sealed, entry=entry)
 
     install_service_auth(
         app,
@@ -506,4 +537,15 @@ def create_audit_app(
             replay=ConsumedRequestIds(backend=ConsumedIdTable(conn)),
         ),
     )
+    app.state.share_key = sealing_key
+    app.state.share_recipient = ShareRecipient(service_id, sealing_key.public_key)
+    statement = make_key_statement(
+        sealing_key,
+        service_id=service_id,
+        kind=identity.kind,
+        signing_key=identity.signing_key,
+        certificate_pem=identity.certificate_pem,
+    )
+    app.state.share_key_statement = statement
+    serve_share_key(app, statement)
     return app

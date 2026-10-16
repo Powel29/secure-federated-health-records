@@ -90,8 +90,9 @@ requests; try to act for patients or records outside its remit.
 **What it cannot get.** It cannot decrypt a record whose policy its held attribute
 keys do not satisfy — the cryptographic layer is the backstop
 (`ARCHITECTURE.md` §8). It cannot forge a break-glass alone: break-glass needs
-**2 of 3** shares, and the audit service's share is released only *after* a log
-commit, so a rogue node cannot both stay silent and open a record. Replay is
+the clinician custody share and the audit service's share (2-of-3 split, share 2
+not deposited, ADR-0074), and the audit service's share is released only *after*
+a log commit, so a rogue node cannot both stay silent and open a record. Replay is
 blocked by one-time IDs on assertions, share requests, and transition events
 (consumed-ID store, `ARCHITECTURE.md` §8 "Replay protection"). A forged Emergency
 Assertion fails the signature/binding/expiry checks before any share is requested.
@@ -115,15 +116,16 @@ should not grant.
 
 **Capabilities.** Mints attribute keys for attributes **it owns**; signs under its
 authority certificate; participates in cross-facility flows as the patient's home
-authority, including holding **Share 2** of the break-glass gate.
+authority. Share 2 of the break-glass gate is reserved for it but not deposited
+in this build (ADR-0074), so it holds no break-glass share.
 
 **What it cannot get.** It can only mint the attributes **it is the authority
 for.** A policy tree draws leaves from *multiple independent authorities*
 (`ARCHITECTURE.md` §3), so a single rogue authority cannot satisfy a tree that
 requires attributes owned by others — this is the multi-authority property doing
-its job. As break-glass Share-2 holder it still holds only **one** of three
-shares; it cannot reconstruct the emergency key alone (the tested no-single-party
-property, `PROJECT.md` §5 item 3).
+its job. It holds no break-glass share in this build (ADR-0074); were share 2
+deposited, it would still hold only **one** of three and could not reconstruct the
+emergency key alone (the tested no-single-party property, `PROJECT.md` §5 item 3).
 
 **Residual risk.** For records whose policy is satisfiable *entirely* by attributes
 this authority owns, a rogue authority can mint its way in — an inherent property
@@ -133,10 +135,11 @@ ADR-0016:** the patient's home authority issues and holds the patient's own
 `owner:<patient_id>` attribute key. A rogue home authority could therefore mint
 that owner key and read all of that patient's records. This is a real trust
 dependency introduced by patient self-access and must be listed as a limitation
-alongside item 3 — the home authority was already trusted with Share 2, so this
-does not add a new trusted party, but it does widen what a rogue one can do.
+alongside item 3 — the home authority is already trusted to issue the
+patient's attributes, so this does not add a new trusted party, but it does widen
+what a rogue one can do.
 
-**Stopped by.** Multi-authority policy trees + the 2-of-3 gate (for break-glass).
+**Stopped by.** Multi-authority policy trees + the threshold gate (for break-glass).
 Partially, honestly, for single-authority-satisfiable policies.
 
 ## 6. Adversary D — colluding clinicians (attribute pooling)
@@ -170,7 +173,7 @@ future-work (pairing-based CP-ABE).
 |---|---|---|---|
 | A · Shared store (HBC) | PHI from the dump | Envelope encryption; store holds no keys | Yes for plaintext; leakage measured |
 | B · Hacked hospital node | Forge reads / break-glass | Threshold gate + log-before-share + replay IDs + crypto authz | Yes, beyond what its own keys permit |
-| C · Rogue authority | Mint its way into records | Multi-authority policy trees; 2-of-3 gate | Partial — single-authority policies + ADR-0016 owner key |
+| C · Rogue authority | Mint its way into records | Multi-authority policy trees; threshold gate | Partial — single-authority policies + ADR-0016 owner key |
 | D · Colluding clinicians | Pool keys to satisfy a policy | — | **No** — documented limitation, CP-ABE is future work |
 
 The point of separating them: three different mechanisms carry the defense, and

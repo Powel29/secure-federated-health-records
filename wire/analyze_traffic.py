@@ -5,7 +5,7 @@ manifest each scenario run wrote beside it, then runs the checks in
 :mod:`wire.checks`::
 
     python -m wire.analyze_traffic --captures wire/captures
-    python -m wire.analyze_traffic --claim1-scope tls   # if D6-b is adopted
+    python -m wire.analyze_traffic --claim1-scope all   # the unnarrowed claim
 
 Expects, in ``--captures``: ``plain.pcap``, ``plain.canaries.json``,
 ``tls.pcap``, ``tls.canaries.json``. Writes a per-claim JSON report and the
@@ -171,7 +171,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--claim1-scope",
         choices=CLAIM1_SCOPES,
-        default="all",
+        # Claim 1 is scoped to TLS (decision D6-b, ADR-0073); "all" still
+        # reports what the plain profile exposes.
+        default="tls",
         help="all: neither capture may expose a secret (default); "
         "tls: only TLS must be clean, plain is the positive control (D6-b)",
     )

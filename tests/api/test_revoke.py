@@ -13,12 +13,14 @@ import datetime
 
 import httpx
 import pytest
+from api import schemas
 from contracts.enums import LifecycleState, PolicyNodeType
 from contracts.policy import Attribute, PolicyTree
 from crypto_core import certificate_to_pem, generate_ec_keypair
 from identity.certificates import issue_patient_certificate
 from lifecycle.state_machine import create_transition_event
 from policy.engine import decrypt_record_via_policy, unwrap_dek_via_policy
+from pydantic import BaseModel
 from records.exceptions import DecryptionError, UnwrappingError
 from records.service import decrypt_record, unwrap_dek
 from shamir import combine_shares
@@ -46,7 +48,7 @@ def _event(signing_key, *, actor_id=PATIENT, from_state=LifecycleState.GRANTED):
 def _body(event, certificate_pem, policy=PHYSICIAN_ONLY):
     return {
         "transition_event": event.model_dump(mode="json"),
-        "patient_certificate_pem": certificate_pem,
+        "actor_certificate_pem": certificate_pem,
         "new_clinical_policy": policy.model_dump(mode="json"),
         "correlation_id": "corr-rev-001",
     }
@@ -257,3 +259,23 @@ def test_undelivered_shares_are_reported_not_hidden(test_setup, monkeypatch):
     assert response.status_code == 200
     assert response.json()["breakglass_provisioned"] is False
     assert test_setup["repo"].get_lifecycle_state(RECORD) is LifecycleState.REVOKED
+
+
+def test_no_facility_request_takes_a_private_key_or_dek():
+    """Review D6: no facility route accepts a private key or a caller's DEK.
+
+    Every signature is made where the key lives (the custodian) and verified
+    here against a certificate; a DEK is only ever unwrapped by the facility
+    through the record's policy.
+    """
+    forbidden = ("private", "signing_key", "old_dek")
+    offenders = [
+        f"{name}.{field}"
+        for name, model in vars(schemas).items()
+        if isinstance(model, type)
+        and issubclass(model, BaseModel)
+        and model.__module__ == schemas.__name__
+        for field in model.model_fields
+        if any(word in field for word in forbidden)
+    ]
+    assert offenders == []

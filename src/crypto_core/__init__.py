@@ -16,6 +16,7 @@ from crypto_core.asymmetric import (
     sign,
     verify,
 )
+from crypto_core.encoding import encode_fields
 from crypto_core.exceptions import (
     CertificateExpiredError,
     CryptoError,
@@ -60,6 +61,7 @@ __all__ = [
     "certificate_role",
     "certificate_to_pem",
     "check_certificate_validity_window",
+    "encode_fields",
     "generate_ec_keypair",
     "generate_key",
     "generate_nonce",

@@ -182,10 +182,13 @@ def audit_conn():
 
 
 def test_check_audit_chain_against_live_service(audit_conn, federation):
-    root, _pki, _identities = federation
+    root, _pki, identities = federation
     server = _LiveServer(
         create_audit_app(
-            audit_conn, actor_id="audit-service-test", service_root=root.certificate
+            audit_conn,
+            actor_id="audit-service-test",
+            service_root=root.certificate,
+            identity=identities["audit-service"],
         )
     )
     base_url = server.start()

@@ -11,8 +11,9 @@
    ciphertext, new policy wrapping and compiled policy, new emergency
    wrapping, new search index and sealed terms;
 4. hands the new share 1 to the custodian and share 3 to the audit service,
-   each replacing the previous generation's share. Share 2 is not deposited,
-   exactly as at ingest (review F3, D2).
+   each replacing the previous generation's share and sealed to the holder's
+   verified share key (ADR-0079). Share 2 is not deposited, exactly as at
+   ingest (share 2 reserved, ADR-0074).
 
 Storing before handing out shares means the old shares are dead the moment
 the store commits: they open the replaced emergency wrapping only, which no
@@ -40,6 +41,7 @@ from breakglass.emergency_key import Share
 from contracts.enums import LifecycleState
 from contracts.policy import PolicyTree
 from contracts.records import Record
+from cryptography.x509 import Certificate
 from lifecycle.expiry import EmergencyExpiryManager, EmergencySession, RotationOutcome
 from lifecycle.rotation import (
     EMERGENCY_WRAPPED_FOR,
@@ -50,6 +52,7 @@ from lifecycle.rotation import (
 from policy.engine import CompiledPolicy, policy_leaves, policy_tree_of
 
 from api.repository import StorageRepository
+from api.share_transport import fetch_share_recipient, sealed_json
 
 _logger = logging.getLogger(__name__)
 
@@ -271,10 +274,13 @@ def http_rotation_ports(
     authorities: Mapping[str, str],
     custodian_url: str,
     audit_url: str,
+    trusted_root: Certificate,
 ) -> RotationPorts:
     """Rotation ports over signed HTTP (``http`` must sign, ADR-0066).
 
-    URLs come from the facility's configuration (CONVENTIONS.md §2 rule 8).
+    URLs come from the facility's configuration (CONVENTIONS.md §2 rule 8);
+    each holder's share key is verified against ``trusted_root`` before a
+    share is sealed to it (ADR-0079).
 
     Raises (from the returned callables):
         RotationError: A leaf names an authority with no configured URL.
@@ -301,12 +307,21 @@ def http_rotation_ports(
     def deposit_shares(
         record_id: str, generation: int, clinician_share: Share, audit_share: Share
     ) -> None:
-        for url, (x, share) in (
-            (f"{custodian_url}/records/{record_id}/shares", clinician_share),
-            (f"{audit_url}/breakglass/shares/{record_id}", audit_share),
+        for base, kind, path, share in (
+            (
+                custodian_url,
+                "custodian",
+                f"/records/{record_id}/shares",
+                clinician_share,
+            ),
+            (audit_url, "audit", f"/breakglass/shares/{record_id}", audit_share),
         ):
+            recipient = fetch_share_recipient(
+                http, base, kind=kind, trusted_root=trusted_root
+            )
+            sealed = sealed_json(share, record_id=record_id, recipient=recipient)
             resp = http.put(
-                url, json={"x": x, "share_hex": share.hex(), "generation": generation}
+                f"{base}{path}", json={"sealed_share": sealed, "generation": generation}
             )
             resp.raise_for_status()
 

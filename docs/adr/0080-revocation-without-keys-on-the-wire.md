@@ -3,8 +3,9 @@
 - **Status:** Proposed
 - **Date:** 2026-10-15
 - **Deciders:** Powel (proposal; owns `lifecycle`, `consent`); Avaneeth (`api`, `records`, `identity`, `storage`), Ojas (custodian, audit share custody) to review
+- **Builds on:** ADR-0072 (no private key or DEK in a facility request; the custodian signs revocations). This ADR keeps that wire contract and changes what the facility does with it.
 - **Task / source:** review F10, F13, D4 (decided by ADR-0064); handoff 2026-10-15 item 4; wire finding in `40b13e9` (`actor_signing_key_pem`, `old_dek_b64` on the wire)
-- **Affects:** `api/hospital.py` (`/records/{id}/revoke`, `/consent/requests`, `/consent/grants`; `/consent/grants/revoke` removed); `api/schemas.py` (`RevokeRecordRequest`, `CreateConsentRequestPayload`, `RevokeConsentGrantPayload` removed); `api/custodian_service.py` (`POST /subjects/{id}/records/{record_id}/revoke`), `api/custodian_schemas.py`; `custodian.sign_revocation_transition`; `lifecycle/rotation.py` (`plan_rotation_via_policy`); `api/rotation.py` (`plan_from_store`, `deposit`); `records/revocation.py` (`revoked_policy_tree`); `identity/subjects.py` (`validate_clinician_certificate`, `validate_subject_certificate`); share holders in `api/audit_service.py`, `api/custodian_service.py`, `audit/share_registry.py`; `audit.events.EVENT_RECORD_REVOKED`; `deploy/run_scenario.py`; tests
+- **Affects:** `api/hospital.py` (`/records/{id}/revoke` handler; `/consent/grants` refuses a grant on a revoked request); `api/schemas.py` (`RevokeRecordRequest` loses `owner_authority_id` and `attribute_keyring`); `api/custodian_service.py` (`POST /subjects/{id}/revoke` no longer fetches or sends an authoring keyring), `api/custodian_schemas.py`; `custodian.sign_revocation_transition`; `lifecycle/rotation.py` (`plan_rotation_via_policy`); `api/rotation.py` (`plan_from_store`, `deposit`); `records/revocation.py` (`revoked_policy_tree`); `identity/subjects.py` (`validate_subject_certificate`); share holders in `api/audit_service.py`, `api/custodian_service.py`, `audit/share_registry.py`; `audit.events.EVENT_RECORD_REVOKED`; `deploy/run_scenario.py`; tests
 
 ## Context
 
@@ -44,14 +45,11 @@ verifies it against their certificate.
    revoked record opens it with the holders' new shares.
 3. **Share holders accept a rotation while the record is `expired` or
    `revoked`**, and only for a later generation than the one they hold.
-4. **Consent requests arrive signed.** The facility verifies a
-   `ConsentRequest` against the requester's clinician certificate
-   (`identity.validate_clinician_certificate`). A revocation is the
-   patient's signed `REVOKED` grant, submitted to `/consent/grants` like any
-   decision; `/consent/grants/revoke` is removed. Once a request is revoked,
-   a `GRANTED` decision on it is refused (409), matching the read path.
-5. All three request models forbid extra fields, so a caller still sending a
-   key gets a 422 rather than having it silently ignored.
+4. **A revocation of consent is the patient's signed `REVOKED` grant**, submitted to `/consent/grants` like any decision (ADR-0072 removed the key-taking consent routes). Once a request is revoked, a `GRANTED` decision on it is refused (409), matching the read path.
+5. The revoke request forbids extra fields, so a caller still sending a key, a
+   DEK, a keyring or an owner authority gets a 422 rather than having it
+   silently ignored. The owner leaf's authority comes from the record's stored
+   tree, not the caller (review F10).
 
 ## Consequences
 

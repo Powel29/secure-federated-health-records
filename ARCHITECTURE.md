@@ -19,7 +19,7 @@ sophistication win.
 | Hashing | `hashlib` (stdlib) | SHA-256 for the audit chain |
 | Randomness | `secrets` (stdlib) | Never `random` for anything security-relevant |
 | Shamir SSS | **Hand-rolled**, GF(p) with p a 256-bit prime | ~80 lines, it is a course topic, and it removes a dependency |
-| Proxy re-encryption | **Hand-rolled** ElGamal-style PRE (bidirectional, toy-sized group; ADR-0076) | No maintained easy-install PRE library exists |
+| Proxy re-encryption | **Hand-rolled** ElGamal-style PRE (bidirectional, ADR-0076) | No maintained easy-install PRE library exists |
 | Access structure | **Hand-rolled** policy tree over Shamir | Replaces CP-ABE — see §3 |
 | Services | FastAPI + Uvicorn | Trivial to run several processes; gives us real network boundaries |
 | Storage | **PostgreSQL** (one shared store) | Real concurrent multi-service access; holds only ciphertext, wrapped keys, and coded index — stores data, never decides access (ADR-0014) |
@@ -47,13 +47,11 @@ primitives *through here*, never directly.
 **C2 — `shamir`.** Threshold secret sharing over a prime field. Split, combine,
 share validation. Used by both the break-glass gate and the policy engine.
 
-**C3 — `pre`.** ElGamal-style proxy re-encryption: generate a re-encryption
-key from A to B and transform a ciphertext without seeing the plaintext, plus
-key encapsulation to an ElGamal public key. The scheme is **bidirectional**
-(`rk = a·b⁻¹ mod q` inverts) over a 256-bit group, well below 128-bit
-security; it demonstrates the primitive (ADR-0076). Break-glass does not use
-`reencrypt`: the facility unwraps the DEK itself and delivers it to the
-clinician under an encapsulated key (`breakglass.gate`, PROJECT.md §5 caveat 8).
+**C3 — `pre`.** ElGamal-style proxy re-encryption over a safe-prime group:
+re-encryption key `rk = sk_a · sk_b⁻¹ mod q` and a ciphertext transform. The
+scheme is **bidirectional** (`rk⁻¹` re-encrypts B to A) and computing `rk` needs
+both secret keys (ADR-0076). The break-glass path uses only its KEM: the
+facility unwraps the DEK and delivers it to the clinician's ElGamal key.
 
 **C4 — `storage`.** PostgreSQL schema and repository objects. Tables: patients,
 records, dek_wrappings, attributes, authorities, facilities, lifecycle_state,
@@ -83,8 +81,10 @@ generation and verification, and the rotation logic each transition triggers.
 timestamp ‖ actor)` — append and full-chain verification. Runs as its own
 process. Also custodian of one break-glass share (see C11).
 
-**C11 — `breakglass`.** The 2-of-3 threshold gate: attending clinician, the
-patient's home authority or its federated delegate, and the audit service. The
+**C11 — `breakglass`.** The threshold gate. The emergency key is split 2-of-3
+for the attending clinician (custody), the patient's home authority or its
+federated delegate, and the audit service; share 2 is reserved and not
+deposited in this build, so break-glass needs shares 1 and 3 (ADR-0074). The
 audit service's share is released **only after** its log entry is committed and
 the new chain head is returned. Reconstructs the time-boxed emergency key.
 
@@ -187,8 +187,9 @@ C9 lifecycle          <- C1, C4, C8        (transitions rotate real keys)
    revocation path    <- C9, C8            (revoke = re-wrap DEK)
 
 C11 breakglass        <- C2, C9, C10, C6   (shares, a state to enter, an
-                                            audit service to gate on, a home
-                                            authority to hold share 2)
+                                            audit service to gate on; share 2
+                                            reserved for a home authority,
+                                            ADR-0074)
 C12 search            <- C1, C8, C11       (tokens derive from emergency key)
    cross-facility     <- C3, C5, C13       (PRE re-wrap to an out-of-network
    handoff                                  clinician at a discovered node)
@@ -266,8 +267,15 @@ contracts (T02) -> crypto_core -> records -> lifecycle -> breakglass -> search -
 3. Threshold collection begins (C11):
    - **Share 1** — attending clinician, released against a valid emergency
      assertion and a valid cross-certified identity.
-   - **Share 2** — patient's home authority, or its federated delegate if the
-     home authority is unreachable.
+   - **Share 2** — reserved for the patient's home authority or its federated
+     delegate. **Not deposited in this build (ADR-0074):** a holder of share 2
+     would let shares 1 + 2 open a record with no log entry unless it also
+     validated the assertion and committed to the audit chain first.
+   - **In transit** every share is sealed to its recipient's share key,
+     published at `GET /share-key` and signed by the recipient's
+     root-certified service identity; share 3 is sealed by the audit service
+     straight to the facility's gate, so the custodian forwarding it cannot
+     read it (ADR-0079).
    - **Share 3** — audit service. **The audit service computes and commits
      `h_i = SHA-256(h_{i-1} ‖ event ‖ timestamp ‖ actor)` first, and only then
      returns its share along with the new chain head.** If the log write fails,
@@ -277,13 +285,15 @@ contracts (T02) -> crypto_core -> records -> lifecycle -> breakglass -> search -
      releases anything: the audit service runs the same five-point check
      against its own trust anchors and requires the assertion's signed context
      digest to name this record (ADR-0067).
-4. Any 2 of 3 reconstruct the emergency key. `lifecycle` records the
+4. Shares 1 and 3 reconstruct the emergency key (any 2 of the 3-way split;
+   only these two are held). `lifecycle` records the
    Granted → Emergency-open transition, signed by the clinician's own key
    inside the custodian and verified against their certificate before any
    share is combined (C9, ADR-0068).
-5. Cross-facility handoff: the record key is re-wrapped to the out-of-network
-   clinician via proxy re-encryption, without the proxy ever seeing plaintext
-   (C3).
+5. Cross-facility handoff: the facility unwraps the DEK and delivers it to
+   the out-of-network clinician's ElGamal key with the `pre` KEM (C3). The
+   facility sees the DEK; there is no decryption-free re-encryption here
+   (ADR-0076).
 6. **Emergency search** becomes available: tokens are derived from the emergency
    key via HKDF, so the capability exists only in this state (C12).
 7. Time-box expires. `lifecycle` performs Emergency-open → Expired → forced
@@ -325,7 +335,7 @@ src/
   records/         C8   record + envelope encryption, re-wrap
   lifecycle/       C9   the state machine
   audit/           C10  hash-chained signed log + share custody
-  breakglass/      C11  2-of-3 threshold gate
+  breakglass/      C11  threshold gate (2-of-3 split, shares 1+3 held)
   search/          C12  encrypted index + emergency-only tokens
   federation/      C13  patient-indexed discovery
   api/             C14  FastAPI apps (facility, authority, audit)
@@ -542,6 +552,13 @@ Clinician and authority credentials carry issuer, subject, serial,
 `valid_from`, `valid_until`, and status. Expired or revoked credentials fail
 validation. A system whose central claim is that revocation is part of a unified
 key lifecycle cannot coherently issue credentials that never expire.
+
+Revoking a credential stops the authority releasing its attribute key again; it
+does not revoke a key already released. Attribute keys are one per value,
+shared by every holder and never rotated, so a holder who kept one still
+satisfies the leaves it names, including after record rotation. Stated as a
+limitation (`PROJECT.md` §5 item 9, ADR-0075); epoch-versioned keys are future
+work.
 
 
 ### Deliberately excluded

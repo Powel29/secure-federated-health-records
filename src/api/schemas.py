@@ -8,6 +8,7 @@ payloads.
 
 from __future__ import annotations
 
+from breakglass.share_sealing import SealedShare
 from contracts.clinical import ClinicalMetadata
 from contracts.consent import ConsentGrant, ConsentRequest
 from contracts.enums import LifecycleState
@@ -71,23 +72,6 @@ class ReadRecordResponse(BaseModel):
 # --- Consent Endpoints --------------------------------------------------------
 
 
-class CreateConsentRequestPayload(BaseModel):
-    """Register a ConsentRequest the clinician already signed (ADR-0080).
-
-    The custodian signs it with the clinician's key; the facility verifies it
-    against the clinician's certificate. No private key crosses the wire, and
-    a caller still sending one gets a 422.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    request: ConsentRequest
-    requester_certificate_pem: str = Field(
-        ...,
-        description="Clinician certificate (PEM) from a configured facility CA",
-    )
-
-
 class SubmitConsentGrantPayload(BaseModel):
     """Request body submitting a patient-signed ConsentGrant."""
 
@@ -126,7 +110,7 @@ class RevokeRecordRequest(BaseModel):
         ...,
         description="GRANTED -> REVOKED, signed by the record's patient",
     )
-    patient_certificate_pem: str = Field(
+    actor_certificate_pem: str = Field(
         ...,
         description="Patient certificate (PEM) from a configured facility CA",
     )
@@ -174,9 +158,12 @@ class BreakglassUnlockRequest(BaseModel):
         ...,
         description="PEM-encoded X.509 certificate of attending clinician",
     )
-    shares: list[tuple[int, str]] = Field(
+    sealed_shares: list[SealedShare] = Field(
         ...,
-        description="List of (x_coordinate, hex_encoded_share) threshold shares",
+        description=(
+            "Threshold shares, each sealed to this facility's share key "
+            "(ADR-0079); no share bytes cross the wire"
+        ),
     )
     pre_rewrap_key: int = Field(
         ...,

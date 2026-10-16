@@ -36,7 +36,6 @@ from identity.services import (
 )
 from identity.subjects import (
     PERSON_ROLES,
-    validate_clinician_certificate,
     validate_subject_certificate,
 )
 from identity.trust_registry import TrustRegistry
@@ -62,7 +61,6 @@ __all__ = [
     "issue_service_certificate",
     "service_name",
     "validate_chain",
-    "validate_clinician_certificate",
     "validate_patient_certificate",
     "validate_service_certificate",
     "validate_subject_certificate",

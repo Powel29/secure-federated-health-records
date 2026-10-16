@@ -15,10 +15,12 @@ transition between states is a signed key-rotation event.
 
 The headline novelty is that tamper-evident logging becomes a **cryptographic
 precondition** of emergency access rather than a policy promise: break-glass
-requires reconstructing an emergency key from a 2-of-3 Shamir threshold gate
-(attending clinician + patient's home authority or federated delegate + audit
-service), and the audit service releases its share only after it has committed a
-hash-chained log entry. No log entry, no key, no access. A second contribution is
+requires reconstructing an emergency key from a Shamir threshold gate whose
+two held shares belong to the attending clinician's key agent and the audit
+service (a 2-of-3 split whose home-authority share is reserved, not deposited:
+2-of-2 in this build, ADR-0074), and the audit service releases its share only
+after it has committed a hash-chained log entry. No log entry, no key, no
+access. A second contribution is
 **emergency-only searchable encryption**: the capability to search encrypted
 records is unlocked by entry into the Emergency-open state and dies when that
 state expires.
@@ -164,20 +166,30 @@ EHR (WiFi cracking, USB forensics, Windows forensics, reverse engineering) or
 reduces to attacking a target we built ourselves, which demonstrates little.
 
 **Design decision that makes this module meaningful.** Inter-service traffic is
-captured over **plain HTTP**, deliberately, in the capture configuration. This
-demonstrates that confidentiality comes from our application-layer encryption
-rather than from transport security. A capture with TLS enabled is run
-separately to show defence in depth. Capturing only TLS traffic and observing
-that it is encrypted would prove nothing about our contribution.
+captured over **plain HTTP**, deliberately, in the capture configuration, and
+again with TLS. The plain capture shows exactly what our application layer
+protects on its own and what it leaves to transport security; it is also the
+positive control that proves the detector finds secrets when they are there.
+Capturing only TLS traffic and observing that it is encrypted would prove
+nothing about our contribution.
 
 **What the captures must establish** — each maps to a claim made elsewhere in
 this document:
 
 1. **No plaintext on the wire** — no PHI, DEKs, attribute keys, or threshold
-   shares in the clear during normal read, revocation, or break-glass.
+   shares readable by a network observer during normal read, revocation, or
+   break-glass, **under the TLS profile** (decision D6-b, ADR-0073). On the
+   plain profile no read, revocation or break-glass request carries a
+   private signing key (signatures are made where the key lives, ADR-0068 and
+   ADR-0072; keys reach the custodian only at enrolment, ADR-0043) and
+   threshold shares travel sealed to their recipient's signed share key
+   (ADR-0079), but record plaintext, DEKs and attribute keys cross: the
+   facility encrypts and decrypts server-side, so their confidentiality in
+   transit rests on TLS. Moving that crypto to the client (D6-a) is future
+   work.
 2. **Commit-before-release is externally verifiable** — the audit service's
-   share never appears on the wire before the log-commit response containing the
-   new chain head. This is our headline contribution, demonstrated by an
+   share (sealed to the facility's gate, ADR-0079) never appears on the wire
+   before the log-commit response containing the new chain head. This is our headline contribution, demonstrated by an
    observer that does not trust our code.
 3. **Searchable-encryption leakage profile, measured** — access pattern, query
    volume, and response-size leakage quantified from captures rather than
@@ -296,7 +308,7 @@ than this is the fastest way to lose credibility in the viva.
    patient's revocation runs the same rotation (ADR-0080); if a share holder is
    unreachable then, the revocation still holds but break-glass on that record
    stays closed until it is re-keyed. Plaintext a clinician already decrypted
-   is not retractable (ADR-0035), and share 2 is still discarded (D2).
+   is not retractable (ADR-0035).
 7. **Unidentified patients get no history (ADR-0033, ADR-0059, ADR-0060).**
    Break-glass is bound to a `patient_id` chosen from a logged directory
    lookup by name (date of birth optional; close spellings and aliases are
@@ -306,18 +318,33 @@ than this is the fastest way to lose credibility in the viva.
    the encounter; nothing is guessed or merged. In a real emergency department
    this is a common case, so the paper must say the scenario assumes
    identification.
-8. **The "proxy re-encryption" is a KEM delivery, and the toy PRE is
-   bidirectional and small (ADR-0076, review D11-a).** At break-glass the
-   facility reconstructs the emergency key, unwraps the DEK in its own memory,
-   and delivers it to the clinician under a key encapsulated to the
-   clinician's ElGamal public key (`pre.encapsulate_key` + AES-GCM). Nothing
-   is re-encrypted "without decryption": the facility sees the DEK, and
-   `pre.reencrypt` is not on the break-glass path at all. The hand-rolled
-   ElGamal scheme itself is **bidirectional** -- `rk = a·b⁻¹ mod q` inverts to
-   `b·a⁻¹`, so whoever holds a re-encryption key from A to B can also re-encrypt
-   from B to A -- and its 256-bit group gives well under 128-bit security. It
-   is a course demonstration of the primitive, not a production PRE; a
-   genuinely unidirectional scheme needs pairings, which are out of scope (§6).
+8. **Break-glass is 2-of-2 in this build (ADR-0074).** The emergency key is
+   split 2-of-3, but share 2 (the patient's home authority or its delegate) is
+   not deposited anywhere, so break-glass needs both the clinician's share and
+   the audit service's. That keeps "no log entry, no key" unconditional; the
+   cost is that there is no fallback when either holder is unreachable. A home
+   authority holding share 2 would have to validate the assertion and commit
+   an audit entry before releasing, or shares 1 + 2 would open a record with
+   no log entry. That is future work.
+9. **Revoking a credential does not revoke a key already released
+   (ADR-0075).** There is one attribute key per (authority, attribute) value,
+   shared by every holder and never rotated. Credential revocation stops the
+   authority releasing the key again; a holder who already has it keeps it,
+   and record rotation (ADR-0036, ADR-0069) re-seals under the same attribute
+   keys, so a revoked clinician who kept a key still satisfies any policy leaf
+   it names. Epoch-versioned attribute keys are future work.
+10. **The PRE is bidirectional, and the gate decrypts (ADR-0076).** The
+    ElGamal re-encryption key `rk = sk_a · sk_b⁻¹` inverts to `sk_b · sk_a⁻¹`,
+    so it is bidirectional, and computing it needs both secret keys.
+    Break-glass does not use re-encryption at all: the facility unwraps the
+    DEK and delivers it to the clinician's ElGamal key with a KEM. A
+    unidirectional, decryption-free PRE needs pairings (§6).
+11. **"No plaintext on the wire" holds under TLS (ADR-0073).** On the plain
+    profile no read, revocation or break-glass request carries a private
+    key and shares travel sealed (ADR-0079, in the `pre` group's 256-bit
+    demonstration parameters), but record plaintext, DEKs and attribute keys
+    cross, because the facility encrypts and decrypts server-side.
+    Client-side crypto in the key agent is future work.
 
 ---
 

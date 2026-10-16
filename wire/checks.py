@@ -7,19 +7,21 @@ claim fails.
 
 1. **No plaintext on the wire.** Every secret the scenario handled is searched
    for in every encoding (:mod:`wire.canaries`), and JSON bodies are checked
-   against a denylist of key-carrying fields (review F18). The *scope* is the
-   open team decision D6:
+   against a denylist of key-carrying fields (review F18). The *scope* is
+   decision D6-b (ADR-0073):
 
-   - ``all`` (default): neither capture may expose a secret. This fails today,
-     because the plain profile carries keys, shares and plaintext in bodies --
-     the review's point is that the analyser must say so.
-   - ``tls`` (D6-b): only the TLS capture must be clean; the plain capture then
-     serves as the positive control proving the detector fires.
+   - ``tls`` (default, the claim the paper makes): only the TLS capture must
+     be clean; the plain capture then serves as the positive control proving
+     the detector fires.
+   - ``all``: neither capture may expose a secret. This fails on the plain
+     profile, which still carries plaintext, the DEK and attribute keys in
+     bodies; it reports what an observer of an unencrypted link would see.
 
 2. **Commit-before-release.** In the plain capture, the audit service's
    Postgres ``COMMIT`` for the release entry crosses the wire before the
-   ``/breakglass/release`` response that carries share 3, and share 3 never
-   appears outside custody setup before that response.
+   ``/breakglass/release`` response that carries share 3, sealed to the
+   facility's gate (ADR-0079), and those sealed bytes never appear before
+   that response.
 3. **Search leakage.** The P5-3 profile, computed from the same capture.
 4. **Break-glass is metadata, not content.** The break-glass URI is visible in
    plain mode; in TLS mode an observer can still pick out the exchange from
@@ -41,7 +43,15 @@ SECRET_CLASSES = frozenset(
     {"share", "attribute_key", "dek", "emergency_key", "phi", "private_key"}
 )
 BREAKGLASS_CLASSES = frozenset({"share", "emergency_key", "dek"})
-POSITIVE_CONTROL_CLASSES = frozenset({"share", "attribute_key"})
+# Shares travel sealed to their recipient on every profile (ADR-0079), so the
+# plain capture's positive control is the attribute keys it still carries.
+POSITIVE_CONTROL_CLASSES = frozenset({"attribute_key"})
+# Secrets the application layer keeps off the wire whatever the transport:
+# one readable in the plain capture fails claim 1 in either scope.
+APP_LAYER_CLASSES = frozenset({"share"})
+# The sealed share 3 as the audit service released it: not a secret, but the
+# bytes claim 2 times against the audit COMMIT (ADR-0079).
+SEALED_SHARE3_CANARY = "share3_sealed"
 
 # JSON fields that carry key material or plaintext (review F18).
 DENYLISTED_JSON_KEYS = frozenset(
@@ -60,7 +70,6 @@ DENYLISTED_JSON_SUFFIXES = ("_signing_key_pem",)
 CLAIM1_SCOPES = ("all", "tls")
 
 RELEASE_PATH = "/breakglass/release"
-CUSTODY_PATH = "/breakglass/shares"
 DEFAULT_DB_PORT = 5432
 # Postgres CommandComplete for COMMIT: 'C', int32 length 11, "COMMIT\0".
 PG_COMMIT_COMPLETE = b"C\x00\x00\x00\x0bCOMMIT\x00"
@@ -155,7 +164,7 @@ def gapped_service_flows(capture: Capture) -> list[str]:
     ]
 
 
-def check_no_plaintext(plain: Capture, tls: Capture, scope: str = "all") -> ClaimResult:
+def check_no_plaintext(plain: Capture, tls: Capture, scope: str = "tls") -> ClaimResult:
     if scope not in CLAIM1_SCOPES:
         raise ValueError(f"claim-1 scope must be one of {CLAIM1_SCOPES}")
 
@@ -192,6 +201,18 @@ def check_no_plaintext(plain: Capture, tls: Capture, scope: str = "all") -> Clai
             evidence,
         )
 
+    sealed_breaches = [h for h in plain_hits if h.cls in APP_LAYER_CLASSES]
+    if sealed_breaches:
+        return ClaimResult(
+            "1-no-plaintext",
+            False,
+            "strong",
+            f"{len(_hit_summary(sealed_breaches))} threshold share(s) readable in "
+            "the plain capture: shares must travel sealed on every profile "
+            "(ADR-0079)",
+            evidence,
+        )
+
     if scope == "all":
         if plain_hits or plain_fields:
             return ClaimResult(
@@ -200,8 +221,8 @@ def check_no_plaintext(plain: Capture, tls: Capture, scope: str = "all") -> Clai
                 "strong",
                 f"plain profile exposes {len(_hit_summary(plain_hits))} secret(s) "
                 f"and denylisted fields in {len(plain_fields)} message type(s); "
-                "TLS capture is clean. Claim holds only if narrowed to TLS "
-                "(decision D6) -- rerun with --claim1-scope tls once decided",
+                "TLS capture is clean. The claim is scoped to TLS (D6-b, "
+                "ADR-0073); --claim1-scope tls checks that claim",
                 evidence,
             )
         return ClaimResult(
@@ -301,15 +322,17 @@ def check_commit_before_release(plain: Capture) -> ClaimResult:
             {"status": resp.status},
         )
 
-    custody = [ex.request for ex in plain.exchanges if ex.request.path == CUSTODY_PATH]
-    share3 = [
-        h
-        for h in plain.hits
-        if h.canary == "share3" and not any(_contains(req, h) for req in custody)
-    ]
+    # Share 3 travels sealed to the facility's gate (ADR-0079); its sealed
+    # bytes are unique to this release, so their first appearance is the
+    # moment the audit service let share 3 go.
+    share3 = [h for h in plain.hits if h.canary == SEALED_SHARE3_CANARY]
     if not share3:
         return ClaimResult(
-            name, False, "strong", "share 3 never observed outside custody setup"
+            name,
+            False,
+            "strong",
+            "sealed share 3 never observed (the canary manifest needs "
+            f"{SEALED_SHARE3_CANARY!r}; recapture)",
         )
     first = share3[0]
     if not _contains(resp, first):
@@ -364,7 +387,7 @@ def check_commit_before_release(plain: Capture) -> ClaimResult:
         True,
         "strong",
         f"audit COMMIT acknowledged {lead_ms:.2f} ms before the release response; "
-        "share 3 first appears inside that response",
+        "sealed share 3 first appears inside that response",
         evidence,
     )
 
@@ -550,7 +573,7 @@ def _breakglass_request(capture: Capture) -> HttpMessage | None:
 
 
 def check_breakglass_metadata_only(
-    plain: Capture, tls: Capture, scope: str = "all"
+    plain: Capture, tls: Capture, scope: str = "tls"
 ) -> ClaimResult:
     name = "4-breakglass-metadata-only"
     request = _breakglass_request(plain)
@@ -621,7 +644,7 @@ def check_breakglass_metadata_only(
     )
 
 
-def run_all(plain: Capture, tls: Capture, scope: str = "all") -> list[ClaimResult]:
+def run_all(plain: Capture, tls: Capture, scope: str = "tls") -> list[ClaimResult]:
     return [
         check_no_plaintext(plain, tls, scope),
         check_commit_before_release(plain),

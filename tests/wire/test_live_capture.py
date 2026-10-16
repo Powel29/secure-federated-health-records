@@ -37,9 +37,9 @@ def test_live_captures_satisfy_every_claim(tmp_path):
     if missing:
         pytest.skip(f"no captures yet ({missing}); run `python -m wire.capture`")
 
-    # "all" until decision D6 narrows claim 1 (review N15): the paper must
-    # defend the unnarrowed claim, which the plain profile fails today.
-    scope = os.environ.get("WIRE_CLAIM1_SCOPE", "all")
+    # Claim 1 is scoped to TLS (D6-b, ADR-0073); WIRE_CLAIM1_SCOPE=all
+    # reports what the plain profile still exposes.
+    scope = os.environ.get("WIRE_CLAIM1_SCOPE", "tls")
     code = main(
         [
             "--captures",

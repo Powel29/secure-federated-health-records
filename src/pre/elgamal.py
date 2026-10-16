@@ -1,19 +1,13 @@
-"""ElGamal-style Proxy Re-Encryption (owner module: ``pre``, C3).
+"""ElGamal proxy re-encryption and key encapsulation (owner module: ``pre``, C3).
 
-Provides key generation, proxy re-encryption key derivation (A -> B), ciphertext
-re-encryption without plaintext exposure, and symmetric key encapsulation
-(ARCHITECTURE.md §2 C3, ADR-0012).
+Provides key generation, re-encryption key derivation, ciphertext
+re-encryption, and symmetric key encapsulation (ARCHITECTURE.md §2 C3,
+ADR-0012).
 
-What it is not (ADR-0076, review D11-a):
-
-- **Not unidirectional.** ``rk = sk_a * sk_b^-1 mod q``, and anyone holding it
-  computes ``rk^-1 mod q``, the key from B to A. The scheme is bidirectional.
-- **Not production strength.** The group is a 256-bit safe prime, giving well
-  under 128-bit security. It demonstrates the primitive for the course.
-- **Not on the break-glass path.** ``reencrypt`` is never called there: the
-  facility unwraps the DEK itself and delivers it to the clinician under a key
-  encapsulated with :func:`encapsulate_key` (``breakglass.gate``). A real
-  unidirectional PRE needs pairings, which are out of scope (PROJECT.md §6).
+Scope (ADR-0076): the re-encryption key ``rk = sk_a * sk_b^-1 mod q`` is
+**bidirectional** -- its inverse re-encrypts B to A -- and computing it needs
+both secret keys. Break-glass does not call :func:`reencrypt`; it uses only
+the KEM (:func:`encapsulate_key`) to deliver a DEK the facility has unwrapped.
 """
 
 from __future__ import annotations
@@ -83,10 +77,10 @@ def generate_rekey(sk_a: int, sk_b: int) -> int:
         PREKeyError: If keys are out of bounds or not invertible.
 
     Security property:
-        The proxy holding rk transforms A's ciphertexts for B without learning
-        the message, and cannot decrypt either party's ciphertexts with rk
-        alone. It is **not** unidirectional (ADR-0076): rk^-1 mod q is
-        rk_{B -> A}, so the same proxy can re-encrypt B's ciphertexts for A.
+        A proxy holding only ``rk`` cannot decrypt either party's ciphertexts.
+        The key is **not** unidirectional: ``rk^-1 mod q`` is the B -> A key,
+        so a proxy can re-encrypt in both directions (ADR-0076). Computing it
+        needs both ``sk_a`` and ``sk_b``.
     """
     if not (1 < sk_a < SUBGROUP_ORDER_Q) or not (1 < sk_b < SUBGROUP_ORDER_Q):
         raise PREKeyError("Private keys must be in valid subgroup exponent range")

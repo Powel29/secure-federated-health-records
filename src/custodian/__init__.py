@@ -36,7 +36,7 @@ class EmergencyProvision:
     """A new record's 2-of-3 emergency key and the two shares that are held.
 
     Share 1 stays in clinician custody here, share 3 goes to the audit
-    service; share 2 (home authority) is not deposited (review F3, D2).
+    service; share 2 (home authority) is reserved, not deposited (ADR-0074).
     """
 
     key: bytes = field(repr=False)

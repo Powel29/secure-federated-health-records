@@ -84,31 +84,3 @@ def validate_subject_certificate(
             f"certificate serial {certificate.serial_number} is revoked"
         )
     return role
-
-
-def validate_clinician_certificate(
-    certificate: Certificate,
-    *,
-    clinician_id: str,
-    facility_cas: Mapping[str, Certificate],
-    trusted_root: Certificate,
-    revoked_serials: frozenset[int] = frozenset(),
-    at: datetime.datetime | None = None,
-) -> None:
-    """Fail closed unless ``certificate`` is clinician ``clinician_id``'s.
-
-    Raises:
-        ChainValidationError, CertificateExpiredError: As
-            :func:`validate_subject_certificate`.
-        SubjectCertificateError: A patient or service certificate, another
-            clinician's, or a revoked one.
-    """
-    validate_subject_certificate(
-        certificate,
-        subject_id=clinician_id,
-        roles=frozenset({CLINICIAN_ROLE}),
-        facility_cas=facility_cas,
-        trusted_root=trusted_root,
-        revoked_serials=revoked_serials,
-        at=at,
-    )

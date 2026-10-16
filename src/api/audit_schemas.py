@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from breakglass.share_sealing import SealedShare, ShareKeyStatement
 from contracts import AuditEntry, EmergencyAssertion
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -71,8 +72,8 @@ class RegisterShareRequest(BaseModel):
     """
 
     share_key: str = Field(..., description="Usually the record_id this share protects")
-    x: int
-    share_hex: str
+    # Sealed to this service's share key (ADR-0079): no share bytes on the wire.
+    sealed_share: SealedShare
 
 
 class RegisterShareResponse(BaseModel):
@@ -86,8 +87,7 @@ class ReplaceShareRequest(BaseModel):
     Sent by the facility that ran a record's forced rotation at expiry.
     """
 
-    x: int
-    share_hex: str
+    sealed_share: SealedShare
     generation: int = Field(..., ge=1)
 
 
@@ -120,13 +120,15 @@ class ReleaseShareRequest(BaseModel):
     event_data: dict[str, Any] = Field(default_factory=dict)
     actor_id: str
     correlation_id: str
+    # The facility whose gate will combine the shares: share 3 is sealed to
+    # its key, so the caller forwarding it never sees it (ADR-0079).
+    recipient: ShareKeyStatement
 
 
 class ReleaseShareResponse(BaseModel):
     """The released share and the audit entry committed immediately before it."""
 
-    x: int
-    share_hex: str
+    sealed_share: SealedShare
     entry: AuditEntry
 
 
