@@ -12,9 +12,9 @@ sequence (ARCHITECTURE.md §8 "Validation, in order"):
 
 Failure at any step is fail-closed — no share request is made.
 
-The canonical payload format matches ``lifecycle/state_machine.py`` and
-``consent/service.py`` (``_FIELD_SEPARATOR = b"\\x1f"``) so every signed
-artifact in the project shares one construction.
+Signed bytes use ``crypto_core.encode_fields``: a domain tag, then
+length-prefixed fields
+(ADR-0077), like every other signed artefact in the project.
 """
 
 from __future__ import annotations
@@ -26,7 +26,13 @@ from uuid import UUID, uuid4
 
 from contracts import EmergencyAssertion
 from contracts.enums import ReasonCode
-from crypto_core import certificate_public_key, sha256_digest, sign, verify
+from crypto_core import (
+    certificate_public_key,
+    encode_fields,
+    sha256_digest,
+    sign,
+    verify,
+)
 from crypto_core.exceptions import InvalidSignatureError
 from crypto_core.types import ECPrivateKey, ECPublicKey
 from cryptography.x509 import Certificate
@@ -43,9 +49,9 @@ from breakglass.exceptions import (
 )
 from breakglass.replay import ConsumedAssertionIds
 
-# ASCII unit separator — keeps fields unambiguous under concatenation.
-# Shared pattern with lifecycle/state_machine.py and authority/issuance.py.
-_FIELD_SEPARATOR = b"\x1f"
+# encode_fields domain tag (ADR-0077): an assertion signature never verifies
+# as a transition event signed by the same clinician key.
+_DOMAIN = "ehr/emergency-assertion/v1"
 
 # Longest an assertion may live (expires_at - issued_at), and how far in the
 # future issued_at may be to tolerate clock drift between custodian and
@@ -93,9 +99,8 @@ def _canonical_assertion_payload(
         expires_at.astimezone(datetime.timezone.utc).isoformat().encode("utf-8"),
         nonce,
     ]
-    if clinical_context_digest:
-        fields.append(clinical_context_digest.encode("ascii"))
-    return _FIELD_SEPARATOR.join(fields)
+    fields.append(clinical_context_digest.encode("ascii"))
+    return encode_fields(_DOMAIN, fields)
 
 
 # ---------------------------------------------------------------------------

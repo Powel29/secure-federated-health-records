@@ -34,18 +34,21 @@ from __future__ import annotations
 import datetime
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from contracts import TransitionEvent
-from contracts.enums import LifecycleState, ReasonCode
+from contracts.enums import LifecycleState
 from contracts.policy import PolicyTree
 from contracts.records import DEKWrapping, Record
 from crypto_core.symmetric import generate_key
-from crypto_core.types import ECPrivateKey
-from lifecycle.state_machine import create_transition_event
+from crypto_core.types import ECPublicKey
+from lifecycle.state_machine import verify_transition_event
 
 from records.exceptions import UnauthorizedRevocationError
 from records.service import decrypt_record, encrypt_record, wrap_dek
+
+if TYPE_CHECKING:
+    from policy.engine import CompiledPolicy
 
 AttributeKeyring = Mapping[tuple[str, str, str], bytes]
 
@@ -75,10 +78,8 @@ class RevocationResult:
         new_root_secret: The fresh 32-byte wrapping key. The caller **must
             not persist this** — it is returned only so tests can prove
             round-trip decryption from the compiled policy.
-        transition_event: The signed ``GRANTED -> REVOKED``
-            :class:`~contracts.TransitionEvent`. Apply it through
-            :meth:`~lifecycle.state_machine.LifecycleStateMachine.apply_transition`
-            to advance the record's state.
+        transition_event: The actor's verified ``GRANTED -> REVOKED``
+            :class:`~contracts.TransitionEvent`, passed through.
         audit_payload: Metadata dict ready for C10 audit logging — identifiers
             and generation counters only, never key material
             (CONVENTIONS.md §2 rule 3).
@@ -126,18 +127,63 @@ def check_revocation_authorization(
         )
 
 
+def revoked_policy_tree(
+    *,
+    current_tree: PolicyTree,
+    new_clinical_policy: PolicyTree,
+    patient_id: str,
+) -> PolicyTree:
+    """The access tree after a revocation, owner leaf taken from the record.
+
+    The owner leaf's authority comes from the record's stored tree, never from
+    the caller (review F10): a caller naming another "home authority" cannot
+    move the patient's own access somewhere else.
+
+    Args:
+        current_tree: The record's current access tree.
+        new_clinical_policy: The clinical branch that stays after revocation.
+        patient_id: The record's patient.
+
+    Returns:
+        ``OR(new_clinical_policy, owner:<patient_id>)`` (ADR-0016).
+
+    Raises:
+        UnauthorizedRevocationError: The stored tree has no owner leaf for
+            ``patient_id``, so there is no home authority to keep it under.
+    """
+    from policy.engine import (
+        OWNER_ATTRIBUTE_NAME,
+        author_policy_with_owner,
+        policy_leaves,
+    )
+
+    owners = {
+        authority_id
+        for authority_id, name, value in policy_leaves(current_tree)
+        if name == OWNER_ATTRIBUTE_NAME and value == patient_id
+    }
+    if len(owners) != 1:
+        raise UnauthorizedRevocationError(
+            f"record's access tree has no single owner leaf for {patient_id!r}"
+        )
+    return author_policy_with_owner(
+        clinical_policy=new_clinical_policy,
+        patient_id=patient_id,
+        owner_authority_id=owners.pop(),
+    )
+
+
 def revoke_record_access(
     *,
     current_record: Record,
     current_wrapping: DEKWrapping,
-    old_dek: bytes,
+    current_compiled_policy: CompiledPolicy,
     new_clinical_policy: PolicyTree,
     owner_authority_id: str,
     attribute_keyring: AttributeKeyring,
-    actor_id: str,
-    actor_signing_key: ECPrivateKey,
+    transition_event: TransitionEvent,
+    actor_public_key: ECPublicKey,
     correlation_id: str,
-    reason_code: ReasonCode | None = None,
     new_policy_id: str | None = None,
     now: datetime.datetime | None = None,
 ) -> RevocationResult:
@@ -145,7 +191,13 @@ def revoke_record_access(
 
     Executes the atomic revocation flow:
 
-    1. Decrypt the current payload with ``old_dek``.
+    0. Verify the actor's signed ``GRANTED -> REVOKED`` event for this record
+       against ``actor_public_key`` and check the actor may revoke (P3-12).
+       The event is signed where the actor's key lives (the custodian), so
+       no private key reaches this function or the facility (review D6).
+    1. Unwrap the current DEK through ``current_compiled_policy`` with
+       ``attribute_keyring`` (the owner leaf satisfies it) and decrypt. The
+       caller never supplies a DEK (review D6).
     2. Author a fresh policy tree = ``OR(new_clinical_policy, owner:<patient_id>)``
        via :func:`policy.engine.author_policy_with_owner` (ADR-0016).
     3. Mint a fresh 32-byte root secret and compile the tree against
@@ -156,18 +208,14 @@ def revoke_record_access(
     5. Wrap the fresh DEK under the fresh root secret via
        :func:`records.service.wrap_dek` with
        ``generation = current_wrapping.generation + 1``.
-    6. Emit a signed ``GRANTED -> REVOKED`` :class:`~contracts.TransitionEvent`
-       via :func:`lifecycle.state_machine.create_transition_event`.
-    7. Return a :class:`RevocationResult` carrying every artefact.
+    6. Return a :class:`RevocationResult` carrying every artefact.
 
     Args:
         current_record: The pre-revocation :class:`~contracts.Record`.
-        current_wrapping: The pre-revocation :class:`~contracts.records.DEKWrapping`;
-            only its ``generation`` counter is read.
-        old_dek: The 32-byte DEK that decrypts ``current_record``. The caller
-            must have already obtained this via a policy-satisfying
-            reconstruct + unwrap; this function does not perform the
-            authorization check that entitled the caller to hold it.
+        current_wrapping: The pre-revocation :class:`~contracts.records.DEKWrapping`.
+        current_compiled_policy: The record's current compiled policy
+            (``policy.engine.CompiledPolicy``); ``attribute_keyring`` must
+            satisfy it, which the owner leaf does.
         new_clinical_policy: The clinical branch of the new access policy.
             The ADR-0016 ``owner:<patient_id>`` leaf is added automatically
             so the patient can always read their own record.
@@ -176,15 +224,11 @@ def revoke_record_access(
         attribute_keyring: Compile-time keyring for every leaf in the new
             tree, including the owner leaf. Must be complete; missing keys
             raise ``policy.exceptions.PolicyCompileError``.
-        actor_id: The party performing the revocation (the patient, or a
-            service acting on their authority). Bound into the transition
-            event's signature.
-        actor_signing_key: The actor's ECDSA-P256 private key.
+        transition_event: The actor's signed ``GRANTED -> REVOKED`` event
+            for this record; its ``actor_id`` is who revokes.
+        actor_public_key: The key the event must verify against. The caller
+            takes it from a certificate it validated, never from the request.
         correlation_id: Audit correlation identifier for the revocation flow.
-        reason_code: Optional constrained-enum reason. ``None`` is accepted
-            here because ``GRANTED -> REVOKED`` does not require one in the
-            state machine (unlike ``* -> EMERGENCY_OPEN``); callers may
-            still pass one for audit clarity.
         new_policy_id: Optional explicit policy ID for the rotated tree.
             Auto-generated if omitted; the new ID reflects that the tree
             changed even though the record identity did not.
@@ -198,14 +242,15 @@ def revoke_record_access(
     Raises:
         UnauthorizedRevocationError: ``actor_id`` is neither the record's
             patient nor its home authority (P3-12).
-        DecryptionError: ``old_dek`` does not decrypt ``current_record`` —
-            wrong key or tampered ciphertext.
+        ValueError: The event is not ``GRANTED -> REVOKED`` for this record.
+        InvalidSignatureError: The event does not verify against
+            ``actor_public_key``.
+        PolicyDeniedError: ``attribute_keyring`` does not satisfy the
+            current policy.
+        DecryptionError: The unwrapped DEK does not decrypt
+            ``current_record`` (tampered ciphertext).
         PolicyCompileError: ``attribute_keyring`` is incomplete for
             ``new_clinical_policy`` or the owner leaf.
-        IllegalTransitionError / MissingReasonCodeError: The state machine
-            refuses the emitted event (should not happen — the pair
-            ``(GRANTED, REVOKED)`` is legal and no reason is required —
-            but included for defence-in-depth).
 
     Security properties:
         - Fresh DEK per rotation (CONVENTIONS.md §2 rule 5); the new DEK is
@@ -223,7 +268,11 @@ def revoke_record_access(
     # Lazy imports match records.ingest.py — policy.engine imports records
     # (for unwrap_dek in unwrap_dek_via_policy), so importing at module
     # scope from inside records/ creates a circular chain.
-    from policy.engine import author_policy_with_owner, compile_policy
+    from policy.engine import (
+        author_policy_with_owner,
+        compile_policy,
+        unwrap_dek_via_policy,
+    )
 
     if now is None:
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -233,14 +282,29 @@ def revoke_record_access(
     patient_id = current_record.patient_id
     old_generation = current_wrapping.generation
 
-    # --- Step 0: Check who's allowed to revoke (P3-12) ---
+    # --- Step 0: The actor's own signed event, and who may revoke (P3-12) ---
+    event = transition_event
+    if (
+        event.record_id != current_record.record_id
+        or event.from_state is not LifecycleState.GRANTED
+        or event.to_state is not LifecycleState.REVOKED
+    ):
+        raise ValueError(
+            f"transition event is not GRANTED -> REVOKED for record "
+            f"{current_record.record_id!r}"
+        )
+    actor_id = event.actor_id
     check_revocation_authorization(
         actor_id=actor_id,
         record=current_record,
         owner_authority_id=owner_authority_id,
     )
+    verify_transition_event(event, actor_public_key)
 
-    # --- Step 1: Recover the plaintext under the old DEK ---
+    # --- Step 1: Recover the plaintext under the current DEK ---
+    old_dek = unwrap_dek_via_policy(
+        current_compiled_policy, attribute_keyring, current_wrapping
+    )
     plaintext = decrypt_record(current_record, old_dek)
 
     # --- Step 2: Author the new tree with the owner leaf (ADR-0016) ---
@@ -281,18 +345,7 @@ def revoke_record_access(
         created_at=now,
     )
 
-    # --- Step 6: Signed GRANTED -> REVOKED transition event ---
-    transition_event = create_transition_event(
-        record_id=current_record.record_id,
-        from_state=LifecycleState.GRANTED,
-        to_state=LifecycleState.REVOKED,
-        actor_id=actor_id,
-        signing_key=actor_signing_key,
-        reason_code=reason_code,
-        issued_at=now,
-    )
-
-    # --- Step 7: Audit metadata — identifiers and counters only ---
+    # --- Step 6: Audit metadata — identifiers and counters only ---
     audit_payload: dict[str, Any] = {
         "event": "record.revoked",
         "record_id": current_record.record_id,
@@ -302,7 +355,9 @@ def revoke_record_access(
         "new_generation": old_generation + 1,
         "old_policy_id": current_record.policy_id,
         "new_policy_id": new_policy_id,
-        "reason_code": reason_code.value if reason_code is not None else None,
+        "reason_code": (
+            event.reason_code.value if event.reason_code is not None else None
+        ),
         "issued_at": now.isoformat(),
     }
 
@@ -313,6 +368,6 @@ def revoke_record_access(
         compiled_policy=compiled,
         policy_tree=new_tree,
         new_root_secret=new_root_secret,
-        transition_event=transition_event,
+        transition_event=event,
         audit_payload=audit_payload,
     )

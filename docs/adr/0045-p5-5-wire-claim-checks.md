@@ -1,6 +1,6 @@
 # ADR-0045: P5-5 wire-level claim checks: canary search, DB-commit ordering, claim-1 scope switch
 
-- **Status:** Proposed
+- **Status:** Proposed; claim-1 default scope set to `tls` by ADR-0073
 - **Date:** 2026-10-07
 - **Deciders:** Powel (implementer; P5-5 is listed for Nandini, handover to be confirmed) → all four for ratification; D6 remains a team decision
 - **Task / source:** P5-5 (WORKFLOW.md); PROJECT.md §4A claims 1–4; review F18 and decision D6 (`docs/review/2026-10-07-fix-proposals.md`)

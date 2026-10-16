@@ -80,6 +80,9 @@ def make_canaries() -> dict[str, Canary]:
     return {
         "share1": Canary("share1", "share", secrets.token_bytes(33)),
         "share3": Canary("share3", "share", secrets.token_bytes(33)),
+        "share3_sealed": Canary(
+            "share3_sealed", "sealed_share", secrets.token_bytes(49)
+        ),
         "dek": Canary("dek", "dek", secrets.token_bytes(32)),
         "emergency_key": Canary(
             "emergency_key", "emergency_key", secrets.token_bytes(32)
@@ -92,6 +95,7 @@ def plain_scenario(
     canaries: dict[str, Canary],
     *,
     leak_keys: bool = True,
+    sealed_shares: bool = True,
     commit_before_response: bool = True,
     share3_early: bool = False,
     include_db: bool = True,
@@ -100,10 +104,21 @@ def plain_scenario(
 ) -> Capture:
     """The break-glass scenario over plain HTTP.
 
-    ``leak_keys`` reproduces today's design (keys and shares in bodies);
+    ``leak_keys`` reproduces today's design (attribute keys in bodies);
+    ``sealed_shares=False`` the design before ADR-0079 (shares in bodies);
     the other flags each break one claim.
     """
     c = {name: can.value for name, can in canaries.items()}
+
+    def sealed(value: bytes) -> dict[str, object]:
+        return {"x": 3, "c1": 5, "c2": 7, "ciphertext_b64": value.hex()}
+
+    custody = (
+        {"share_key": "rec-001", "sealed_share": sealed(secrets.token_bytes(49))}
+        if sealed_shares
+        else {"share_key": "rec-001", "x": 3, "share_hex": c["share3"].hex()}
+    )
+    share3_on_wire = c["share3_sealed"].hex() if sealed_shares else c["share3"].hex()
     w = Wire()
     attr = {"key_b64": c["attr"].hex()} if leak_keys else {"ok": True}
     w.exchange(
@@ -116,14 +131,14 @@ def plain_scenario(
         http_request(
             "POST",
             "/breakglass/shares",
-            {"share_key": "rec-001", "x": 3, "share_hex": c["share3"].hex()},
+            custody,
         ),
         http_response(201, {"share_key": "rec-001"}),
     )
     if share3_early:
         w.exchange(
             "facility-b",
-            http_request("POST", "/records/rec-001/read", {"leak": c["share3"].hex()}),
+            http_request("POST", "/records/rec-001/read", {"leak": share3_on_wire}),
             http_response(403, {"detail": "denied"}),
         )
     if oversized_read:
@@ -143,8 +158,11 @@ def plain_scenario(
     release_resp = http_response(
         200,
         {
-            "x": 3,
-            "share_hex": c["share3"].hex(),
+            **(
+                {"sealed_share": sealed(c["share3_sealed"])}
+                if sealed_shares
+                else {"x": 3, "share_hex": c["share3"].hex()}
+            ),
             "entry": {"seq": 7, "entry_hash": "aGFzaA=="},
         },
     )
@@ -161,7 +179,11 @@ def plain_scenario(
         w.send(db_stream, DB_PORT, db_client, PG_COMMIT_COMPLETE)
 
     unlock_body = {
-        "shares": [[1, c["share1"].hex()], [3, c["share3"].hex()]],
+        "sealed_shares": (
+            [sealed(secrets.token_bytes(49)), sealed(c["share3_sealed"])]
+            if sealed_shares
+            else [[1, c["share1"].hex()], [3, c["share3"].hex()]]
+        ),
         "certs": "C" * 6000,
     }
     w.exchange(

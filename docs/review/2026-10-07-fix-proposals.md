@@ -57,6 +57,30 @@ the change that fixed them; unmarked items are still open.
 
 ---
 
+## Status of the design decisions (2026-10-15)
+
+Every D has an answer. All the ADRs below are **Proposed**, waiting for
+ratification. D1, D3, D4, D5, D7 and D8 landed on `main` through PRs #40 and
+#46–#49; D2, D6, D9, D10 and D11 are on branch
+`proposal/open-decisions-d2-d6-d9-d10-d11`.
+
+| ID | Option taken | ADR | Fixes closed | What remains |
+|---|---|---|---|---|
+| D1 | (a) audit validates the assertion | 0067 | F2, C3 | — |
+| D2 | (b) 2-of-2 in this build, share 2 reserved | 0074 | F3 (as a stated limitation) | Depositing share 2 needs a holder that validates the assertion and commits to the audit chain first |
+| D3 | (a) full rotation (stretch, not the recommended b) | 0069 | F9, C4 | Crash mid-rotation (PROJECT §5 item 6) |
+| D4 | (a) patient certificates | 0064 | F13 (grants verified against a certified key); F10 authz via ADR-0072 | F15 (proof of possession at the authority) |
+| D5 | (b) then (a) signed service requests | 0066 | F14, F34, C9 | — |
+| D6 | (b) claim 1 scoped to TLS, after taking private keys and the caller's DEK out of facility requests and sealing every share to its recipient | 0072, 0073, 0079 | F18 claim-1 default; rest of F10 (signed revoke); shares off the plain wire (live plain capture 2026-10-15: no share, claim 2 passes on the sealed share 3) | Revocation persistence on Postgres is still 501. A fresh TLS capture needs the TLS store (ADR-0071) |
+| D7 | (a) `EXPIRED -> REVOKED` | 0058 | F5 final state, C6 | F5 restart reconciliation, if still wanted |
+| D8 | (a) clinician key signs in the custodian | 0068 | F11, C7 | — |
+| D9 | (a) domain-tagged, length-prefixed encoding | 0077 | F23; F29 (AAD binds record, policy, generation) | — |
+| D10 | (a) stated limitation | 0075 | F44 (documented) | Epoch-versioned attribute keys (future work) |
+| D11 | (a) docs corrected, construction unchanged | 0076 | F32 | — |
+
+N14's last row (per-service SANs) is decided in ADR-0078: keep the
+`localhost` SANs that host-run paths need, and record the residual risk.
+
 ## Status at `4ddc201` (second review)
 
 | ID | Status | Evidence | What remains |
@@ -143,6 +167,28 @@ correctly refuses the committed captures because they predate the run stamp
 | N14 | **PARTIAL** | `USER app`; no `ENV HOST`; lone `TLS_VERIFY=false` path removed (only ADR-0042's double gate remains); one `env_flag` | Per-service SANs not changed: host-run TLS scenarios and captures reach services as `localhost`, so dropping that SAN breaks them; needs a decision |
 | N15 | **FIXED** (all rows) | Malformed status line; exact bridge names; `--db-port` from `DATABASE_URL`; word-boundary finding match; `policy_codec` type checks + tests; query labels; live test scope `all`; exit-plan TLS row | — |
 | N16 | **PARTIAL** | PROJECT.md expiry paragraph is now §5 caveat 6 | Owner reviews of 638c2c6, 9721387 and this batch (ADR-0051) |
+
+## Status on `proposal/review-open-items` (2026-10-15)
+
+On top of `40b13e9` (`proposal/c4-c7-c9-full-fixes`, which closed D1, D3,
+D5, D8 and claims C3, C4, C7, C9). D4 was decided by ADR-0064 and D7 by
+ADR-0058; this branch implements what they unblocked and takes D11-a.
+
+| ID | Status | What was done | What remains |
+|---|---|---|---|
+| D11 / F32 | **FIXED** (ADR-0076, D11-a) | Docstrings, ARCHITECTURE §1/§2 C3, PROJECT §5 item 10 now say KEM delivery, facility sees the DEK, bidirectional toy PRE; a test shows `rk` inverts | Explainers 05/09 (user's working docs) |
+| F10 | **FIXED** (ADR-0080) | Patient-signed `GRANTED -> REVOKED` checked against the patient certificate; owner leaf from the stored tree; facility recovers the DEK through the policy and re-keys with the ADR-0069 rotation (atomic, works on Postgres, new emergency key and shares); `record.revoked` logged before commit; no key or DEK in the body (422 if sent) | Home-authority revocation not wired |
+| F13 | **FIXED** (ADR-0080) | `/consent/grants/revoke` (took the patient's private key) removed; a revocation is the signed REVOKED grant; a GRANTED decision on a revoked request is refused (409); consent requests arrive signed and are checked against the clinician certificate | — |
+| F15 | **FIXED** (ADR-0082) | Release needs a one-time envelope the credential's subject signed, under a certificate from a configured facility CA; replay refused; mutation C10b | The custodian still holds every subject key (ADR-0043) |
+| F5 | **FIXED** (ADR-0081) | Open sessions stored without keys; a restarted facility closes its own with a rotation recovered through the policy; holders accept any later generation | — |
+| ADR-0069 residual (crash mid-rotation) | **FIXED** (ADR-0081) | Same recovery finishes it one generation on | — |
+| F34 | **FIXED** (by `532e57a`) | BOLA covered by claim C9 (`test_c9_bola_...`) | — |
+| N3 follow-up (BG-0001) | **FIXED** | Portal trace test reads the case number from the created case | — |
+
+**Still open:** D2 (share 2), D6 (bodies vs. TLS), D9 (signed-payload
+encoding), D10 (credential revocation vs. shared keys), N14 SANs, F31 high-
+water mark persistence, static revoked-serial lists (no CRL), clinical labels
+readable in the store, portal `TIME_ZONE`, self-registration (ADR-0021).
 
 ## Fixes that need no decisions (at `a40a5a7`)
 

@@ -33,7 +33,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-from crypto_core import certificate_to_pem
+from api.share_transport import fetch_share_recipient, sealed_json
+from crypto_core import certificate_from_pem, certificate_to_pem
 
 from demo.seed_data import SyntheticDataset, create_synthetic_dataset
 from deploy.config import configure_transport, tls_enabled
@@ -119,12 +120,22 @@ def deposit_custodian(
         ).raise_for_status()
         subjects += 1
 
+    # Share 1 goes to the custodian sealed to its verified share key (ADR-0079).
+    custodian = fetch_share_recipient(
+        http,
+        custodian_url,
+        kind="custodian",
+        trusted_root=certificate_from_pem(seed_result["root_cert_pem"].encode("ascii")),
+    )
     shares = 0
     for record_id, meta in seed_result["records"].items():
-        x, share_bytes = meta["share1"]
         http.post(
             f"{custodian_url}/records/{record_id}/shares",
-            json={"x": x, "share_hex": share_bytes.hex()},
+            json={
+                "sealed_share": sealed_json(
+                    meta["share1"], record_id=record_id, recipient=custodian
+                )
+            },
         ).raise_for_status()
         shares += 1
 

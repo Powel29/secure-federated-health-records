@@ -17,8 +17,10 @@ share). :meth:`ShareRegistry.put` never overwrites (review F4): a second
 deposit under the same key would silently replace a live record's share and
 break its break-glass for good. Rotation at expiry -- which invalidates the
 old emergency key and mints a new one with a fresh 3-way split (ADR-0069) --
-replaces the share with :meth:`ShareRegistry.replace`, one generation at a
-time, so a stale or repeated rotation cannot roll a share back. This
+replaces the share with :meth:`ShareRegistry.replace`, only ever with a later
+generation, so a stale or repeated rotation cannot roll a share back. A later
+generation may skip one: a rotation recovered after a crash (ADR-0081) starts
+after whatever the store already holds. This
 mirrors how a real custodian holds a standing share rather than a one-time
 token: what makes a share safe to reuse across repeated legitimate emergency
 sessions for the same record is the log-before-release gate on each release,
@@ -45,7 +47,7 @@ class ShareAlreadyHeldError(CryptoError):
 
 
 class ShareGenerationError(CryptoError):
-    """A replacement is not for the generation after the one held (ADR-0069)."""
+    """A replacement is not for a later generation than the one held (ADR-0069)."""
 
 
 class ShareRegistry:
@@ -79,15 +81,17 @@ class ShareRegistry:
             self._generations[share_key] = 0
 
     def replace(self, share_key: str, share: Share, generation: int) -> None:
-        """Replace the held share with the next generation's (ADR-0069).
+        """Replace the held share with a later generation's (ADR-0069).
 
         Idempotent for a retry: replacing with the share already held at
-        ``generation`` is a no-op.
+        ``generation`` is a no-op. A generation may be skipped: a rotation
+        recovered after a crash (ADR-0081) starts one after the store's, which
+        can be ahead of this holder's if the crash came between deposits.
 
         Raises:
             ShareNotFoundError: No share is held under the key.
-            ShareGenerationError: ``generation`` is not the held generation + 1
-                (or the same generation with a different share).
+            ShareGenerationError: ``generation`` is not after the held one
+                (or is the same generation with a different share).
         """
         with self._lock:
             current = self._shares.get(share_key)
@@ -96,7 +100,7 @@ class ShareRegistry:
             held = self._generations[share_key]
             if generation == held and current == share:
                 return
-            if generation != held + 1:
+            if generation <= held:
                 raise ShareGenerationError(
                     f"share for {share_key!r} is at generation {held}; "
                     f"refusing generation {generation}"

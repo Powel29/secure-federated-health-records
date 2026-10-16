@@ -60,6 +60,9 @@ EVENT_ACCESS_GRANTED = "access_granted"
 EVENT_ACCESS_DENIED = "access_denied"
 EVENT_FEDERATION_DISCOVERY = "federation.discovery"
 EVENT_FEDERATION_REWRAP = "federation.rewrap"
+# A patient's revocation by key rotation, logged before it is stored (review
+# F10, ADR-0080): identifiers, policy ids and generations only.
+EVENT_RECORD_REVOKED = "record.revoked"
 
 # Portal-originated events (ADR-0033, ADR-0043). Both are appended through the
 # standalone Audit Service's ``POST /entries`` by the clinician/patient portals

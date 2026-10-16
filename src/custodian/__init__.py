@@ -12,9 +12,17 @@ from __future__ import annotations
 import datetime
 from dataclasses import dataclass, field
 
+from authority.issuance import KEY_RELEASE_OPERATION, credential_binding
 from breakglass import create_emergency_assertion
 from breakglass.emergency_key import Share, generate_emergency_key, split_emergency_key
-from contracts import EmergencyAssertion, Record, TransitionEvent
+from breakglass.envelopes import create_request_envelope
+from contracts import (
+    AttributeCredential,
+    EmergencyAssertion,
+    Record,
+    RequestEnvelope,
+    TransitionEvent,
+)
 from contracts.enums import LifecycleState, ReasonCode
 from crypto_core import sha256_digest
 from crypto_core.types import ECPrivateKey
@@ -28,7 +36,7 @@ class EmergencyProvision:
     """A new record's 2-of-3 emergency key and the two shares that are held.
 
     Share 1 stays in clinician custody here, share 3 goes to the audit
-    service; share 2 (home authority) is not deposited (review F3, D2).
+    service; share 2 (home authority) is reserved, not deposited (ADR-0074).
     """
 
     key: bytes = field(repr=False)
@@ -99,6 +107,51 @@ def sign_emergency_transition(
         actor_id=clinician_id,
         signing_key=signing_key,
         reason_code=reason_code,
+    )
+
+
+def sign_revocation_transition(
+    *,
+    signing_key: ECPrivateKey,
+    record_id: str,
+    from_state: LifecycleState,
+    patient_id: str,
+) -> TransitionEvent:
+    """Sign the record's ``from_state -> REVOKED`` as its patient (ADR-0080).
+
+    Signed here with the patient's own key, which never leaves the custodian
+    (ADR-0043); the facility verifies it against the patient's certificate
+    and re-keys the record itself, so no key or DEK crosses the wire.
+
+    Raises:
+        IllegalTransitionError: ``from_state`` cannot reach ``REVOKED``.
+    """
+    return create_transition_event(
+        record_id=record_id,
+        from_state=from_state,
+        to_state=LifecycleState.REVOKED,
+        actor_id=patient_id,
+        signing_key=signing_key,
+    )
+
+
+def sign_key_release_possession(
+    *, signing_key: ECPrivateKey, credential: AttributeCredential
+) -> RequestEnvelope:
+    """Prove the credential's subject asks for its attribute key (ADR-0082).
+
+    A one-time envelope signed with the subject's own key, addressed to the
+    issuing authority, for ``attribute_key.release``, over the credential's
+    canonical bytes. A copied credential alone -- public signed data -- no
+    longer releases a key (review F15). The existing ``RequestEnvelope``
+    construction; nothing new.
+    """
+    return create_request_envelope(
+        caller_id=credential.subject_id,
+        recipient_id=credential.issuer_id,
+        operation=KEY_RELEASE_OPERATION,
+        body=credential_binding(credential),
+        signing_key=signing_key,
     )
 
 

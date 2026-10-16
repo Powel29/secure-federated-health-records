@@ -9,12 +9,23 @@ or do not sign at all.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
+from api.authority_service import SubjectTrust
 from api.service_auth import ServiceIdentity, SignedRequestAuth
+from contracts import AttributeCredential
 from crypto_core import certificate_to_pem, generate_ec_keypair
+from crypto_core.types import ECPrivateKey
+from cryptography.x509 import Certificate
+from custodian import sign_key_release_possession
 from fastapi.testclient import TestClient
-from identity.certificates import issue_service_certificate
+from identity.certificates import (
+    issue_clinician_certificate,
+    issue_facility_ca_certificate,
+    issue_patient_certificate,
+    issue_service_certificate,
+)
 from identity.root_anchor import RootAnchor
 
 BASE_URL = "http://testserver"
@@ -72,3 +83,64 @@ class ServicePKI:
         client = TestClient(app, base_url=base_url, **kwargs)
         client.auth = self.auth(caller, recipient, base_url)
         return client
+
+
+@dataclass(frozen=True)
+class Person:
+    """A patient or clinician certified by a test facility CA."""
+
+    subject_id: str
+    signing_key: ECPrivateKey
+    certificate_pem: str
+
+
+class PersonPKI:
+    """One test facility CA under ``root`` that certifies people (ADR-0082)."""
+
+    def __init__(self, root: RootAnchor, facility_id: str = "facility-a") -> None:
+        self.root = root
+        self.facility_id = facility_id
+        self.ca_key, ca_public = generate_ec_keypair()
+        self.ca_certificate: Certificate = issue_facility_ca_certificate(
+            root, facility_id, ca_public
+        )
+
+    @property
+    def trust(self) -> SubjectTrust:
+        return SubjectTrust(
+            root=self.root.certificate,
+            facility_cas={self.facility_id: self.ca_certificate},
+        )
+
+    def clinician(self, clinician_id: str) -> Person:
+        key, public_key = generate_ec_keypair()
+        certificate = issue_clinician_certificate(
+            self.ca_key, self.ca_certificate, clinician_id, public_key
+        )
+        return Person(clinician_id, key, certificate_to_pem(certificate).decode())
+
+    def patient(self, patient_id: str) -> Person:
+        key, public_key = generate_ec_keypair()
+        certificate = issue_patient_certificate(
+            self.ca_key, self.ca_certificate, patient_id, public_key
+        )
+        return Person(patient_id, key, certificate_to_pem(certificate).decode())
+
+
+def release_body(
+    credential: dict[str, Any] | AttributeCredential, person: Person
+) -> dict[str, Any]:
+    """A key-release request ``person`` signed for ``credential`` (ADR-0082)."""
+    cred = (
+        credential
+        if isinstance(credential, AttributeCredential)
+        else AttributeCredential.model_validate(credential)
+    )
+    possession = sign_key_release_possession(
+        signing_key=person.signing_key, credential=cred
+    )
+    return {
+        "credential": cred.model_dump(mode="json"),
+        "possession": possession.model_dump(mode="json"),
+        "subject_certificate_pem": person.certificate_pem,
+    }

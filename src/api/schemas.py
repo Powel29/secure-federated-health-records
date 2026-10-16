@@ -8,9 +8,10 @@ payloads.
 
 from __future__ import annotations
 
+from breakglass.share_sealing import SealedShare
 from contracts.clinical import ClinicalMetadata
 from contracts.consent import ConsentGrant, ConsentRequest
-from contracts.enums import LifecycleState, ReasonCode
+from contracts.enums import LifecycleState
 from contracts.lifecycle import TransitionEvent
 from contracts.messaging import EmergencyAssertion
 from contracts.policy import PolicyTree
@@ -71,20 +72,6 @@ class ReadRecordResponse(BaseModel):
 # --- Consent Endpoints --------------------------------------------------------
 
 
-class CreateConsentRequestPayload(BaseModel):
-    """Request body to issue a new ConsentRequest."""
-
-    patient_id: str
-    requester_id: str
-    scope: list[str]
-    purpose: str
-    ttl_days: int = Field(default=7, gt=0, le=365)
-    requester_signing_key_pem: str = Field(
-        ...,
-        description="PEM-encoded ECDSA private key of the requester",
-    )
-
-
 class SubmitConsentGrantPayload(BaseModel):
     """Request body submitting a patient-signed ConsentGrant."""
 
@@ -92,16 +79,6 @@ class SubmitConsentGrantPayload(BaseModel):
     patient_certificate_pem: str = Field(
         ...,
         description="Patient certificate (PEM) from a configured facility CA",
-    )
-
-
-class RevokeConsentGrantPayload(BaseModel):
-    """Request body revoking an existing ConsentGrant."""
-
-    prior_grant: ConsentGrant
-    patient_signing_key_pem: str = Field(
-        ...,
-        description="PEM-encoded ECDSA private key of the patient",
     )
 
 
@@ -118,35 +95,30 @@ class ConsentResponse(BaseModel):
 
 
 class RevokeRecordRequest(BaseModel):
-    """Request payload to cryptographically rotate a record's DEK."""
+    """A patient's revocation of a record, signed by the patient (ADR-0080).
 
-    actor_id: str = Field(
+    The ``GRANTED -> REVOKED`` transition is signed with the patient's key in
+    the custodian and verified here against the patient's certificate. The
+    facility recovers the old DEK itself and re-keys the record (ADR-0069),
+    so neither a private key nor a DEK crosses the wire; a caller still
+    sending one gets a 422.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    transition_event: TransitionEvent = Field(
         ...,
-        description="Party performing revocation (patient or home authority)",
+        description="GRANTED -> REVOKED, signed by the record's patient",
     )
-    actor_signing_key_pem: str = Field(
+    actor_certificate_pem: str = Field(
         ...,
-        description="PEM-encoded ECDSA private key of actor",
-    )
-    old_dek_b64: str = Field(
-        ...,
-        description="Base64-encoded pre-revocation DEK",
+        description="Patient certificate (PEM) from a configured facility CA",
     )
     new_clinical_policy: PolicyTree = Field(
         ...,
         description="New clinical policy branch (owner leaf added automatically)",
     )
-    owner_authority_id: str = Field(
-        ...,
-        description="Authority owning the patient's owner namespace",
-    )
-    attribute_keyring: dict[str, str] = Field(
-        ...,
-        description="Keyring mapping 'auth_id:name:val' to base64 key bytes",
-    )
     correlation_id: str | None = None
-    reason_code: ReasonCode | None = None
-    new_policy_id: str | None = None
 
 
 class RevokeRecordResponse(BaseModel):
@@ -156,6 +128,10 @@ class RevokeRecordResponse(BaseModel):
     new_generation: int
     new_policy_id: str
     transition_event: TransitionEvent
+    # False when the new emergency shares did not reach their holders: the
+    # revocation holds, but break-glass on the record fails closed until it
+    # is re-keyed (ADR-0080).
+    breakglass_provisioned: bool = True
     message: str = "Record access revoked and DEK rotated successfully"
 
 
@@ -182,9 +158,12 @@ class BreakglassUnlockRequest(BaseModel):
         ...,
         description="PEM-encoded X.509 certificate of attending clinician",
     )
-    shares: list[tuple[int, str]] = Field(
+    sealed_shares: list[SealedShare] = Field(
         ...,
-        description="List of (x_coordinate, hex_encoded_share) threshold shares",
+        description=(
+            "Threshold shares, each sealed to this facility's share key "
+            "(ADR-0079); no share bytes cross the wire"
+        ),
     )
     pre_rewrap_key: int = Field(
         ...,

@@ -479,3 +479,39 @@ def rotate_record_ciphertext(
             (rec.policy_id, rec.ciphertext, rec.nonce, rec.record_id, expected_nonce),
         )
         return cur.rowcount == 1
+
+
+# --- open emergency sessions (ADR-0081) ---------------------------------------
+
+
+def save_emergency_session(conn: psycopg.Connection, row: dict[str, Any]) -> None:
+    """Record an open emergency session; refuse a second one for the record."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO emergency_sessions (record_id, facility_id, return_state,"
+            " actor_id, correlation_id, opener_facility_id, opened_at, expires_at)"
+            " VALUES (%(record_id)s, %(facility_id)s, %(return_state)s,"
+            " %(actor_id)s, %(correlation_id)s, %(opener_facility_id)s,"
+            " %(opened_at)s, %(expires_at)s)",
+            row,
+        )
+
+
+def delete_emergency_session(conn: psycopg.Connection, record_id: str) -> None:
+    """Forget a session whose expiry has finished (a missing row is fine)."""
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM emergency_sessions WHERE record_id = %s", (record_id,))
+
+
+def list_emergency_sessions(
+    conn: psycopg.Connection, facility_id: str
+) -> list[dict[str, Any]]:
+    """Every open session ``facility_id`` recorded, oldest first."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT record_id, facility_id, return_state, actor_id, correlation_id,"
+            " opener_facility_id, opened_at, expires_at FROM emergency_sessions"
+            " WHERE facility_id = %s ORDER BY opened_at",
+            (facility_id,),
+        )
+        return list(cur.fetchall())

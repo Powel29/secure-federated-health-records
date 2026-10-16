@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import datetime
 
-from contracts import Attribute, AttributeCredential
+from contracts import Attribute, AttributeCredential, RequestEnvelope
 from pydantic import BaseModel
 
 
@@ -84,9 +84,16 @@ class RevokeCredentialResponse(BaseModel):
 
 
 class AttributeKeyReleaseRequest(BaseModel):
-    """Exchange a valid credential for the attribute key it certifies (§8 C6)."""
+    """Exchange a valid credential for the attribute key it certifies (§8 C6).
+
+    ``possession`` is a one-time envelope the credential's subject signed for
+    this credential and this authority, verified against
+    ``subject_certificate_pem`` (ADR-0082): a copied credential is not enough.
+    """
 
     credential: AttributeCredential
+    possession: RequestEnvelope
+    subject_certificate_pem: str
 
 
 class AttributeKeyResponse(BaseModel):

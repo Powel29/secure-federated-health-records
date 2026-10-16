@@ -143,8 +143,10 @@ class RecordingRotationPorts:
 
     @property
     def ports(self) -> RotationPorts:
+        # Late-bound, so a test can swap either call for a failing one.
         return RotationPorts(
-            author_keys=self.author_keys, deposit_shares=self.deposit_shares
+            author_keys=lambda leaves: self.author_keys(leaves),
+            deposit_shares=lambda *args: self.deposit_shares(*args),
         )
 
 

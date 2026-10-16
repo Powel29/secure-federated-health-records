@@ -36,20 +36,22 @@ produces for a DEK). Instead this gate uses the PRE primitive that *is* a
 complete, self-contained operation: ``pre.elgamal.encapsulate_key`` mints a
 fresh symmetric delivery key directly under the emergency clinician's PRE
 public key (``pre_rewrap_key``), and the recovered DEK is AES-GCM-wrapped
-under that delivery key, bound to ``record_id`` as AAD -- the same
-AAD-binding convention ``records.service.wrap_dek`` uses. The four resulting
+under that delivery key, bound to ``record_id`` as AAD. The four resulting
 pieces (``c1``, ``c2``, the wrap nonce, and the wrapped DEK) are packed into
 ``EmergencyUnlockResult.rewrapped_dek`` using fixed-length framing (32 + 32 +
-``GCM_NONCE_BYTES`` bytes, then the remainder), not the ``_FIELD_SEPARATOR``
-convention -- unlike the signed canonical payloads elsewhere, this blob must
-be split back into its parts by a downstream consumer, and ``c1``/``c2``/the
-ciphertext are raw binary values that could legitimately contain the
-separator byte. The clinician
+``GCM_NONCE_BYTES`` bytes, then the remainder): a downstream consumer splits
+the blob back into its parts, and they are raw binary values. The clinician
 recovers the DEK by decapsulating with their PRE private key and then
 AES-GCM-decrypting; that recovery step lives in the API layer (Phase 4), not
 here. A future phase introducing a genuine delegator -> delegatee PRE
 transform for DEKs would need its own ``DEKWrapping``-shaped PRE envelope
 contract; that is out of scope for this gate.
+
+So this is **not** re-encryption "without decryption" (ADR-0076, review
+D11-a): the facility running this gate holds the plaintext DEK between steps 3
+and 4, and delivers it by key encapsulation. What keeps the DEK from the
+facility's caller is the threshold, the signed transition and the
+log-before-release gate, not the PRE.
 """
 
 from __future__ import annotations
@@ -75,15 +77,9 @@ from breakglass.exceptions import InsufficientSharesError
 # ASCII unit separator -- the project-wide convention (matches
 # lifecycle/state_machine.py, breakglass/assertion.py) for building the
 # canonical byte payload a signature covers. Deliberately NOT used to pack
-# ``rewrapped_dek`` below: that convention only ever joins fields for a
-# verifier that recomputes the same payload from its own copies of the
-# fields and never re-splits the joined bytes. ``rewrapped_dek`` is the
-# opposite case -- a consumer holding only the blob must split it back into
-# c1, c2, nonce, and ciphertext -- and c1/c2/ciphertext are raw binary data
-# that can legitimately contain the 0x1f separator byte, which would corrupt
-# a split-based parse. Fixed-length framing (sizes below) avoids that
-# ambiguity entirely.
-_FIELD_SEPARATOR = b"\x1f"
+# ``rewrapped_dek`` below: a consumer holding only the blob must split it back
+# into c1, c2, nonce, and ciphertext, and those are raw binary data, so the
+# blob uses fixed-length framing (sizes below) rather than a separator.
 
 # SAFE_PRIME_P in pre.elgamal is a 256-bit safe prime, so PRE ciphertext
 # components (c1, c2) always fit in this many bytes.
@@ -260,8 +256,8 @@ def _reconstruct_and_deliver(
     wrapped_dek, wrap_nonce = aes_gcm_encrypt(
         key=delivery_key, plaintext=dek, aad=record_id.encode("utf-8")
     )
-    # Fixed-length framing, not the _FIELD_SEPARATOR convention -- see the
-    # module-level comment above _FIELD_SEPARATOR for why.
+    # Fixed-length framing -- see the module-level comment above
+    # _PRE_FIELD_BYTES for why.
     rewrapped_dek = (
         c1.to_bytes(_PRE_FIELD_BYTES, byteorder="big")
         + c2.to_bytes(_PRE_FIELD_BYTES, byteorder="big")

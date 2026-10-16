@@ -28,7 +28,7 @@ Rejected: Charm-Crypto (C build chain, ADR-0001).
 | Key derivation | HKDF (SHA-256) via `hkdf_derive` | `crypto_core/symmetric.py` |
 | Hash chain | SHA-256 | `audit/chain.py` |
 | Shamir field | prime P = 2^256 + 297, shares as (x, y) | `shamir/finite_field.py` |
-| Proxy re-encryption | ElGamal-style, unidirectional, prime-order subgroup with generator 4; subgroup membership validated on every input (ADR-0023) | `pre/elgamal.py` |
+| Proxy re-encryption | ElGamal-style, bidirectional (ADR-0076), prime-order subgroup with generator 4; subgroup membership validated on every input (ADR-0023) | `pre/elgamal.py` |
 | Certificates | X.509, single root, cross-certified facility CAs (ADR-0024) | `identity/` |
 
 The seven rules in `CONVENTIONS.md` §2 are correctness requirements: all
@@ -136,7 +136,7 @@ refuses any non-loopback database host before connecting.
 `POST /records/{id}/read`, `POST /records/{id}/revoke`,
 `POST /records/{id}/breakglass`, `POST /records/{id}/emergency-search`,
 `GET /patients/{id}/records` (discovery), `POST /search/records`,
-`POST /consent/requests`, `POST /consent/grants`, `POST /consent/grants/revoke`.
+`POST /consent/grants` (a grant or a revocation, signed by the custodian; ADR-0072).
 
 **Audit service**: `GET /health`, `GET /public-key`, `GET /chain/head`,
 `GET /chain/verify`, `POST /entries`, `POST /breakglass/shares`,
@@ -149,7 +149,7 @@ credential issue/verify/status/revoke, `POST /attribute-keys/release`,
 **Key Custodian**: `PUT /trust`, `POST /subjects/{id}/material`,
 `GET /subjects/{id}`, `GET /subjects/{id}/public-key`,
 `POST /subjects/{id}/consent/{request|decide|revoke}`,
-`POST /subjects/{id}/read`, `POST /subjects/{id}/breakglass`,
+`POST /subjects/{id}/read`, `POST /subjects/{id}/revoke`, `POST /subjects/{id}/breakglass`,
 `POST /subjects/{id}/records`, `POST /records/{id}/shares`.
 
 ## 8. Data model

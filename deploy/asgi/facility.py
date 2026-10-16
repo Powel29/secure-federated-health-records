@@ -154,5 +154,6 @@ def app() -> FastAPI:
             authorities=authorities,
             custodian_url=custodian_url,
             audit_url=audit_service_url,
+            trusted_root=trust.root,
         ),
     )

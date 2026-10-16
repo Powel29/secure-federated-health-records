@@ -14,6 +14,7 @@ from typing import Any
 
 import httpx
 import psycopg
+from api.share_transport import fetch_share_recipient, sealed_json
 from breakglass.emergency_key import generate_emergency_key, split_emergency_key
 from contracts.clinical import ClinicalMetadata
 from contracts.enums import PolicyNodeType
@@ -627,6 +628,14 @@ def seed_synthetic_data(
         "facility-b": endpoints.facility_b,
     }
 
+    # Share 3 goes to the audit service sealed to its verified share key.
+    audit_recipient = fetch_share_recipient(
+        http,
+        endpoints.audit,
+        kind="audit",
+        trusted_root=certificate_from_pem(root_cert_pem.encode("ascii")),
+    )
+
     for rec in dataset.records:
         emergency_key = generate_emergency_key()
         shares = split_emergency_key(emergency_key)
@@ -636,8 +645,9 @@ def seed_synthetic_data(
             f"{endpoints.audit}/breakglass/shares",
             json={
                 "share_key": rec.record_id,
-                "x": share3[0],
-                "share_hex": share3[1].hex(),
+                "sealed_share": sealed_json(
+                    share3, record_id=rec.record_id, recipient=audit_recipient
+                ),
             },
         )
         audit_deposit_res.raise_for_status()

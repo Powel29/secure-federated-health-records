@@ -48,6 +48,17 @@ Store mirror (review N1): an optional ``state_writer`` persists each emitted
 transition into the facility's store *after* the audit append, as a
 compare-and-set from the event's ``from_state``. A conflict means someone else
 changed the record's state; the timer logs it and never overwrites it.
+
+Restarts (ADR-0081, review F5): the emergency key lives only in this process,
+so a facility that restarts mid-window, or crashes mid-rotation, has lost it.
+An optional session store keeps each open session's identifiers (no key
+material) from the moment it opens until its expiry has finished. On startup
+the facility hands those back through :meth:`recover_session`: the session is
+registered already due and with no key, so nobody can join it, and the next
+sweep expires it as usual -- except that the rotator, finding no key,
+recovers the record's DEK through its policy instead. Access is closed from
+the restart on, and the record returns to its pre-emergency state with fresh
+keys instead of staying ``emergency_open`` for good.
 """
 
 from __future__ import annotations
@@ -56,7 +67,7 @@ import datetime
 import logging
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 from contracts import TransitionEvent
 from contracts.enums import LifecycleState
@@ -137,6 +148,9 @@ class EmergencySession:
     rotation_plan: Any = field(default=None, repr=False)
     rotation_steps: set[str] = field(default_factory=set)
     rotation: RotationOutcome | None = None
+    # Re-registered after a restart (ADR-0081): its emergency key was lost
+    # with the old process, so the rotator recovers the DEK another way.
+    recovered: bool = False
 
     def is_expired(self, now: datetime.datetime) -> bool:
         """Whether ``now`` is at or past ``expires_at`` -- inclusive, fail closed."""
@@ -159,6 +173,18 @@ class RotationOutcome:
 # ``rotator(session)`` -- runs (or finishes) the forced rotation for one
 # expiring session and returns what it stored. Raises to be retried.
 Rotator = Callable[[EmergencySession], RotationOutcome]
+
+
+class SessionStore(Protocol):
+    """Where open sessions are kept across restarts (ADR-0081). No keys."""
+
+    def save(self, session: EmergencySession) -> None:
+        """Record a session that just opened; raise if it cannot be kept."""
+        ...
+
+    def delete(self, record_id: str) -> None:
+        """Forget a session whose expiry has finished."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -260,6 +286,7 @@ class EmergencyExpiryManager:
         self._audit_logger = audit_logger
         self._state_writer = state_writer
         self._rotator = rotator
+        self._session_store: SessionStore | None = None
         self._clock = clock if clock is not None else _utcnow
 
         self._sessions: dict[str, EmergencySession] = {}
@@ -294,6 +321,15 @@ class EmergencyExpiryManager:
         """Run the facility's forced rotation at every expiry (ADR-0069)."""
         self._rotator = rotator
 
+    def attach_session_store(self, store: SessionStore) -> None:
+        """Keep every open session in ``store`` until it has expired (ADR-0081)."""
+        self._session_store = store
+
+    def has_session(self, record_id: str) -> bool:
+        """Whether a session (live, expiring or recovered) is held for the record."""
+        with self._lock:
+            return record_id in self._sessions
+
     def unregister_session(self, record_id: str) -> None:
         """Drop a session whose break-glass open failed after it was registered.
 
@@ -306,6 +342,8 @@ class EmergencyExpiryManager:
                 return
             del self._sessions[record_id]
         session.emergency_key = EMERGENCY_KEY_ZERO_BYTES
+        if self._session_store is not None:
+            self._session_store.delete(record_id)
 
     def register_session(
         self,
@@ -353,6 +391,9 @@ class EmergencyExpiryManager:
             ValueError: ``return_state`` is not GRANTED or REVOKED.
             ValueError: A session is already registered for ``record_id`` --
                 one active emergency session per record at a time.
+            Exception: Whatever the session store raises; the session is then
+                not registered, because a window no restart could close must
+                not open (ADR-0081).
         """
         if return_state not in (LifecycleState.GRANTED, LifecycleState.REVOKED):
             raise ValueError(
@@ -377,6 +418,77 @@ class EmergencyExpiryManager:
             current_record=current_record,
             return_state=return_state,
             opener_facility_id=opener_facility_id,
+        )
+        with self._lock:
+            if record_id in self._sessions:
+                raise ValueError(
+                    f"an emergency session is already registered for record "
+                    f"{record_id!r}"
+                )
+            self._sessions[record_id] = session
+        if self._session_store is not None:
+            try:
+                self._session_store.save(session)
+            except Exception:
+                with self._lock:
+                    self._sessions.pop(record_id, None)
+                session.emergency_key = EMERGENCY_KEY_ZERO_BYTES
+                raise
+        return session
+
+    def recover_session(
+        self,
+        *,
+        record_id: str,
+        actor_id: str,
+        correlation_id: str,
+        opened_at: datetime.datetime,
+        return_state: LifecycleState,
+        emergency_wrapping: DEKWrapping,
+        current_record: Record,
+        already_expired: bool,
+    ) -> EmergencySession:
+        """Re-register a session a previous process left open (ADR-0081).
+
+        The session has no emergency key and is due at once: it cannot be
+        joined, and the next sweep expires it with a rotation that recovers
+        the DEK through the record's policy.
+
+        Args:
+            record_id: The record the lost session covered.
+            actor_id: Its opener, for the audit metadata.
+            correlation_id: Its correlation id, so the expiry entries join
+                the original flow in the audit chain.
+            opened_at: When it opened.
+            return_state: The state expiry returns the record to.
+            emergency_wrapping: The record's current emergency wrapping.
+            current_record: The record as stored.
+            already_expired: The store already shows ``expired``. Its
+                ``EMERGENCY_OPEN -> EXPIRED`` entry was appended before the
+                store was written (:meth:`_emit`), so it is not appended again.
+
+        Raises:
+            ValueError: ``return_state`` is not GRANTED or REVOKED, or a
+                session is already held for the record.
+        """
+        if return_state not in (LifecycleState.GRANTED, LifecycleState.REVOKED):
+            raise ValueError(
+                f"an emergency session can only return to granted or revoked, "
+                f"not {return_state.value!r}"
+            )
+        session = EmergencySession(
+            record_id=record_id,
+            opened_at=opened_at,
+            duration_seconds=0.0,
+            expires_at=self._clock(),
+            actor_id=actor_id,
+            correlation_id=correlation_id,
+            emergency_key=EMERGENCY_KEY_ZERO_BYTES,
+            emergency_wrapping=emergency_wrapping,
+            current_record=current_record,
+            return_state=return_state,
+            recovered=True,
+            expired_emitted=already_expired,
         )
         with self._lock:
             if record_id in self._sessions:
@@ -511,6 +623,17 @@ class EmergencyExpiryManager:
         with self._lock:
             self._sessions.pop(record_id, None)
         session.emergency_key = EMERGENCY_KEY_ZERO_BYTES
+        if self._session_store is not None:
+            try:
+                self._session_store.delete(record_id)
+            except Exception:
+                # Swallowing is correct: the expiry is complete and stored. A
+                # row left behind only makes the next startup find the record
+                # back at baseline and drop the row (ADR-0081).
+                _logger.exception(
+                    "could not forget the finished emergency session of %s",
+                    record_id,
+                )
         return result
 
     def _run_expiry(

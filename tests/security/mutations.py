@@ -77,6 +77,22 @@ def _keep_revoked_party(mp: pytest.MonkeyPatch) -> None:
 
 
 def _no_reencryption(mp: pytest.MonkeyPatch) -> None:
+    """Revocation's rotation keeps the old ciphertext (ADR-0080 runs the
+    ADR-0069 rotation, so the mutation sits in the shared planner)."""
+    import lifecycle.rotation
+
+    real = lifecycle.rotation._plan_from_dek
+
+    def stale(**kwargs):
+        plan = real(**kwargs)
+        return dataclasses.replace(plan, record=kwargs["record"])
+
+    _swap(mp, "lifecycle.rotation", "_plan_from_dek", stale)
+
+
+def _library_revocation_keeps_ciphertext(mp: pytest.MonkeyPatch) -> None:
+    """``records.revocation.revoke_record_access`` (the P3-7 library call the
+    unit-level C1 tests exercise) keeps the old ciphertext."""
     import records.revocation
 
     real = records.revocation.revoke_record_access
@@ -244,6 +260,18 @@ def _forget_consumed_ids(mp: pytest.MonkeyPatch) -> None:
     mp.setattr(ConsumedAssertionIds, "consume", lambda self, item_id: None)
 
 
+def _skip_possession_check(mp: pytest.MonkeyPatch) -> None:
+    """The authority releases a key without checking who asks (pre-ADR-0082)."""
+    import api.authority_service
+
+    mp.setattr(
+        api.authority_service, "validate_subject_certificate", lambda *a, **k: None
+    )
+    mp.setattr(
+        api.authority_service, "verify_key_release_possession", lambda *a, **k: None
+    )
+
+
 def _skip_credential_checks(mp: pytest.MonkeyPatch) -> None:
     _swap(mp, "authority.issuance", "verify_credential", lambda *a, **k: None)
 
@@ -252,6 +280,11 @@ MUTATIONS: dict[str, list[Mutation]] = {
     "C1": [
         Mutation("C1a", "new tree still admits the revoked party", _keep_revoked_party),
         Mutation("C1b", "rotation does not re-encrypt the record", _no_reencryption),
+        Mutation(
+            "C1c",
+            "library revocation keeps the old ciphertext",
+            _library_revocation_keeps_ciphertext,
+        ),
     ],
     "C2": [
         Mutation(
@@ -298,7 +331,12 @@ MUTATIONS: dict[str, list[Mutation]] = {
             _read_loads_before_checking,
         ),
     ],
-    "C10": [Mutation("C10a", "credential validation skipped", _skip_credential_checks)],
+    "C10": [
+        Mutation("C10a", "credential validation skipped", _skip_credential_checks),
+        Mutation(
+            "C10b", "key released without proof of possession", _skip_possession_check
+        ),
+    ],
 }
 _BY_ID = {m.id: m for group in MUTATIONS.values() for m in group}
 
