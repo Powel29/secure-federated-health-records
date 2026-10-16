@@ -191,7 +191,7 @@ def federation():
     # Every service takes signed requests only (ADR-0066); seeding signs as
     # bootstrap, the custodian as itself.
     services = ServicePKI(root)
-    # Subjects prove possession under their facility CAs (ADR-0075).
+    # Subjects prove possession under their facility CAs (ADR-0082).
     subject_trust = SubjectTrust(
         root=root.certificate,
         facility_cas={"facility-a": fa_cert, "facility-b": fb_cert},
@@ -1074,7 +1074,7 @@ def test_share_1_is_not_replaced_outside_the_records_expiry(federation):
     federation["repo"].upsert_lifecycle_state(RECORD, LifecycleState.EXPIRED)
     assert _replace(client, 1).status_code == 403  # bootstrap is not a facility
     assert client.app.state.vault.get_share(RECORD) == original
-    # A later generation may skip ahead (ADR-0074); the held one is final.
+    # A later generation may skip ahead (ADR-0081); the held one is final.
     assert _replace(facility, 2).status_code == 200
     assert _replace(facility, 2, share_hex="abcdef02").status_code == 409
     assert _replace(facility, 1, share_hex="abcdef02").status_code == 409
@@ -1126,7 +1126,7 @@ def test_breakglass_after_rotation_uses_the_new_share_1(federation):
     assert base64.b64decode(again.json()["plaintext_b64"]) == PLAINTEXT
 
 
-# --- ADR-0073: a patient's revocation through the custodian -------------------
+# --- ADR-0080: a patient's revocation through the custodian -------------------
 
 PHYSICIAN_ONLY = {
     "node_type": "leaf",
@@ -1186,7 +1186,7 @@ def test_only_the_records_patient_revokes_it(federation):
 
 
 def test_key_release_carries_the_subjects_possession_proof(federation):
-    """ADR-0075: every key release the custodian asks for is signed by the
+    """ADR-0082: every key release the custodian asks for is signed by the
     credential's subject, and names that subject's certificate."""
     seen: list[httpx.Request] = []
     client = _custodian(federation, seen=seen)

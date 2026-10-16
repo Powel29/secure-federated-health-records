@@ -23,7 +23,7 @@ class SubjectCertificateError(CryptoError):
     """Raised when a certificate is not a valid certificate for the named person.
 
     Covers a certificate whose role (OU) the verifier does not accept, that
-    names another subject, or that is revoked (ADR-0073). Chain failures
+    names another subject, or that is revoked (ADR-0080). Chain failures
     raise :class:`ChainValidationError`.
     """
 

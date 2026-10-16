@@ -40,7 +40,7 @@ from authority.revocation import RevocationEntry, RevocationRegistry
 DEFAULT_CREDENTIAL_VALID_DAYS = 365  # ARCHITECTURE.md §8: nothing issues forever
 _FIELD_SEPARATOR = b"\x1f"  # ASCII unit separator -- keeps fields unambiguous
 
-# The operation a subject signs to ask for its attribute key (ADR-0075).
+# The operation a subject signs to ask for its attribute key (ADR-0082).
 KEY_RELEASE_OPERATION = "attribute_key.release"
 
 
@@ -276,7 +276,7 @@ def _signing_payload(
 def credential_binding(credential: AttributeCredential) -> bytes:
     """The credential's canonical bytes, which its issuer's signature covers.
 
-    A key-release possession envelope signs these as its body (ADR-0075), so
+    A key-release possession envelope signs these as its body (ADR-0082), so
     the subject's signature is bound to exactly one credential.
     """
     return _signing_payload(

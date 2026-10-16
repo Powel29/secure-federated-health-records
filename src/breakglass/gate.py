@@ -51,7 +51,7 @@ here. A future phase introducing a genuine delegator -> delegatee PRE
 transform for DEKs would need its own ``DEKWrapping``-shaped PRE envelope
 contract; that is out of scope for this gate.
 
-So this is **not** re-encryption "without decryption" (ADR-0072, review
+So this is **not** re-encryption "without decryption" (ADR-0076, review
 D11-a): the facility running this gate holds the plaintext DEK between steps 3
 and 4, and delivers it by key encapsulation. What keeps the DEK from the
 facility's caller is the threshold, the signed transition and the

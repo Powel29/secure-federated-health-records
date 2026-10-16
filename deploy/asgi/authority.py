@@ -12,7 +12,7 @@ Environment:
         authoring key (replacing the review F14 address allowlist).
     FACILITY_CA_CERTS_DIR: The facility CAs that certify patients and
         clinicians. A credential's key is released only to a request its
-        subject signed under one of them (ADR-0075, review F15).
+        subject signed under one of them (ADR-0082, review F15).
     REVOKED_CLINICIAN_SERIALS: Optional, as for a facility.
 """
 

@@ -95,7 +95,7 @@ class Person:
 
 
 class PersonPKI:
-    """One test facility CA under ``root`` that certifies people (ADR-0075)."""
+    """One test facility CA under ``root`` that certifies people (ADR-0082)."""
 
     def __init__(self, root: RootAnchor, facility_id: str = "facility-a") -> None:
         self.root = root
@@ -130,7 +130,7 @@ class PersonPKI:
 def release_body(
     credential: dict[str, Any] | AttributeCredential, person: Person
 ) -> dict[str, Any]:
-    """A key-release request ``person`` signed for ``credential`` (ADR-0075)."""
+    """A key-release request ``person`` signed for ``credential`` (ADR-0082)."""
     cred = (
         credential
         if isinstance(credential, AttributeCredential)

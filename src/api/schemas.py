@@ -72,7 +72,7 @@ class ReadRecordResponse(BaseModel):
 
 
 class CreateConsentRequestPayload(BaseModel):
-    """Register a ConsentRequest the clinician already signed (ADR-0073).
+    """Register a ConsentRequest the clinician already signed (ADR-0080).
 
     The custodian signs it with the clinician's key; the facility verifies it
     against the clinician's certificate. No private key crosses the wire, and
@@ -111,7 +111,7 @@ class ConsentResponse(BaseModel):
 
 
 class RevokeRecordRequest(BaseModel):
-    """A patient's revocation of a record, signed by the patient (ADR-0073).
+    """A patient's revocation of a record, signed by the patient (ADR-0080).
 
     The ``GRANTED -> REVOKED`` transition is signed with the patient's key in
     the custodian and verified here against the patient's certificate. The
@@ -146,7 +146,7 @@ class RevokeRecordResponse(BaseModel):
     transition_event: TransitionEvent
     # False when the new emergency shares did not reach their holders: the
     # revocation holds, but break-glass on the record fails closed until it
-    # is re-keyed (ADR-0073).
+    # is re-keyed (ADR-0080).
     breakglass_provisioned: bool = True
     message: str = "Record access revoked and DEK rotated successfully"
 

@@ -4,7 +4,7 @@ Provides key generation, proxy re-encryption key derivation (A -> B), ciphertext
 re-encryption without plaintext exposure, and symmetric key encapsulation
 (ARCHITECTURE.md §2 C3, ADR-0012).
 
-What it is not (ADR-0072, review D11-a):
+What it is not (ADR-0076, review D11-a):
 
 - **Not unidirectional.** ``rk = sk_a * sk_b^-1 mod q``, and anyone holding it
   computes ``rk^-1 mod q``, the key from B to A. The scheme is bidirectional.
@@ -85,7 +85,7 @@ def generate_rekey(sk_a: int, sk_b: int) -> int:
     Security property:
         The proxy holding rk transforms A's ciphertexts for B without learning
         the message, and cannot decrypt either party's ciphertexts with rk
-        alone. It is **not** unidirectional (ADR-0072): rk^-1 mod q is
+        alone. It is **not** unidirectional (ADR-0076): rk^-1 mod q is
         rk_{B -> A}, so the same proxy can re-encrypt B's ciphertexts for A.
     """
     if not (1 < sk_a < SUBGROUP_ORDER_Q) or not (1 < sk_b < SUBGROUP_ORDER_Q):

@@ -625,7 +625,7 @@ def run_scenario(
     # Revocation crosses the wire too (PROJECT §4A(1): "normal read,
     # revocation, or break-glass"; review N4). The patient signs the
     # GRANTED -> REVOKED transition with their own key, as the custodian does
-    # for them (ADR-0073); no private key or DEK is sent. The record is
+    # for them (ADR-0080); no private key or DEK is sent. The record is
     # emergency-open here, so the facility refuses it (409) -- the bytes still
     # cross the wire for the capture to check.
     revoke_event = create_transition_event(

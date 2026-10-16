@@ -152,12 +152,12 @@ ADR-0058; this branch implements what they unblocked and takes D11-a.
 
 | ID | Status | What was done | What remains |
 |---|---|---|---|
-| D11 / F32 | **FIXED** (ADR-0072, D11-a) | Docstrings, ARCHITECTURE §1/§2 C3, PROJECT §5 caveat 8 now say KEM delivery, facility sees the DEK, bidirectional toy PRE; a test shows `rk` inverts | Explainers 05/09 (user's working docs) |
-| F10 | **FIXED** (ADR-0073) | Patient-signed `GRANTED -> REVOKED` checked against the patient certificate; owner leaf from the stored tree; facility recovers the DEK through the policy and re-keys with the ADR-0069 rotation (atomic, works on Postgres, new emergency key and shares); `record.revoked` logged before commit; no key or DEK in the body (422 if sent) | Home-authority revocation not wired |
-| F13 | **FIXED** (ADR-0073) | `/consent/grants/revoke` (took the patient's private key) removed; a revocation is the signed REVOKED grant; a GRANTED decision on a revoked request is refused (409); consent requests arrive signed and are checked against the clinician certificate | — |
-| F15 | **FIXED** (ADR-0075) | Release needs a one-time envelope the credential's subject signed, under a certificate from a configured facility CA; replay refused; mutation C10b | The custodian still holds every subject key (ADR-0043) |
-| F5 | **FIXED** (ADR-0074) | Open sessions stored without keys; a restarted facility closes its own with a rotation recovered through the policy; holders accept any later generation | — |
-| ADR-0069 residual (crash mid-rotation) | **FIXED** (ADR-0074) | Same recovery finishes it one generation on | — |
+| D11 / F32 | **FIXED** (ADR-0076, D11-a) | Docstrings, ARCHITECTURE §1/§2 C3, PROJECT §5 caveat 8 now say KEM delivery, facility sees the DEK, bidirectional toy PRE; a test shows `rk` inverts | Explainers 05/09 (user's working docs) |
+| F10 | **FIXED** (ADR-0080) | Patient-signed `GRANTED -> REVOKED` checked against the patient certificate; owner leaf from the stored tree; facility recovers the DEK through the policy and re-keys with the ADR-0069 rotation (atomic, works on Postgres, new emergency key and shares); `record.revoked` logged before commit; no key or DEK in the body (422 if sent) | Home-authority revocation not wired |
+| F13 | **FIXED** (ADR-0080) | `/consent/grants/revoke` (took the patient's private key) removed; a revocation is the signed REVOKED grant; a GRANTED decision on a revoked request is refused (409); consent requests arrive signed and are checked against the clinician certificate | — |
+| F15 | **FIXED** (ADR-0082) | Release needs a one-time envelope the credential's subject signed, under a certificate from a configured facility CA; replay refused; mutation C10b | The custodian still holds every subject key (ADR-0043) |
+| F5 | **FIXED** (ADR-0081) | Open sessions stored without keys; a restarted facility closes its own with a rotation recovered through the policy; holders accept any later generation | — |
+| ADR-0069 residual (crash mid-rotation) | **FIXED** (ADR-0081) | Same recovery finishes it one generation on | — |
 | F34 | **FIXED** (by `532e57a`) | BOLA covered by claim C9 (`test_c9_bola_...`) | — |
 | N3 follow-up (BG-0001) | **FIXED** | Portal trace test reads the case number from the created case | — |
 

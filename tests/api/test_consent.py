@@ -1,4 +1,4 @@
-"""Unit tests for the Hospital Node Consent endpoints (P4-1, ADR-0073).
+"""Unit tests for the Hospital Node Consent endpoints (P4-1, ADR-0080).
 
 Verifies:
 - POST /consent/requests registers a ConsentRequest its clinician signed,
@@ -70,7 +70,7 @@ class TestHospitalConsentEndpoints:
         assert test_setup["repo"].get_consent_request(req.request_id) == req
 
     def test_request_with_a_private_key_is_refused(self, test_setup):
-        """Review F13/ADR-0073: the facility never takes a clinician's key."""
+        """Review F13/ADR-0080: the facility never takes a clinician's key."""
         pki = test_setup["pki"]
         response = test_setup["client"].post(
             "/consent/requests",
@@ -176,7 +176,7 @@ class TestHospitalConsentEndpoints:
 
     def test_revocation_is_a_signed_revoked_grant(self, test_setup):
         """The patient's signed REVOKED grant is submitted like any decision;
-        the facility's old key-taking revoke route is gone (ADR-0073)."""
+        the facility's old key-taking revoke route is gone (ADR-0080)."""
         pki = test_setup["pki"]
         client = test_setup["client"]
         prior = _grant(pki)

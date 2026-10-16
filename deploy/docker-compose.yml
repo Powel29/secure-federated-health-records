@@ -98,7 +98,7 @@ services:
       SERVICE_KEY_FILE: /identity/service.key
       SERVICE_CERT_FILE: /identity/service.crt
       FEDERATION_ROOT_CERT: /trust/root.crt
-      # A key goes only to a subject proving possession under these CAs (ADR-0075).
+      # A key goes only to a subject proving possession under these CAs (ADR-0082).
       FACILITY_CA_CERTS_DIR: /trust/facility-cas
       TLS_ENABLED: "${TLS_ENABLED:-false}"
     healthcheck:
@@ -133,7 +133,7 @@ services:
       SERVICE_KEY_FILE: /identity/service.key
       SERVICE_CERT_FILE: /identity/service.crt
       FEDERATION_ROOT_CERT: /trust/root.crt
-      # A key goes only to a subject proving possession under these CAs (ADR-0075).
+      # A key goes only to a subject proving possession under these CAs (ADR-0082).
       FACILITY_CA_CERTS_DIR: /trust/facility-cas
       TLS_ENABLED: "${TLS_ENABLED:-false}"
     healthcheck:

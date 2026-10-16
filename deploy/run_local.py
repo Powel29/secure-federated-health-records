@@ -78,7 +78,7 @@ def _default_specs(database_url: str, audit_base_url: str) -> list[ServiceSpec]:
                     if authority_id == "authority-med"
                     else "specialty,facility,owner"
                 ),
-                # Subjects prove possession under these CAs (ADR-0075).
+                # Subjects prove possession under these CAs (ADR-0082).
                 "FACILITY_CA_CERTS_DIR": str(TRUST_DIR / "facility-cas"),
                 **_identity_env(authority_id),
             },

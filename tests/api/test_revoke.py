@@ -1,4 +1,4 @@
-"""Tests for the facility's revocation endpoint (P3-7, P3-12, ADR-0073).
+"""Tests for the facility's revocation endpoint (P3-7, P3-12, ADR-0080).
 
 A patient revokes by signing ``GRANTED -> REVOKED`` with their own key (in the
 custodian) and presenting their certificate. The facility recovers the old DEK

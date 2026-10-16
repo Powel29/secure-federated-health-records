@@ -328,7 +328,7 @@ def create_audit_app(
 
         Only a facility may call this, only while the record is ``expired``
         (its forced rotation at expiry) or ``revoked`` (the rotation a
-        patient's revocation runs, ADR-0073) in the shared store, and only for
+        patient's revocation runs, ADR-0080) in the shared store, and only for
         a later generation than the one held.
         """
         row = get_lifecycle_state(conn, share_key)

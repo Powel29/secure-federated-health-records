@@ -222,7 +222,7 @@ class StorageRepository(Protocol):
         ...
 
     def save_emergency_session(self, row: dict[str, Any]) -> None:
-        """Record an open emergency session (ADR-0074); no key material.
+        """Record an open emergency session (ADR-0081); no key material.
 
         Raises:
             StateConflictError: A session is already recorded for the record.

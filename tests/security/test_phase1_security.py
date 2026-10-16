@@ -163,7 +163,7 @@ def test_sec_pre_key_rebound_to_delegatee_only() -> None:
     assert decapsulate_key(sk_b, c1_re, c2_re) == sym_key
 
     # Even the original delegator A cannot read it post-rewrap. (This is not
-    # unidirectionality: rk itself inverts to B -> A, see ADR-0072.)
+    # unidirectionality: rk itself inverts to B -> A, see ADR-0076.)
     assert decapsulate_key(sk_a, c1_re, c2_re) != sym_key
     # An unrelated key holder cannot read it.
     assert decapsulate_key(outsider_sk, c1_re, c2_re) != sym_key

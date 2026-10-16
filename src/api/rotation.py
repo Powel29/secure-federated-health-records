@@ -21,8 +21,8 @@ stays closed until both have the new share.
 
 The same rotation, planned from the store instead of from a session's
 emergency key (:meth:`FacilityRotator.plan_from_store`), serves a patient's
-revocation (ADR-0073) and the sessions a restarted facility recovers
-(:func:`recover_emergency_sessions`, ADR-0074).
+revocation (ADR-0080) and the sessions a restarted facility recovers
+(:func:`recover_emergency_sessions`, ADR-0081).
 
 No cryptography here (CONVENTIONS.md §2 rule 10): ``lifecycle.rotation``
 computes, this module fetches, stores and delivers.
@@ -94,7 +94,7 @@ class FacilityRotator:
         plan = session.rotation_plan
         if plan is None and session.recovered:
             # The key died with the process that opened the session
-            # (ADR-0074): recover the DEK through the record's policy.
+            # (ADR-0081): recover the DEK through the record's policy.
             plan = self.plan_from_store(record_id)
             session.rotation_plan = plan
         if plan is None:
@@ -136,8 +136,8 @@ class FacilityRotator:
     ) -> RotationPlan:
         """Plan a rotation of the record as stored, with no emergency key.
 
-        For a patient's revocation (``new_tree``, ADR-0073) and for a session
-        recovered after a restart (ADR-0074). The DEK is recovered through
+        For a patient's revocation (``new_tree``, ADR-0080) and for a session
+        recovered after a restart (ADR-0081). The DEK is recovered through
         the record's current policy with the authoring keys of its leaves;
         the new policy root is compiled over ``new_tree`` (default: the
         current tree).
@@ -190,7 +190,7 @@ class FacilityRotator:
 
 
 class RepositorySessionStore:
-    """Keeps a facility's open emergency sessions in its store (ADR-0074).
+    """Keeps a facility's open emergency sessions in its store (ADR-0081).
 
     Identifiers, the return state and times only: never the emergency key.
     """
@@ -222,7 +222,7 @@ def recover_emergency_sessions(
 ) -> list[str]:
     """Hand the sessions a previous process left open back to the timer.
 
-    Only this facility's rows (ADR-0074): another facility's sessions are
+    Only this facility's rows (ADR-0081): another facility's sessions are
     its own to finish. A row whose record is no longer open or expiring is
     left over from a finished expiry and is dropped.
 

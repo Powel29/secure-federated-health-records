@@ -384,7 +384,7 @@ def _seed_record(conn, record_id: str, state: LifecycleState) -> None:
 
 class TestShareReplacement:
     """Only a facility, only during an expiry or revocation rotation, only a
-    later generation (ADR-0069, ADR-0073, ADR-0074)."""
+    later generation (ADR-0069, ADR-0080, ADR-0081)."""
 
     def _facility(self, audit_app, federation_pki):
         return federation_pki["services"].client(
@@ -421,7 +421,7 @@ class TestShareReplacement:
     def test_only_a_later_generation_replaces(
         self, client, audit_app, audit_conn, federation_pki
     ):
-        """A recovered rotation may skip a generation (ADR-0074); a share is
+        """A recovered rotation may skip a generation (ADR-0081); a share is
         never rolled back or swapped within its generation."""
         _register(client, "rec-r3")
         _seed_record(audit_conn, "rec-r3", LifecycleState.EXPIRED)
@@ -443,7 +443,7 @@ class TestShareReplacement:
     def test_a_revocation_rotation_replaces_the_share(
         self, client, audit_app, audit_conn, federation_pki
     ):
-        """A patient's revocation re-keys the emergency path too (ADR-0073)."""
+        """A patient's revocation re-keys the emergency path too (ADR-0080)."""
         _register(client, "rec-r5")
         _seed_record(audit_conn, "rec-r5", LifecycleState.REVOKED)
         r = self._facility(audit_app, federation_pki).put(
