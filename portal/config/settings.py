@@ -18,9 +18,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Dev-only fallback: a random key per start (never a committed secret). Set
 # DJANGO_SECRET_KEY in any real deployment.
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY") or secrets.token_urlsafe(32)
-DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
+# Off unless asked for (review F42): the local demo launcher sets
+# DJANGO_DEBUG=1 explicitly; anything else runs without debug pages.
+DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
 ALLOWED_HOSTS = (
-    ["*"] if DEBUG else os.environ.get("DJANGO_ALLOWED_HOSTS", "").split(",")
+    ["*"]
+    if DEBUG
+    else os.environ.get("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
 )
 
 INSTALLED_APPS = [
@@ -61,6 +65,7 @@ TEMPLATES = [
                 "django.contrib.messages.context_processors.messages",
                 "portal_core.context.product",
             ],
+            "builtins": ["portal_core.display"],
         },
     },
 ]
@@ -149,7 +154,16 @@ AUTHORITY_URLS = _url_map(
     )
 )
 SERVICE_TIMEOUT_SECONDS = float(os.environ.get("SERVICE_TIMEOUT_SECONDS", "8"))
-# Break-glass time-box the clinician portal requests, in seconds. ARCHITECTURE
-# §7: "must be adjustable" -- 900 for the paper, 60-120 for a live demo.
-EMERGENCY_DURATION_SECONDS = float(os.environ.get("EMERGENCY_DURATION_SECONDS", "120"))
+# The portal's own service identity (ADR-0066): it signs every call the portal
+# makes, so a service can tell the portal from any other caller. It is not a
+# subject's key and opens nothing (ADR-0014). Unset, every call is refused.
+SERVICE_KEY_FILE = os.environ.get("SERVICE_KEY_FILE", "")
+SERVICE_CERT_FILE = os.environ.get("SERVICE_CERT_FILE", "")
+# Break-glass time-box the clinician portal requests, in seconds (ADR-0056).
+# Four hours by default; request 60-120 seconds explicitly for a timer demo.
+EMERGENCY_DURATION_SECONDS = float(
+    os.environ.get("EMERGENCY_DURATION_SECONDS", "14400")
+)
+# Lifetime of each signed emergency assertion; the custodian caps it at 15 min.
+ASSERTION_TTL_SECONDS = int(os.environ.get("ASSERTION_TTL_SECONDS", "120"))
 PRODUCT_NAME = os.environ.get("PORTAL_PRODUCT_NAME", "CUSTOS")

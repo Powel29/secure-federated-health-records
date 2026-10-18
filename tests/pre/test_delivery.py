@@ -12,6 +12,8 @@ from pre import generate_keypair, open_delivery_package
 from pre.exceptions import PREDecryptionError
 from records.service import wrap_dek
 
+from tests.transitions import open_event
+
 
 def _delivery_package(record_id: str, pre_pub: int) -> tuple[bytes, bytes]:
     """Run the real gate so the package is exactly what a clinician receives."""
@@ -27,10 +29,14 @@ def _delivery_package(record_id: str, pre_pub: int) -> tuple[bytes, bytes]:
         dek_wrapping=wrapping,
         transition_source_state=LifecycleState.GRANTED,
         record_id=record_id,
-        actor_id="doc-301",
-        correlation_id="corr-1",
-        reason_code=ReasonCode.UNCONSCIOUS_PATIENT,
-        lifecycle_signing_key=life_priv,
+        transition_event=open_event(
+            record_id,
+            LifecycleState.GRANTED,
+            "doc-301",
+            ReasonCode.UNCONSCIOUS_PATIENT,
+            life_priv,
+        ),
+        actor_public_key=(life_priv).public_key(),
         pre_rewrap_key=pre_pub,
     )
     return result.rewrapped_dek, dek

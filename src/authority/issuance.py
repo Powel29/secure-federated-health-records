@@ -25,7 +25,7 @@ import datetime
 import secrets
 
 from contracts import Attribute, AttributeCredential, CredentialStatus
-from crypto_core import generate_ec_keypair, generate_key, sign, verify
+from crypto_core import encode_fields, generate_ec_keypair, generate_key, sign, verify
 from crypto_core.types import ECPrivateKey, ECPublicKey
 
 from authority.exceptions import (
@@ -38,7 +38,10 @@ from authority.exceptions import (
 from authority.revocation import RevocationEntry, RevocationRegistry
 
 DEFAULT_CREDENTIAL_VALID_DAYS = 365  # ARCHITECTURE.md §8: nothing issues forever
-_FIELD_SEPARATOR = b"\x1f"  # ASCII unit separator -- keeps fields unambiguous
+_DOMAIN = "ehr/attribute-credential/v1"  # encode_fields tag (ADR-0077)
+
+# The operation a subject signs to ask for its attribute key (ADR-0082).
+KEY_RELEASE_OPERATION = "attribute_key.release"
 
 
 class AttributeAuthority:
@@ -262,12 +265,30 @@ def _signing_payload(
         serial,
         issuer_id,
         subject_id,
-        f"{attribute.name}:{attribute.value}",
+        attribute.name,
+        attribute.value,
         valid_from.astimezone(datetime.timezone.utc).isoformat(),
         valid_until.astimezone(datetime.timezone.utc).isoformat(),
         status.value,
     ]
-    return _FIELD_SEPARATOR.join(field.encode("utf-8") for field in fields)
+    return encode_fields(_DOMAIN, [field.encode("utf-8") for field in fields])
+
+
+def credential_binding(credential: AttributeCredential) -> bytes:
+    """The credential's canonical bytes, which its issuer's signature covers.
+
+    A key-release possession envelope signs these as its body (ADR-0082), so
+    the subject's signature is bound to exactly one credential.
+    """
+    return _signing_payload(
+        serial=credential.serial,
+        issuer_id=credential.issuer_id,
+        subject_id=credential.subject_id,
+        attribute=credential.attribute,
+        valid_from=credential.valid_from,
+        valid_until=credential.valid_until,
+        status=credential.status,
+    )
 
 
 def issue_credential(
@@ -365,17 +386,17 @@ def verify_credential(
     credential: AttributeCredential,
     issuer_public_key: ECPublicKey,
     at: datetime.datetime | None = None,
-    revocation_registry: RevocationRegistry | None = None,
+    *,
+    revocation_registry: RevocationRegistry,
 ) -> None:
-    """Verify a credential's signature, status, and validity window.
-
-    Includes dynamic revocation checks when a revocation registry is provided.
+    """Verify a credential's signature, status, revocation and validity window.
 
     Args:
         credential: The credential to verify.
         issuer_public_key: The purported issuer's public key.
         at: The instant to check the validity window against; defaults to now.
-        revocation_registry: Optional registry to check for post-issuance revocation.
+        revocation_registry: Registry checked for post-issuance revocation.
+            Required, so the check can never be skipped by omission (F21).
 
     Raises:
         InvalidSignatureError: The signature does not verify against the
@@ -409,9 +430,7 @@ def verify_credential(
             f"{credential.status.value!r}, not active"
         )
 
-    if revocation_registry is not None and revocation_registry.is_revoked(
-        credential.serial
-    ):
+    if revocation_registry.is_revoked(credential.serial):
         raise CredentialRevokedError(
             f"credential {credential.serial!r} has been revoked by authority "
             f"{credential.issuer_id!r}"

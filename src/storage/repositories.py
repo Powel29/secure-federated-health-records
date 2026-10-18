@@ -26,8 +26,8 @@ def insert_record(conn: psycopg.Connection, rec: Record) -> None:
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO records (record_id, patient_id, facility_id, policy_id,"
-            " content_type, ciphertext, nonce, aad, created_at)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            " content_type, ciphertext, nonce, aad, created_at, clinical)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 rec.record_id,
                 rec.patient_id,
@@ -38,6 +38,7 @@ def insert_record(conn: psycopg.Connection, rec: Record) -> None:
                 rec.nonce,
                 rec.aad,
                 rec.created_at,
+                Jsonb(rec.clinical.model_dump(mode="json")),
             ),
         )
 
@@ -274,7 +275,13 @@ def upsert_lifecycle_state(
     state: LifecycleState,
     last_event_id: str | None = None,
 ) -> None:
-    """Set (or update) the current lifecycle state of a record."""
+    """Set (or overwrite) a record's lifecycle state.
+
+    Test seeding only. Production code creates the row with
+    :func:`insert_lifecycle_state` and changes it with
+    :func:`transition_lifecycle_state`, so no write can silently undo another
+    (review N1).
+    """
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO lifecycle_state (record_id, state, last_event_id,"
@@ -283,6 +290,28 @@ def upsert_lifecycle_state(
             " last_event_id = EXCLUDED.last_event_id, updated_at = now()",
             (record_id, state.value, last_event_id),
         )
+
+
+def insert_lifecycle_state(
+    conn: psycopg.Connection,
+    record_id: str,
+    state: LifecycleState,
+    last_event_id: str | None = None,
+) -> bool:
+    """Create a record's first lifecycle-state row (ingest only, review N1).
+
+    Never overwrites: returns ``False`` if a row already exists, so the caller
+    can refuse. Every later change goes through
+    :func:`transition_lifecycle_state`.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO lifecycle_state (record_id, state, last_event_id,"
+            " updated_at) VALUES (%s, %s, %s, now())"
+            " ON CONFLICT (record_id) DO NOTHING",
+            (record_id, state.value, last_event_id),
+        )
+        return cur.rowcount == 1
 
 
 def get_lifecycle_state(
@@ -340,6 +369,27 @@ def has_consumed_id(conn: psycopg.Connection, kind: str, item_id: UUID) -> bool:
         return cur.fetchone() is not None
 
 
+class ConsumedIdTable:
+    """``consumed_ids`` as a one-time-id backend, optionally under a fixed kind.
+
+    ``kind_override`` lets a second holder of the same ids keep its own set:
+    the audit service consumes emergency assertions as ``release_assertion``
+    while the facility consumes them as ``assertion`` (ADR-0067).
+    """
+
+    def __init__(
+        self, conn: psycopg.Connection, kind_override: str | None = None
+    ) -> None:
+        self._conn = conn
+        self._kind = kind_override
+
+    def consume_once(self, kind: str, item_id: UUID) -> bool:
+        return consume_id(self._conn, self._kind or kind, item_id)
+
+    def has_consumed(self, kind: str, item_id: UUID) -> bool:
+        return has_consumed_id(self._conn, self._kind or kind, item_id)
+
+
 def insert_search_term(
     conn: psycopg.Connection, record_id: str, coded_term: bytes
 ) -> None:
@@ -379,3 +429,89 @@ def find_records_by_search_term(
         rows = cur.fetchall()
 
     return [row[0] for row in rows]
+
+
+# --- sealed search terms (ADR-0069) -------------------------------------------
+
+
+def put_sealed_search_terms(
+    conn: psycopg.Connection, record_id: str, ciphertext: bytes, nonce: bytes
+) -> None:
+    """Store (or replace) a record's search terms, sealed under its DEK."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO record_search_terms (record_id, ciphertext, nonce)"
+            " VALUES (%s, %s, %s) ON CONFLICT (record_id) DO UPDATE"
+            " SET ciphertext = EXCLUDED.ciphertext, nonce = EXCLUDED.nonce",
+            (record_id, ciphertext, nonce),
+        )
+
+
+def get_sealed_search_terms(
+    conn: psycopg.Connection, record_id: str
+) -> tuple[bytes, bytes] | None:
+    """``(ciphertext, nonce)`` of a record's sealed search terms, or ``None``."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT ciphertext, nonce FROM record_search_terms WHERE record_id = %s",
+            (record_id,),
+        )
+        row = cur.fetchone()
+    return (bytes(row[0]), bytes(row[1])) if row else None
+
+
+# --- rotation at expiry (ADR-0069) --------------------------------------------
+
+
+def rotate_record_ciphertext(
+    conn: psycopg.Connection, rec: Record, *, expected_nonce: bytes
+) -> bool:
+    """Replace a record's ciphertext and policy id as a compare-and-set.
+
+    The record's GCM nonce identifies the ciphertext it belongs to, so the
+    update applies only if the stored ciphertext is still the one being
+    rotated. Returns ``False`` if it has moved.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE records SET policy_id = %s, ciphertext = %s, nonce = %s"
+            " WHERE record_id = %s AND nonce = %s",
+            (rec.policy_id, rec.ciphertext, rec.nonce, rec.record_id, expected_nonce),
+        )
+        return cur.rowcount == 1
+
+
+# --- open emergency sessions (ADR-0081) ---------------------------------------
+
+
+def save_emergency_session(conn: psycopg.Connection, row: dict[str, Any]) -> None:
+    """Record an open emergency session; refuse a second one for the record."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO emergency_sessions (record_id, facility_id, return_state,"
+            " actor_id, correlation_id, opener_facility_id, opened_at, expires_at)"
+            " VALUES (%(record_id)s, %(facility_id)s, %(return_state)s,"
+            " %(actor_id)s, %(correlation_id)s, %(opener_facility_id)s,"
+            " %(opened_at)s, %(expires_at)s)",
+            row,
+        )
+
+
+def delete_emergency_session(conn: psycopg.Connection, record_id: str) -> None:
+    """Forget a session whose expiry has finished (a missing row is fine)."""
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM emergency_sessions WHERE record_id = %s", (record_id,))
+
+
+def list_emergency_sessions(
+    conn: psycopg.Connection, facility_id: str
+) -> list[dict[str, Any]]:
+    """Every open session ``facility_id`` recorded, oldest first."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT record_id, facility_id, return_state, actor_id, correlation_id,"
+            " opener_facility_id, opened_at, expires_at FROM emergency_sessions"
+            " WHERE facility_id = %s ORDER BY opened_at",
+            (facility_id,),
+        )
+        return list(cur.fetchall())

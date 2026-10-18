@@ -53,7 +53,7 @@ class TestClaim1NoPlaintext:
             plain_scenario(canaries), tls_scenario(canaries), "all"
         )
         assert not result.passed
-        assert "share3" in result.evidence["plain_hits"]
+        assert "attr" in result.evidence["plain_hits"]
         assert result.evidence["plain_denylisted_fields"]
 
     def test_scope_all_passes_when_both_captures_are_clean(self, canaries):
@@ -90,9 +90,27 @@ class TestClaim1NoPlaintext:
             check_no_plaintext(_clean_plain(canaries), tls_scenario(canaries), "x")
 
     def test_denylisted_json_fields_reported(self, canaries):
-        fields = denylisted_fields(plain_scenario(canaries))
+        fields = denylisted_fields(plain_scenario(canaries, sealed_shares=False))
         assert fields["POST /attribute-keys/author [resp]"] == ["key_b64"]
         assert "share_hex" in fields["POST /breakglass/release [resp]"]
+
+    def test_plain_share_fails_every_scope(self, canaries):
+        """ADR-0079: a share readable in the plain capture fails claim 1 even
+        when the claim is scoped to TLS."""
+        for scope in ("all", "tls"):
+            result = check_no_plaintext(
+                plain_scenario(canaries, sealed_shares=False),
+                tls_scenario(canaries),
+                scope,
+            )
+            assert not result.passed
+            assert "ADR-0079" in result.summary
+
+    def test_sealed_shares_are_not_secrets(self, canaries):
+        """Positive control for the above: sealed shares do not trip it."""
+        plain = plain_scenario(canaries)
+        assert not [h for h in plain.hits if h.cls == "share"]
+        assert check_no_plaintext(plain, tls_scenario(canaries), "tls").passed
 
 
 class TestClaim2CommitBeforeRelease:
@@ -114,13 +132,14 @@ class TestClaim2CommitBeforeRelease:
         assert not result.passed
         assert "before the release response" in result.summary
 
-    def test_custody_registration_is_not_a_release(self, canaries):
-        """Share 3 crosses the wire at custody setup, before release, by design."""
+    def test_a_capture_without_the_sealed_share_canary_fails_closed(self, canaries):
+        """An old manifest (plaintext shares, no sealed canary) proves nothing."""
         plain = plain_scenario(canaries)
-        share3_frames = [h.frame for h in plain.hits if h.canary == "share3"]
-        result = check_commit_before_release(plain)
-        assert min(share3_frames) < result.evidence["release_response_frame"]
-        assert result.passed, result.summary
+        old_manifest = [c for c in canaries.values() if c.name != "share3_sealed"]
+        stale = Capture("plain", plain.segments, old_manifest, dict(SERVICES), DB_PORT)
+        result = check_commit_before_release(stale)
+        assert not result.passed
+        assert "share3_sealed" in result.summary
 
     def test_missing_db_traffic_fails_closed(self, canaries):
         result = check_commit_before_release(plain_scenario(canaries, include_db=False))
@@ -139,7 +158,7 @@ class TestClaim3SearchLeakage:
         rows = result.evidence["rows"]
         assert len(rows) == 3
         assert all("cardiac" not in str(row) for row in rows)
-        assert list(result.evidence["repeated_query_hashes"].values()) == [3]
+        assert list(result.evidence["repeated_queries"].values()) == [3]
 
     def test_no_searches_fails(self, canaries):
         result = check_search_leakage(plain_scenario(canaries, searches=0))
@@ -156,7 +175,7 @@ class TestClaim4BreakglassMetadataOnly:
 
     def test_scope_all_fails_while_shares_travel_in_plain(self, canaries):
         result = check_breakglass_metadata_only(
-            plain_scenario(canaries), tls_scenario(canaries), "all"
+            plain_scenario(canaries, sealed_shares=False), tls_scenario(canaries), "all"
         )
         assert not result.passed
 

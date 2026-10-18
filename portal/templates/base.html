@@ -4,26 +4,23 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}{{ product_name }}{% endblock %}</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=Lora:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{% static 'portal/custos.css' %}">
+  <link rel="preload" href="{% static 'portal/fonts/BarlowCondensed-700.woff2' %}" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="{% static 'portal/fonts/Barlow-400.woff2' %}" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="{% static 'portal/custos.css' %}?v=callpoint-2">{# bump v= on every stylesheet change: browsers cache this URL #}
 </head>
 <body>
+<a class="skip-link" href="#content">Skip to content</a>
 {% block shell %}
 <div class="shell">
-  <aside class="sidebar">
-    <div class="sidebar-brand">
-      <a class="wordmark plain" href="/">{{ product_name }}</a>
-      <div class="sub">Federated key-lifecycle<br>protocol · v4.2</div>
-    </div>
+  <aside class="sidebar" aria-label="Portal">
+    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span><span><span class="brand-name">{{ product_name }}</span><span class="brand-sub">Federated break-glass EHR</span></span></a>
 
     {% if nav %}
       <div class="sidebar-section">{{ crumb_role|default:"Portal" }}</div>
-      <nav class="sidebar-nav">
+      <nav class="sidebar-nav" aria-label="{{ crumb_role|default:'Portal' }}">
         {% for name, label in nav %}
           {% url name as target %}
-          <a href="{{ target }}" {% if request.path == target %}aria-current="page"{% endif %}>{{ label }}</a>
+          <a href="{{ target }}" {% if request.path == target %}aria-current="page"{% endif %}{% if name == "clinician:breakglass" %} class="nav-emergency"{% endif %}>{% if name == "clinician:breakglass" %}{% include "_icon.html" with name="glass" %}{% endif %}{{ label }}{% if name == "patient:home" and unread_count %}<span class="count" aria-label="{{ unread_count }} unread">{{ unread_count }}</span>{% endif %}</a>
         {% endfor %}
       </nav>
     {% endif %}
@@ -34,25 +31,40 @@
     <div class="sidebar-user">
       <div class="who">{{ user.username }}</div>
       <div>{% if user.profile %}{{ user.profile.get_role_display }} · <span class="mono">{{ user.profile.subject_id }}</span>{% elif user.is_superuser %}Superuser{% endif %}</div>
-      <form method="post" action="{% url 'accounts:logout' %}">{% csrf_token %}<button class="btn btn-logout">Log out</button></form>
+      <form method="post" action="{% url 'accounts:logout' %}">{% csrf_token %}<button class="btn btn-secondary btn-logout">Log out</button></form>
     </div>
     {% endif %}
 
-    <div class="sidebar-status">
-      <div><span>Portal role</span><span class="mono on">IDENTIFY ONLY</span></div>
-      <div><span>Key custody</span><span class="mono">2-of-3</span></div>
-      <div><span>Store</span><span class="mono">CIPHERTEXT ONLY</span></div>
-      <div><span>Access decided by</span><span class="mono on">KEYS</span></div>
-    </div>
+    <p class="sidebar-law">A login identifies you. <strong>Keys and the 2-of-3 threshold gate decide access.</strong> This portal holds no key.</p>
+
+    {% if nav %}
+    <details class="mobile-nav">
+      <summary>{% include "_icon.html" with name="menu" %}Menu{% if unread_count %} · {{ unread_count }}{% endif %}</summary>
+      <div class="menu">
+        <nav class="sidebar-nav" aria-label="{{ crumb_role|default:'Portal' }} (mobile)">
+          {% for name, label in nav %}
+            {% url name as target %}
+            <a href="{{ target }}" {% if request.path == target %}aria-current="page"{% endif %}{% if name == "clinician:breakglass" %} class="nav-emergency"{% endif %}>{{ label }}{% if name == "patient:home" and unread_count %}<span class="count">{{ unread_count }}</span>{% endif %}</a>
+          {% endfor %}
+        </nav>
+        {% if user.is_authenticated %}
+        <div class="who-line">{{ user.username }}{% if user.profile %} · {{ user.profile.get_role_display }} · <span class="mono">{{ user.profile.subject_id }}</span>{% endif %}</div>
+        <form method="post" action="{% url 'accounts:logout' %}">{% csrf_token %}<button class="btn btn-secondary btn-logout">Log out</button></form>
+        {% endif %}
+      </div>
+    </details>
+    {% endif %}
   </aside>
 
-  <main class="main">
+  <main class="main" id="content" tabindex="-1">
     <div class="topbar">
-      <div class="crumb">{{ crumb_role|default:"Portal" }}<span class="sep">/</span><span class="screen">{{ crumb_screen|default:"" }}</span></div>
+      <h1>{% block heading %}{{ crumb_screen|default:product_name }}{% endblock %}</h1>
+      {% block flow_marker %}{% endblock %}
       {% if active_case %}
-        <div class="alert-band">
-          <span>Emergency break-glass on <span class="mono">{{ active_case.record_id }}</span> by {{ active_case.clinician_id }} ({{ active_case.facility_id }}) — window closes in
-            <span class="mono" data-countdown="{{ active_case.expires_at|date:'c' }}">--:--</span></span>
+        <div class="alert-band" role="status">
+          {% include "_icon.html" with name="glass" %}
+          <span><strong>Break-glass open</strong> on <span class="mono">{{ active_case.record_id }}</span> by {{ active_case.clinician_id }} ({{ active_case.facility_id }})</span>
+          <span class="clock-inline" role="timer" aria-label="Emergency window remaining" data-countdown="{{ active_case.expires_at|date:'c' }}">--:--</span>
         </div>
       {% endif %}
     </div>
@@ -60,38 +72,49 @@
     <div class="content">
       {% if messages %}
         {% for m in messages %}
-          <div class="notice {% if m.tags == 'error' %}notice-error{% elif m.tags == 'success' %}notice-success{% else %}notice-info{% endif %}">{{ m }}</div>
+          <div class="notice {% if m.tags == 'error' %}notice-error{% elif m.tags == 'success' %}notice-success{% else %}notice-info{% endif %}" role="{% if m.tags == 'error' %}alert{% else %}status{% endif %}">{% if m.tags == 'error' %}{% include "_icon.html" with name="x" %}{% elif m.tags == 'success' %}{% include "_icon.html" with name="check" %}{% else %}{% include "_icon.html" with name="info" %}{% endif %}<div>{{ m }}</div></div>
         {% endfor %}
       {% endif %}
-      {% if notice %}<div class="notice notice-info">{{ notice }}</div>{% endif %}
-      {% if error %}<div class="notice notice-error">{{ error }}</div>{% endif %}
+      {% if notice %}<div class="notice notice-info" role="status">{% include "_icon.html" with name="info" %}<div>{{ notice }}</div></div>{% endif %}
+      {% if error %}<div class="notice notice-error" role="alert">{% include "_icon.html" with name="x" %}<div>{{ error }}</div></div>{% endif %}
       {% block content %}{% endblock %}
-      <div class="tiny text-muted">This portal identifies users and shows data. It never decides access and never holds a key — the Shamir threshold gate, the policy engine and the key wrappings do (ADR-0014 / ADR-0043).</div>
     </div>
   </main>
 </div>
 {% endblock %}
+<div class="sr-only" aria-live="polite" id="countdown-live"></div>
 <script>
 (function () {
+  var live = document.getElementById("countdown-live");
+  var warned = false, closed = false;
   function pad(n) { return String(n).padStart(2, "0"); }
+  function say(text) { if (live) live.textContent = text; }
   function tick() {
     var nodes = document.querySelectorAll("[data-countdown]");
     var anyDead = false;
     nodes.forEach(function (el) {
       var end = Date.parse(el.getAttribute("data-countdown"));
-      if (isNaN(end)) { el.textContent = "—"; return; }
+      if (isNaN(end)) { el.textContent = "--:--"; return; }
       var s = Math.floor((end - Date.now()) / 1000);
-      if (s <= 0) { el.textContent = "00:00"; el.classList.add("dead"); anyDead = true; return; }
+      if (s <= 0) { el.textContent = "00:00"; el.classList.remove("warn"); el.classList.add("dead"); anyDead = true; return; }
       el.textContent = pad(Math.floor(s / 60)) + ":" + pad(s % 60);
+      if (s <= 30) {
+        el.classList.add("warn");
+        if (!warned) { warned = true; say("Emergency window closes in 30 seconds."); }
+      }
     });
-    if (anyDead && !window.__custosReloaded && document.body.hasAttribute("data-reload-on-expiry")) {
-      window.__custosReloaded = true;
-      // A GET to the page's own case URL, never reload(): reloading a POST
-      // response would resubmit it (a re-declared break-glass every window).
-      var target = document.body.getAttribute("data-reload-on-expiry");
-      setTimeout(function () {
-        window.location.replace(target && target !== "1" ? target : window.location.pathname);
-      }, 1500);
+    // The case page's own URL: a GET, never a re-sent declaration (ADR-0065).
+    var reload = document.body.getAttribute("data-reload-on-expiry");
+    if (anyDead && !closed) {
+      closed = true;
+      var banner = document.getElementById("expiry-banner");
+      if (reload) {
+        if (banner) banner.hidden = false;
+        say("Emergency window closed. The key was rotated. The page reloads in 5 seconds.");
+        setTimeout(function () { window.location.replace(reload); }, 5000);
+      } else {
+        say("Emergency window closed.");
+      }
     }
   }
   tick(); setInterval(tick, 1000);

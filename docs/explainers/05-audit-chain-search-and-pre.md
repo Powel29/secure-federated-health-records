@@ -50,18 +50,20 @@ matched, how many results, how big). We *measure* this leakage from captures
 ## C. Proxy re-encryption (PRE)
 
 **Problem.** The emergency key opens the record in the store. How do we hand the
-data key to a doctor at another hospital without any server ever seeing it?
-**Answer.** A re-encryption key lets a proxy transform a ciphertext addressed to
-person A into one addressed to person B **without learning the plaintext**.
-Unidirectional ElGamal-style, hand-rolled (`src/pre`, ADR-0012).
+data key to a doctor at another hospital?
+**Answer.** The facility unwraps the DEK with the emergency key and delivers it
+to the doctor's ElGamal public key with a key encapsulation (KEM) from
+`src/pre`. The facility sees the DEK; only the delivery is encrypted to the
+doctor. The module also has an ElGamal re-encryption key, but it is
+**bidirectional** and break-glass does not use it (ADR-0012, ADR-0076). A
+re-encryption that never exposes the DEK to the proxy would need pairings.
 
 ```
-DEK wrapped for "emergency"  --(re-encryption key)-->  wrapped for Dr. House
-        proxy sees only ciphertext, both before and after
+DEK (unwrapped at the facility)  --KEM to Dr. Rao's key-->  delivery package
 ```
 
 In the demo you see this as the `federation.rewrap` audit event and the
-"PRE delivery package" the custodian opens for House.
+"PRE delivery package" the custodian opens for Rao.
 
 ## Federated discovery
 

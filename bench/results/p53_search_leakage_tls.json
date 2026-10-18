@@ -1,0 +1,360 @@
+{
+  "capture": "wire\\captures\\tls-search.pcap",
+  "total_tcp_packets": 2711,
+  "total_capture_bytes": 586115,
+  "http_events": 0,
+  "tls_packets": 1234,
+  "uris_observable": false,
+  "db_port": 55433,
+  "query_volume": 0,
+  "answered_queries": 0,
+  "unique_observable_requests": 0,
+  "repeated_requests": {},
+  "access_pattern_by_record": {},
+  "queries_visible_in_clear": 0,
+  "term_frequency": {},
+  "distinct_response_sizes": [],
+  "response_bytes_by_result_count": {},
+  "inter_query_seconds": [],
+  "queries": [],
+  "database_link_connections": {
+    "connections": 4,
+    "tls": 4,
+    "plaintext": 0,
+    "unknown": 0
+  },
+  "database_link": {
+    "token_lookups": 0,
+    "distinct_tokens": 0,
+    "token_frequency": {},
+    "lookups_with_visible_row_count": 0,
+    "lookups_by_row_count": {},
+    "inter_lookup_seconds": [],
+    "terms_linked_to_tokens": null
+  },
+  "http_timing": {
+    "hit_latency_seconds": [],
+    "miss_latency_seconds": [],
+    "refused_latency_seconds": [],
+    "mean_hit_latency_seconds": null,
+    "mean_miss_latency_seconds": null,
+    "median_hit_latency_seconds": null,
+    "median_miss_latency_seconds": null
+  },
+  "tls_view": null,
+  "labelled_tls_view": {
+    "labelled_searches": 15,
+    "matched_exchanges": 15,
+    "exchanges": [
+      {
+        "phase": "open",
+        "term": "cardiac",
+        "status": 200,
+        "record_count": 1,
+        "sent_at": 1792059189.6387315,
+        "answered_at": 1792059189.690861,
+        "request_record_lengths": [
+          1535,
+          70
+        ],
+        "response_record_lengths": [
+          142,
+          60
+        ],
+        "latency_seconds": 0.049306392669677734
+      },
+      {
+        "phase": "open",
+        "term": "aspirin",
+        "status": 200,
+        "record_count": 1,
+        "sent_at": 1792059190.1915019,
+        "answered_at": 1792059190.2488663,
+        "request_record_lengths": [
+          1535,
+          70
+        ],
+        "response_record_lengths": [
+          142,
+          60
+        ],
+        "latency_seconds": 0.055336713790893555
+      },
+      {
+        "phase": "open",
+        "term": "cardiac",
+        "status": 200,
+        "record_count": 1,
+        "sent_at": 1792059190.7496865,
+        "answered_at": 1792059190.838475,
+        "request_record_lengths": [
+          1535,
+          70
+        ],
+        "response_record_lengths": [
+          142,
+          60
+        ],
+        "latency_seconds": 0.08510470390319824
+      },
+      {
+        "phase": "open",
+        "term": "pneumonia",
+        "status": 200,
+        "record_count": 0,
+        "sent_at": 1792059191.3387294,
+        "answered_at": 1792059191.4073985,
+        "request_record_lengths": [
+          1535,
+          72
+        ],
+        "response_record_lengths": [
+          142,
+          51
+        ],
+        "latency_seconds": 0.06552767753601074
+      },
+      {
+        "phase": "open",
+        "term": "infarction",
+        "status": 200,
+        "record_count": 1,
+        "sent_at": 1792059191.907794,
+        "answered_at": 1792059191.981824,
+        "request_record_lengths": [
+          1535,
+          73
+        ],
+        "response_record_lengths": [
+          142,
+          60
+        ],
+        "latency_seconds": 0.07088708877563477
+      },
+      {
+        "phase": "open",
+        "term": "cardiac",
+        "status": 200,
+        "record_count": 1,
+        "sent_at": 1792059192.4826245,
+        "answered_at": 1792059192.5584059,
+        "request_record_lengths": [
+          1535,
+          70
+        ],
+        "response_record_lengths": [
+          142,
+          60
+        ],
+        "latency_seconds": 0.07385969161987305
+      },
+      {
+        "phase": "open",
+        "term": "fracture",
+        "status": 200,
+        "record_count": 0,
+        "sent_at": 1792059193.059354,
+        "answered_at": 1792059193.1155694,
+        "request_record_lengths": [
+          1535,
+          71
+        ],
+        "response_record_lengths": [
+          142,
+          51
+        ],
+        "latency_seconds": 0.05340218544006348
+      },
+      {
+        "phase": "open",
+        "term": "aspirin",
+        "status": 200,
+        "record_count": 1,
+        "sent_at": 1792059193.6156461,
+        "answered_at": 1792059193.6973453,
+        "request_record_lengths": [
+          1535,
+          70
+        ],
+        "response_record_lengths": [
+          142,
+          60
+        ],
+        "latency_seconds": 0.07846355438232422
+      },
+      {
+        "phase": "open",
+        "term": "cardiac",
+        "status": 200,
+        "record_count": 1,
+        "sent_at": 1792059194.1983163,
+        "answered_at": 1792059194.2825904,
+        "request_record_lengths": [
+          1535,
+          70
+        ],
+        "response_record_lengths": [
+          142,
+          60
+        ],
+        "latency_seconds": 0.07953143119812012
+      },
+      {
+        "phase": "open",
+        "term": "warfarin",
+        "status": 200,
+        "record_count": 0,
+        "sent_at": 1792059194.7835343,
+        "answered_at": 1792059194.8413472,
+        "request_record_lengths": [
+          1535,
+          71
+        ],
+        "response_record_lengths": [
+          142,
+          51
+        ],
+        "latency_seconds": 0.05509805679321289
+      },
+      {
+        "phase": "expired",
+        "term": "cardiac",
+        "status": 403,
+        "record_count": null,
+        "sent_at": 1792059210.0983138,
+        "answered_at": 1792059210.1717083,
+        "request_record_lengths": [
+          1535,
+          70
+        ],
+        "response_record_lengths": [
+          149,
+          112
+        ],
+        "latency_seconds": 0.07048559188842773
+      },
+      {
+        "phase": "reopened",
+        "term": "cardiac",
+        "status": 200,
+        "record_count": 1,
+        "sent_at": 1792059211.0375578,
+        "answered_at": 1792059211.1104548,
+        "request_record_lengths": [
+          69,
+          1535,
+          70
+        ],
+        "response_record_lengths": [
+          250,
+          250,
+          142,
+          60
+        ],
+        "latency_seconds": 0.05058002471923828
+      },
+      {
+        "phase": "reopened",
+        "term": "aspirin",
+        "status": 200,
+        "record_count": 1,
+        "sent_at": 1792059211.6113453,
+        "answered_at": 1792059211.676939,
+        "request_record_lengths": [
+          1535,
+          70
+        ],
+        "response_record_lengths": [
+          142,
+          60
+        ],
+        "latency_seconds": 0.06261897087097168
+      },
+      {
+        "phase": "reopened",
+        "term": "fracture",
+        "status": 200,
+        "record_count": 0,
+        "sent_at": 1792059212.1773465,
+        "answered_at": 1792059212.2247596,
+        "request_record_lengths": [
+          1535,
+          71
+        ],
+        "response_record_lengths": [
+          142,
+          51
+        ],
+        "latency_seconds": 0.04603099822998047
+      },
+      {
+        "phase": "reopened",
+        "term": "cardiac",
+        "status": 200,
+        "record_count": 1,
+        "sent_at": 1792059212.724966,
+        "answered_at": 1792059212.8158116,
+        "request_record_lengths": [
+          1535,
+          70
+        ],
+        "response_record_lengths": [
+          142,
+          60
+        ],
+        "latency_seconds": 0.08839082717895508
+      }
+    ],
+    "response_body_record_bytes_by_outcome": {
+      "hit": [
+        60
+      ],
+      "miss": [
+        51
+      ],
+      "refused": [
+        112
+      ]
+    },
+    "outcomes_separable_by_response_size": true,
+    "request_body_record_bytes_by_term": {
+      "aspirin": [
+        70
+      ],
+      "cardiac": [
+        70
+      ],
+      "fracture": [
+        71
+      ],
+      "infarction": [
+        73
+      ],
+      "pneumonia": [
+        72
+      ],
+      "warfarin": [
+        71
+      ]
+    },
+    "request_body_minus_term_length": [
+      63
+    ],
+    "observable_request_size_frequency": {
+      "70": 9,
+      "71": 3,
+      "72": 1,
+      "73": 1
+    },
+    "mean_latency_seconds_by_outcome": {
+      "hit": 0.06940793991088867,
+      "miss": 0.055014729499816895,
+      "refused": 0.07048559188842773
+    },
+    "median_latency_seconds_by_outcome": {
+      "hit": 0.0723733901977539,
+      "miss": 0.054250121116638184,
+      "refused": 0.07048559188842773
+    }
+  }
+}

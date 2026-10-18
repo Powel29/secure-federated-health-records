@@ -26,6 +26,40 @@ Nothing here holds key material, plaintext, or a share.
 from __future__ import annotations
 
 from django.db import models
+import uuid
+
+
+class CareEpisode(models.Model):
+    """A care encounter; temporary arrivals have no historical patient binding."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    patient_id = models.CharField(max_length=128, blank=True, db_index=True)
+    clinician_id = models.CharField(max_length=128)
+    facility_id = models.CharField(max_length=128)
+    label = models.CharField(max_length=200, default="Emergency care")
+    temporary_identifier = models.CharField(max_length=128, blank=True)
+    identity_evidence = models.CharField(max_length=500, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    closed_at = models.DateTimeField(null=True, blank=True)
+
+
+class DowntimeEvent(models.Model):
+    """Reconciliation queue; no plaintext medical record or access capability."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    clinician_id = models.CharField(max_length=128)
+    episode_id = models.CharField(max_length=128, blank=True)
+    procedure = models.CharField(
+        max_length=32,
+        choices=[
+            ("local_downtime", "Local emergency downtime procedure"),
+            ("contact_records", "Contact records custodian by approved channel"),
+        ],
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    reconciled_at = models.DateTimeField(null=True, blank=True)
+    audit_seq = models.BigIntegerField(null=True, blank=True)
 
 
 class ConsentStatus(models.TextChoices):
@@ -42,6 +76,8 @@ class ConsentRecord(models.Model):
     requester_id = models.CharField(max_length=128, db_index=True)
     requester_facility_id = models.CharField(max_length=128, blank=True)
     scope = models.JSONField(default=list)
+    episode_label = models.CharField(max_length=200, blank=True)
+    record_labels = models.JSONField(default=list)
     purpose = models.TextField()
     requested_at = models.DateTimeField()
     request_expires_at = models.DateTimeField()
@@ -86,6 +122,28 @@ class BreakglassCase(models.Model):
     facility_id = models.CharField(max_length=128)
     reason_code = models.CharField(max_length=64)
     justification = models.TextField(blank=True)
+    sensitive_justification = models.TextField(blank=True)
+    episode = models.ForeignKey(
+        CareEpisode,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="cases",
+    )
+    review_status = models.CharField(
+        max_length=32,
+        default="pending",
+        choices=[
+            ("pending", "Pending review"),
+            ("appropriate", "Appropriate"),
+            ("inappropriate", "Inappropriate"),
+            ("escalated", "Escalated"),
+        ],
+    )
+    reviewed_by = models.CharField(max_length=128, blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_note = models.TextField(blank=True)
+    review_audit_seq = models.BigIntegerField(null=True, blank=True)
     assertion_id = models.CharField(max_length=64, blank=True)
     status = models.CharField(
         max_length=16, choices=CaseStatus.choices, default=CaseStatus.OPEN

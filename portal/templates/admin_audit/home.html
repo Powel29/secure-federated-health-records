@@ -1,50 +1,51 @@
 {% extends "base.html" %}
 {% block title %}Admin & audit · {{ product_name }}{% endblock %}
 {% block content %}
-<div class="card">
-  <div class="flex between gap-4" style="align-items:flex-end">
-    <div class="grow" style="min-width:min(100%,300px)">
-      <h3 class="card-title">Trace by correlation ID</h3>
-      <form method="get" action="{% url 'admin_audit:trace' %}" class="flex mt-2">
-        <input class="input mono grow" type="text" name="cid" placeholder="lookup-… / consent-… / owner-read-…" style="min-width:200px">
+<section class="card card-frame" aria-labelledby="trace-h">
+  <div class="grid-2" style="align-items:end">
+    <div>
+      <h2 class="card-title" id="trace-h">Trace by correlation ID</h2>
+      <form method="get" action="{% url 'admin_audit:trace' %}" class="flex mt-3" style="align-items:flex-end">
+        <div class="field grow"><label for="cid-in">Correlation id</label><input class="input mono" id="cid-in" type="text" name="cid" placeholder="e.g. lookup-… / consent-… / owner-read-…" required></div>
         <button class="btn btn-primary nowrap">Trace flow</button>
       </form>
     </div>
     {% include "admin_audit/_chain_stats.html" %}
   </div>
-  {% if store_error %}<div class="notice notice-error small">Store not readable: {{ store_error }}</div>{% endif %}
-</div>
+  {% if store_error %}<div class="notice notice-error small" role="alert">{% include "_icon.html" with name="x" %}<div>Store not readable: {{ store_error }}</div></div>{% endif %}
+</section>
 
 <div class="grid-2">
-  <div class="card">
-    <div class="subhead"><h3 class="card-title">Latest chain entries</h3><a class="small" href="{% url 'admin_audit:trace' %}">trace</a></div>
+  <section class="card" aria-labelledby="latest-h">
+    <div class="subhead"><h2 class="card-title" id="latest-h">Latest chain entries</h2><a href="{% url 'admin_audit:trace' %}">Open the trail</a></div>
     <div class="chain">
       <div class="chain-head"><span class="seq">Seq</span><span class="head">Head</span><span class="ev">Event</span></div>
       {% for e in recent %}
-        <div class="chain-row {% if e.is_commit %}hl{% endif %}"><span class="seq">{{ e.seq }}</span><span class="head">{{ e.entry_hash_hex|slice:":6" }}</span><span class="ev">{{ e.event_type }} — {{ e.summary }} <a href="{% url 'admin_audit:trace' %}?cid={{ e.correlation_id|urlencode }}" class="sub">{{ e.correlation_id|truncatechars:20 }}</a></span></div>
+        <div class="chain-row {% if e.is_commit %}hl{% endif %}" tabindex="0"><span class="seq">{{ e.seq }}</span><span class="head">{{ e.entry_hash_hex|slice:":6" }}</span><span class="ev">{{ e.event_type }} — {{ e.summary }} <a href="{% url 'admin_audit:trace' %}?cid={{ e.correlation_id|urlencode }}" class="sub cid">{{ e.correlation_id|truncatechars:28 }}</a></span><span class="full">entry hash {{ e.entry_hash_hex }}</span></div>
       {% empty %}<div class="chain-row"><span class="ev">Chain empty or unreadable.</span></div>{% endfor %}
     </div>
-  </div>
+    <p class="basis">Focus or hover a row for its full entry hash.</p>
+  </section>
 
   <div class="stack gap-6">
-    <div class="card card-accent">
-      <h3 class="card-title">Oversight at a glance</h3>
-      <div class="grid-stats">
-        <div><div class="kicker">Open emergencies</div><div class="stat">{{ cases_open }}</div></div>
-        <div><div class="kicker">Live consents</div><div class="stat">{{ consents_live }}</div></div>
-        <div><div class="kicker">Patient notices</div><div class="stat">{{ notifications }}</div></div>
-        <div><div class="kicker">Pending enrolments</div><div class="stat">{{ pending }}</div></div>
-      </div>
-      <div class="flex mt-3">
+    <section class="card" aria-labelledby="over-h">
+      <h2 class="card-title" id="over-h">Oversight</h2>
+      <ul class="summary-line">
+        <li><span class="n">{{ cases_open }}</span> open emergenc{{ cases_open|pluralize:"y,ies" }}</li>
+        <li><span class="n">{{ consents_live }}</span> live consent{{ consents_live|pluralize }}</li>
+        <li><span class="n">{{ notifications }}</span> patient notice{{ notifications|pluralize }}</li>
+        <li><span class="n">{{ pending }}</span> pending enrolment{{ pending|pluralize }}</li>
+      </ul>
+      <div class="flex mt-2">
         <a class="btn btn-primary btn-sm" href="{% url 'admin_audit:cases' %}">Review break-glass cases</a>
         <a class="btn btn-secondary btn-sm" href="{% url 'admin_audit:federation' %}">Federation state</a>
       </div>
-    </div>
-    <div class="card">
-      <h3 class="card-title">Events by type</h3>
+    </section>
+    <section class="card" aria-labelledby="types-h">
+      <h2 class="card-title" id="types-h">Events by type</h2>
       <div class="table-wrap"><table class="table"><thead><tr><th>Event type</th><th class="right">Count</th></tr></thead>
         <tbody>{% for c in event_counts %}<tr><td class="mono">{{ c.event_type }}</td><td class="right mono">{{ c.n }}</td></tr>{% empty %}<tr><td colspan="2" class="empty">Nothing logged yet.</td></tr>{% endfor %}</tbody></table></div>
-    </div>
+    </section>
   </div>
 </div>
 {% endblock %}

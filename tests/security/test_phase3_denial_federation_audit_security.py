@@ -56,6 +56,8 @@ from records.revocation import check_revocation_authorization
 from records.service import wrap_dek
 from storage import repositories as repo
 
+from tests.transitions import open_event
+
 MED = "authority-med"
 NET = "authority-net"
 
@@ -344,10 +346,14 @@ def test_sec_federation_rewrap_event_never_contains_key_material(conn, audit_key
         dek_wrapping=wrapping,
         transition_source_state=LifecycleState.GRANTED,
         record_id=record_id,
-        actor_id="dr-out-of-network",
-        correlation_id="flow-rewrap-sec",
-        reason_code=ReasonCode.CARDIAC_ARREST,
-        lifecycle_signing_key=lifecycle_priv,
+        transition_event=open_event(
+            record_id,
+            LifecycleState.GRANTED,
+            "dr-out-of-network",
+            ReasonCode.CARDIAC_ARREST,
+            lifecycle_priv,
+        ),
+        actor_public_key=(lifecycle_priv).public_key(),
         pre_rewrap_key=pre_pub,
     )
     assert result.emergency_key == emergency_key

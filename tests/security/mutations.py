@@ -77,6 +77,22 @@ def _keep_revoked_party(mp: pytest.MonkeyPatch) -> None:
 
 
 def _no_reencryption(mp: pytest.MonkeyPatch) -> None:
+    """Revocation's rotation keeps the old ciphertext (ADR-0080 runs the
+    ADR-0069 rotation, so the mutation sits in the shared planner)."""
+    import lifecycle.rotation
+
+    real = lifecycle.rotation._plan_from_dek
+
+    def stale(**kwargs):
+        plan = real(**kwargs)
+        return dataclasses.replace(plan, record=kwargs["record"])
+
+    _swap(mp, "lifecycle.rotation", "_plan_from_dek", stale)
+
+
+def _library_revocation_keeps_ciphertext(mp: pytest.MonkeyPatch) -> None:
+    """``records.revocation.revoke_record_access`` (the P3-7 library call the
+    unit-level C1 tests exercise) keeps the old ciphertext."""
     import records.revocation
 
     real = records.revocation.revoke_record_access
@@ -113,6 +129,35 @@ def _threshold_one(mp: pytest.MonkeyPatch) -> None:
     import breakglass.gate
 
     mp.setattr(breakglass.gate, "THRESHOLD", 1)
+
+
+def _audit_skips_assertion_checks(mp: pytest.MonkeyPatch) -> None:
+    """The audit service releases share 3 without validating the assertion."""
+    import api.audit_service
+    from api.hospital import FacilityTrust
+
+    mp.setattr(api.audit_service, "validate_emergency_assertion", lambda **k: None)
+    mp.setattr(api.audit_service, "validate_clinical_context", lambda *a: None)
+    mp.setattr(
+        FacilityTrust,
+        "issuing_ca",
+        lambda self, leaf: next(iter(self.facility_cas.items()), None),
+    )
+
+
+def _expiry_does_not_rotate(mp: pytest.MonkeyPatch) -> None:
+    """Expiry re-baselines without replacing any key (the pre-ADR-0069 state)."""
+    import api.rotation
+    from lifecycle.expiry import RotationOutcome
+
+    def nothing(self, session):
+        return RotationOutcome(
+            rotated_record=session.current_record,
+            baseline_wrapping=session.emergency_wrapping,
+            emergency_wrapping=session.emergency_wrapping,
+        )
+
+    mp.setattr(api.rotation.FacilityRotator, "__call__", nothing)
 
 
 def _key_outlives_session(mp: pytest.MonkeyPatch) -> None:
@@ -178,16 +223,53 @@ def _skip_transition_rules(mp: pytest.MonkeyPatch) -> None:
     mp.setattr(lifecycle.state_machine, "validate_transition", lambda *a, **k: None)
 
 
+def _state_writes_unchecked(mp: pytest.MonkeyPatch) -> None:
+    """The store's compare-and-set overwrites whatever state it finds (N1)."""
+    from api.repository import InMemoryStorageRepository
+
+    def overwrite(self, record_id, expected, new, last_event_id=None):
+        self.upsert_lifecycle_state(record_id, new, last_event_id)
+
+    mp.setattr(InMemoryStorageRepository, "transition_lifecycle_state", overwrite)
+
+
 def _skip_transition_signature(mp: pytest.MonkeyPatch) -> None:
     import lifecycle.state_machine
 
     mp.setattr(lifecycle.state_machine, "verify", lambda *a, **k: None)
 
 
+def _any_caller_is_bootstrap(mp: pytest.MonkeyPatch) -> None:
+    """Service authentication waves every request through as bootstrap."""
+    import api.service_auth
+
+    caller = api.service_auth.CallerIdentity("bootstrap", "bootstrap")
+    mp.setattr(api.service_auth, "authenticate_request", lambda *a, **k: caller)
+
+
+def _read_loads_before_checking(mp: pytest.MonkeyPatch) -> None:
+    """read_record touches the store before refusing a keyless requester."""
+    import api.hospital
+
+    mp.setattr(api.hospital, "_presents_no_key", lambda payload: False)
+
+
 def _forget_consumed_ids(mp: pytest.MonkeyPatch) -> None:
     from breakglass.replay import ConsumedAssertionIds
 
     mp.setattr(ConsumedAssertionIds, "consume", lambda self, item_id: None)
+
+
+def _skip_possession_check(mp: pytest.MonkeyPatch) -> None:
+    """The authority releases a key without checking who asks (pre-ADR-0082)."""
+    import api.authority_service
+
+    mp.setattr(
+        api.authority_service, "validate_subject_certificate", lambda *a, **k: None
+    )
+    mp.setattr(
+        api.authority_service, "verify_key_release_possession", lambda *a, **k: None
+    )
 
 
 def _skip_credential_checks(mp: pytest.MonkeyPatch) -> None:
@@ -198,34 +280,69 @@ MUTATIONS: dict[str, list[Mutation]] = {
     "C1": [
         Mutation("C1a", "new tree still admits the revoked party", _keep_revoked_party),
         Mutation("C1b", "rotation does not re-encrypt the record", _no_reencryption),
+        Mutation(
+            "C1c",
+            "library revocation keeps the old ciphertext",
+            _library_revocation_keeps_ciphertext,
+        ),
     ],
     "C2": [
         Mutation(
             "C2a", "share released despite a failed commit", _release_without_commit
         )
     ],
-    "C3": [Mutation("C3a", "gate threshold lowered to one share", _threshold_one)],
+    "C3": [
+        Mutation("C3a", "gate threshold lowered to one share", _threshold_one),
+        Mutation(
+            "C3b",
+            "audit service releases without validating the assertion",
+            _audit_skips_assertion_checks,
+        ),
+    ],
     "C4": [
-        Mutation("C4a", "emergency key outlives its session", _key_outlives_session)
+        Mutation("C4a", "emergency key outlives its session", _key_outlives_session),
+        Mutation(
+            "C4b", "expiry re-baselines without rotating", _expiry_does_not_rotate
+        ),
     ],
     "C5": [
         Mutation("C5a", "entry signatures not checked", _skip_entry_signature),
         Mutation("C5b", "prev_hash/seq links not checked", _signatures_only),
     ],
-    "C6": [Mutation("C6a", "LEGAL_TRANSITIONS not enforced", _skip_transition_rules)],
+    "C6": [
+        Mutation("C6a", "LEGAL_TRANSITIONS not enforced", _skip_transition_rules),
+        Mutation(
+            "C6b",
+            "state compare-and-set overwrites any state",
+            _state_writes_unchecked,
+        ),
+    ],
     "C7": [
         Mutation("C7a", "transition signature not checked", _skip_transition_signature)
     ],
     "C8": [Mutation("C8a", "consumed assertion ids forgotten", _forget_consumed_ids)],
-    "C10": [Mutation("C10a", "credential validation skipped", _skip_credential_checks)],
+    "C9": [
+        Mutation(
+            "C9a", "service authentication lets any caller in", _any_caller_is_bootstrap
+        ),
+        Mutation(
+            "C9b",
+            "read loads the record before the key check",
+            _read_loads_before_checking,
+        ),
+    ],
+    "C10": [
+        Mutation("C10a", "credential validation skipped", _skip_credential_checks),
+        Mutation(
+            "C10b", "key released without proof of possession", _skip_possession_check
+        ),
+    ],
 }
 _BY_ID = {m.id: m for group in MUTATIONS.values() for m in group}
 
-# C9 has no holding test to mutate (BOLA is xfail today). C11's control is the
-# absence of key material -- there is no switch to flip; its tests carry a
-# positive control (the owner key does open the record) instead.
+# C11's control is the absence of key material -- there is no switch to flip;
+# its tests carry a positive control (the owner key does open the record).
 NOT_MUTATED = {
-    "C9": "no holding test yet (xfail on F34)",
     "C11": "control is the absence of the owner key; covered by a positive control",
 }
 
@@ -233,12 +350,21 @@ NOT_MUTATED = {
 # --- pytest plugin hooks ------------------------------------------------------
 
 
+# Printed when a mutation cannot be applied (e.g. its target was renamed),
+# so the runner reports an error instead of counting the crash as "caught".
+APPLY_FAILED = "P51_MUTATION_APPLY_FAILED"
+
+
 def pytest_configure(config: pytest.Config) -> None:
     global _monkeypatch
     mutation_id = os.environ.get("P51_MUTATION")
     if mutation_id:
         _monkeypatch = pytest.MonkeyPatch()
-        _BY_ID[mutation_id].apply(_monkeypatch)
+        try:
+            _BY_ID[mutation_id].apply(_monkeypatch)
+        except Exception as exc:
+            print(f"{APPLY_FAILED}: {mutation_id}: {exc!r}", file=sys.stderr)
+            raise pytest.UsageError(f"mutation {mutation_id} did not apply") from exc
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
@@ -271,9 +397,22 @@ def _run(nodeid: str, mutation_id: str | None) -> str:
         text=True,
         check=False,
     )
-    if "SKIPPED" in proc.stdout:
-        return "skipped"
-    return "green" if proc.returncode == 0 else "red"
+    return _classify(proc)
+
+
+def _classify(proc: subprocess.CompletedProcess) -> str:
+    """Only "tests failed" (exit 1) counts as caught (review N7).
+
+    Exit 2-5 is an interruption, internal error, usage error or no tests --
+    none of which shows the control mattered.
+    """
+    if APPLY_FAILED in proc.stdout + proc.stderr:
+        return "ERROR (mutation did not apply)"
+    if proc.returncode == 0:
+        return "skipped" if "SKIPPED" in proc.stdout else "green"
+    if proc.returncode == 1:
+        return "red"
+    return f"ERROR (pytest exit {proc.returncode})"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -282,28 +421,44 @@ def main(argv: list[str] | None = None) -> int:
     print("| Claim | Test | Baseline | Mutations (red = caught) |")
     print("|---|---|---|---|")
     decorative = []
+    errors = []
     for claim in wanted:
         if claim in NOT_MUTATED:
             print(f"| {claim} | n/a: {NOT_MUTATED[claim]} | | |")
             continue
         for test in (t for t in tests if t.claim == claim):
             base = _run(test.nodeid, None)
+            if base != "green":
+                # A test that is not green unmutated cannot show anything
+                # about a mutation (review N7).
+                print(f"| {claim} | `{test.nodeid}` | {base} | not run |")
+                if base != "skipped":
+                    errors.append(f"{test.nodeid}: baseline {base}")
+                continue
             results = {m.id: _run(test.nodeid, m.id) for m in MUTATIONS[claim]}
             cells = ", ".join(f"{mid}: {r}" for mid, r in results.items())
             print(f"| {claim} | `{test.nodeid}` | {base} | {cells} |")
-            if base == "green" and "red" not in results.values():
+            errors += [
+                f"{test.nodeid} under {mid}: {r}"
+                for mid, r in results.items()
+                if r.startswith("ERROR")
+            ]
+            if "red" not in results.values():
                 decorative.append(test.nodeid)
     for claim, group in MUTATIONS.items():
         if claim in wanted:
             for m in group:
                 print(f"\n{m.id}: {m.control}", end="")
     print()
+    if errors:
+        print("\nERRORS (not evidence either way):")
+        for line in errors:
+            print(f"  {line}")
     if decorative:
         print("\nDECORATIVE (green under every mutation of its claim):")
         for nodeid in decorative:
             print(f"  {nodeid}")
-        return 1
-    return 0
+    return 1 if decorative or errors else 0
 
 
 if __name__ == "__main__":

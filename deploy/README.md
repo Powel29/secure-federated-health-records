@@ -95,6 +95,30 @@ same dataset themselves (`python -m demo.driver`, `python -m
 deploy.run_scenario`); the authorities, facilities and patient ids are still
 registered.
 
+### Running the scenario against Compose
+
+`python -m deploy.run_scenario` runs on the host and needs two settings that
+Path A does not:
+
+- **`SEED_DATA=false`.** The scenario ingests `rec-001`, which the seed data
+  already uses. Shares are never overwritten (review F4), so a seeded stack
+  answers the scenario's share deposit with 409.
+- **The bootstrap identity.** Every service accepts only signed requests
+  from a root-certified service (ADR-0066). The `pki` job writes every
+  service's key and certificate to `deploy/pki/services/<id>/` (git-ignored);
+  the scenario signs as `deploy/pki/services/bootstrap`, so run it from the
+  repository root on the machine that ran Compose.
+
+```bash
+SEED_DATA=false docker compose -f deploy/docker-compose.yml up --build -d
+python -m deploy.run_scenario
+```
+
+For the TLS profile, add `TLS_ENABLED=true` to both `up` commands and run the
+scenario with `--scheme https`. On Windows, set `PYTHONIOENCODING=utf-8`
+first, or the scenario fails while printing its ✓ marks. Recreate the stack
+without these variables to return to the seeded default.
+
 ## What gets written where
 
 Both paths write `deploy/pki/federation.json` (Path B via a bind-mounted
@@ -132,7 +156,29 @@ TLS stack is running.
 Path A also supports `TLS_ENABLED=true` after certificate generation. Run the
 scenario with `python -m deploy.run_scenario --scheme https`; it uses the same
 trust bundle. As before, start a fresh federation with `SEED_DATA=false` when
-using a scenario/driver that seeds its own records.
+using a scenario/driver that seeds its own records; under Compose, see
+"Running the scenario against Compose" above.
+
+### The store link is TLS too (ADR-0071)
+
+In the TLS profile every connection to Postgres uses `sslmode=verify-full`
+against `wire/certs/trust/store.crt` (set by `deploy.config.configure_transport`),
+so a store without TLS, or with any other certificate, is refused. A
+`DATABASE_URL` carrying a weaker `?sslmode=` is refused too. Compose's `store`
+does this itself (`deploy/store-entrypoint.sh`): with `TLS_ENABLED=true` it
+serves only TLS 1.3 and its `pg_hba` rejects every non-TLS connection. The
+plain profile is unchanged, so P5-5 claim 2 can still read the audit `COMMIT`
+off the plain capture.
+
+For Path A, start the throwaway store through the same script (after
+`python -m wire.tls`, from the repository root):
+
+```bash
+docker run -d --name p08pg -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_DB=ehr -e TLS_ENABLED=true -p 127.0.0.1:55433:5432 -v "$PWD/wire/certs/store:/tls/store:ro" -v "$PWD/deploy/store-entrypoint.sh:/store-entrypoint.sh:ro" --entrypoint sh postgres:16-alpine /store-entrypoint.sh
+```
+
+In Git Bash, prefix it with `MSYS_NO_PATHCONV=1` so the container paths are not
+rewritten. Regenerating certificates means restarting the store as well.
 
 ## Restarts and recovery
 
@@ -157,7 +203,14 @@ ports only on `127.0.0.1`; its trusted-local custodian API and throwaway databas
 must not be exposed to a shared network. This setup does not provide persistent
 key custody or internet-facing authentication.
 
-The timer now mirrors its audited expiry states into the store automatically.
-The existing ADR-0043/0044 limitation remains: rotated ciphertext is not persisted
-because the caller supplies a throwaway re-baseline key. Search expiry is enforced;
-persisted post-expiry DEK rotation is not demonstrated by this deployment.
+The timer mirrors its audited expiry states into the store and, at every
+expiry, runs the full rotation (ADR-0069): a new DEK, policy root, emergency key
+and shares, and a re-derived search index, stored before the record returns to
+baseline. The facility needs `AUTHORITY_URLS` and `CUSTODIAN_URL` for that, and
+the custodian and audit service accept the new shares only while the store shows
+the record `expired`.
+
+Every process has its own service identity (`deploy/pki/services/<id>/`,
+ADR-0066), issued fresh with the rest of the PKI on each run. Each Compose
+container mounts only its own directory; the keys are owner-only and belong to
+the containers' `app` user.

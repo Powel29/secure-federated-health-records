@@ -84,6 +84,10 @@ not clash with a local Postgres already on 5432:
 docker run -d --name p08pg -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_DB=ehr_test -p 55432:5432 postgres:16-alpine
 ```
 
+This store speaks plaintext, which is right for the default (plain) profile.
+The TLS profile (`TLS_ENABLED=true`) refuses it and needs a TLS store instead:
+see `deploy/README.md`, "The store link is TLS too" (ADR-0071).
+
 Apply the store schema (migrations, P0-8):
 
 ```bash
@@ -227,11 +231,11 @@ a request — CONVENTIONS.md §2 rule 8):
 | `FACILITY_URLS` | `facility-a=http://127.0.0.1:8001,facility-b=http://127.0.0.1:8002` | facility nodes (grant submit, discovery, search) |
 | `AUTHORITY_URLS` | `authority-med=http://127.0.0.1:8010,authority-net=http://127.0.0.1:8011` | attribute authorities |
 | `SERVICE_TIMEOUT_SECONDS` | `8` | upstream HTTP timeout |
-| `EMERGENCY_DURATION_SECONDS` | `120` | break-glass time-box (900 for the paper, 60–120 for a demo) |
+| `EMERGENCY_DURATION_SECONDS` | `14400` | four-hour break-glass window; set 60–120 explicitly for a timer demo (ADR-0060) |
 | `PORTAL_DB_HOST` / `PORT` / `NAME` / `USER` / `PASSWORD` | `localhost` / `55432` / `ehr_test` / `postgres` / *(empty)* | Django's own tables (the `portal` schema) |
 | `STORE_DB_USER` / `STORE_DB_PASSWORD` | `portal_ro` / *(empty)* | **read-only** window onto the store tables |
 | `DJANGO_SECRET_KEY` | random per start | set a fixed value in any real deployment |
-| `DJANGO_DEBUG` | `1` | set `0` in production (then set `DJANGO_ALLOWED_HOSTS`) |
+| `DJANGO_DEBUG` | `0` | `deploy.run_portal_demo` sets `1` for the loopback demo; `DJANGO_ALLOWED_HOSTS` defaults to `127.0.0.1,localhost` |
 | `PORTAL_PRODUCT_NAME` | `CUSTOS` | name shown in the UI |
 
 The `store` alias connects as `portal_ro`, which has `SELECT` only on the store

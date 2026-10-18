@@ -13,6 +13,7 @@ import datetime
 import pytest
 from authority.exceptions import UnauthorizedAttributeError
 from authority.issuance import generate_authority, issue_credential, verify_credential
+from authority.revocation import RevocationRegistry
 from contracts import Attribute
 from crypto_core import InvalidSignatureError, generate_ec_keypair
 from identity.certificates import (
@@ -113,14 +114,20 @@ def test_sec_two_authorities_issue_valid_credentials_forgery_rejected() -> None:
     )
 
     # Positive control: both real credentials verify under their own issuer.
-    verify_credential(med_cred, authority_med.public_key)
-    verify_credential(net_cred, authority_net.public_key)
+    verify_credential(
+        med_cred, authority_med.public_key, revocation_registry=RevocationRegistry()
+    )
+    verify_credential(
+        net_cred, authority_net.public_key, revocation_registry=RevocationRegistry()
+    )
 
     # Negative: a credential forged by altering the subject after issuance
     # fails signature verification against the real issuer.
     forged = med_cred.model_copy(update={"subject_id": "dr-attacker"})
     with pytest.raises(InvalidSignatureError):
-        verify_credential(forged, authority_med.public_key)
+        verify_credential(
+            forged, authority_med.public_key, revocation_registry=RevocationRegistry()
+        )
 
     # Negative: an authority cannot mint outside its own attribute namespace.
     with pytest.raises(UnauthorizedAttributeError):

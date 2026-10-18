@@ -32,15 +32,24 @@ import datetime
 import json
 import os
 import sys
+import time
+import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import httpx
+from api.audit_client import _tls_verify
+from api.service_auth import ServiceIdentity, signed_client
+from api.share_transport import fetch_share_key, fetch_share_recipient, sealed_json
 from breakglass import create_emergency_assertion
+from breakglass.assertion import clinical_context_digest
 from breakglass.emergency_key import generate_emergency_key, split_emergency_key
+from breakglass.share_sealing import verify_key_statement
 from contracts.base import GCM_NONCE_BYTES
-from contracts.enums import PolicyNodeType, ReasonCode
+from contracts.clinical import ClinicalMetadata
+from contracts.enums import LifecycleState, PolicyNodeType, ReasonCode
 from contracts.policy import Attribute, PolicyTree
 from crypto_core import (
     certificate_from_pem,
@@ -50,19 +59,23 @@ from crypto_core import (
     private_key_to_pem,
 )
 from crypto_core.symmetric import aes_gcm_decrypt
-from identity.certificates import issue_clinician_certificate
+from identity.certificates import (
+    issue_clinician_certificate,
+    issue_patient_certificate,
+)
+from lifecycle.state_machine import create_transition_event
 from pre.elgamal import decapsulate_key
 from pre.elgamal import generate_keypair as generate_pre_keypair
+from records.labels import sign_clinical_labels
 
 from deploy.config import configure_transport, tls_enabled
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = REPO_ROOT / "deploy" / "pki" / "federation.json"
-
-
-def _tls_verify() -> bool:
-    """Allow the P4-6 local capture harness to use self-signed TLS."""
-    return os.environ.get("TLS_VERIFY", "true").lower() not in {"0", "false", "no"}
+# Where run_local writes every service's identity; the scenario signs as
+# bootstrap (ADR-0066).
+DEFAULT_SERVICES_DIR = REPO_ROOT / "deploy" / "pki" / "services"
+AUDIT_SERVICE_ID = "audit-service"
 
 
 def _unwrap_rewrapped_dek(rewrapped_dek: bytes, pre_priv: int, record_id: str) -> bytes:
@@ -98,13 +111,83 @@ def _parse_ca_credentials(ca_data: object) -> tuple[object, object]:
 
 @dataclass
 class ScenarioEndpoints:
-    """Base URLs for the five federated service processes."""
+    """Base URLs for the federated service processes.
+
+    ``custodian`` holds share 1 of every record (ADR-0043); a script that
+    ingests records deposits share 1 there so the forced rotation at expiry
+    can replace it (ADR-0069).
+    """
 
     authority_med: str = "http://127.0.0.1:8010"
     authority_net: str = "http://127.0.0.1:8011"
     audit: str = "http://127.0.0.1:8020"
     facility_a: str = "http://127.0.0.1:8001"
     facility_b: str = "http://127.0.0.1:8002"
+    custodian: str | None = None
+
+    def recipients(self) -> dict[str, str]:
+        """``{base_url: service_id}`` for a signed client (ADR-0066)."""
+        recipients = {
+            self.authority_med: "authority-med",
+            self.authority_net: "authority-net",
+            self.audit: AUDIT_SERVICE_ID,
+            self.facility_a: "facility-a",
+            self.facility_b: "facility-b",
+        }
+        if self.custodian:
+            recipients[self.custodian] = "custodian"
+        return recipients
+
+
+def signed_scenario_client(
+    endpoints: ScenarioEndpoints, identity: ServiceIdentity, *, timeout: float = 10.0
+) -> httpx.Client:
+    """A client that signs every request to these services as ``identity``."""
+    return signed_client(
+        identity, endpoints.recipients(), timeout=timeout, verify=_tls_verify()
+    )
+
+
+def emergency_open(
+    client: httpx.Client,
+    *,
+    facility_url: str,
+    record_id: str,
+    patient_id: str,
+    clinician_id: str,
+    facility_id: str,
+    clinician_key: object,
+    reason_code: ReasonCode,
+    justification: str,
+    ttl: datetime.timedelta = datetime.timedelta(seconds=300),
+) -> tuple[Any, Any]:
+    """Sign the assertion and the clinician's open transition for one record.
+
+    The assertion's context digest binds the record and justification
+    (the audit service refuses one that does not, ADR-0067); the transition is
+    signed by the clinician from the record's current state (ADR-0068).
+    Returns ``(assertion, transition_event)``.
+    """
+    state = client.get(f"{facility_url}/records/{record_id}/lifecycle")
+    state.raise_for_status()
+    assertion = create_emergency_assertion(
+        patient_id=patient_id,
+        clinician_id=clinician_id,
+        facility_id=facility_id,
+        reason_code=reason_code,
+        signing_key=clinician_key,  # type: ignore[arg-type]
+        ttl=ttl,
+        clinical_context_digest=clinical_context_digest(record_id, justification, ""),
+    )
+    event = create_transition_event(
+        record_id=record_id,
+        from_state=LifecycleState(state.json()["state"]),
+        to_state=LifecycleState.EMERGENCY_OPEN,
+        actor_id=clinician_id,
+        signing_key=clinician_key,  # type: ignore[arg-type]
+        reason_code=reason_code,
+    )
+    return assertion, event
 
 
 def run_scenario(
@@ -114,6 +197,10 @@ def run_scenario(
     emergency_duration_seconds: float = 3.0,
     verbose: bool = True,
     canaries_out: Path | None = None,
+    client: httpx.Client | None = None,
+    search_workload: bool = False,
+    search_spacing_seconds: float | None = None,
+    searches_out: Path | None = None,
 ) -> bool:
     """Execute the full cross-hospital break-glass scenario.
 
@@ -126,6 +213,17 @@ def run_scenario(
             file so the P5-5 wire analyser can search the capture for them
             (ADR-0045). Synthetic, throwaway values -- the file belongs under
             the gitignored ``wire/captures/`` and must never be committed.
+        client: Signs every request as bootstrap (ADR-0066); defaults to the
+            identity ``deploy/run_local.py`` wrote.
+        search_workload: Also run the P5-3 search workload after step 9
+            (:func:`run_search_workload`, ADR-0070). Needs a custodian and an
+            emergency window long enough for the first batch of searches.
+        search_spacing_seconds: Gap between workload searches; defaults to
+            :data:`SEARCH_SPACING_SECONDS`.
+        searches_out: With ``search_workload``, write every workload search
+            (term, outcome, send and answer time) here: the ground truth that
+            labels captured exchanges once the store link is encrypted
+            (ADR-0071). Synthetic terms only; keep it under ``wire/captures/``.
 
     Returns:
         True if all scenario steps succeed and all invariants hold.
@@ -138,7 +236,16 @@ def run_scenario(
                 for line in detail.strip().splitlines():
                     print(f"    {line}")
 
-    client = httpx.Client(timeout=10.0, verify=_tls_verify())
+    if client is None:
+        from deploy.bootstrap import load_service_identity_dir
+
+        client = signed_scenario_client(
+            endpoints, load_service_identity_dir(DEFAULT_SERVICES_DIR, "bootstrap")
+        )
+    # Stamped into the canary manifest so the analyser can refuse a pcap that
+    # predates this run (review N5).
+    started_at = time.time()
+    run_id = uuid.uuid4().hex
 
     # -------------------------------------------------------------------------
     # Step 1: Health & Bootstrap Verification
@@ -165,7 +272,6 @@ def run_scenario(
 
     # Load or generate facility CA and root material
     if config and "root_certificate_pem" in config:
-        root_cert_pem = config["root_certificate_pem"]
         fa_ca_priv, fa_ca_cert = _parse_ca_credentials(
             config["facilities"]["facility-a"]
         )
@@ -176,9 +282,14 @@ def run_scenario(
         from deploy.bootstrap import generate_federation_pki
 
         root_anchor, fed_pki = generate_federation_pki(["facility-a", "facility-b"])
-        root_cert_pem = fed_pki.root_certificate_pem
         fa_ca_priv, fa_ca_cert = _parse_ca_credentials(fed_pki.facilities["facility-a"])
         fb_ca_priv, fb_ca_cert = _parse_ca_credentials(fed_pki.facilities["facility-b"])
+    # Share keys are verified against the federation root (ADR-0079).
+    trusted_root = (
+        certificate_from_pem(config["root_certificate_pem"].encode("ascii"))
+        if config and "root_certificate_pem" in config
+        else root_anchor.certificate
+    )
 
     # Dr. Bob @ Facility A (Cardiologist)
     bob_priv, bob_pub = generate_ec_keypair()
@@ -192,9 +303,12 @@ def run_scenario(
     carol_cert_pem = certificate_to_pem(carol_cert).decode("ascii")
     carol_pre_priv, carol_pre_pub = generate_pre_keypair()
 
-    # Lifecycle signing key for Facility B
-    life_priv, life_pub = generate_ec_keypair()
-    life_priv_pem = private_key_to_pem(life_priv).decode("ascii")
+    # Patient pat-101, certified by home Facility A, signs the record's
+    # clinical labels; unsigned labels would get the strictest rules (ADR-0064).
+    pat_priv, pat_pub = generate_ec_keypair()
+    pat_cert_pem = certificate_to_pem(
+        issue_patient_certificate(fa_ca_priv, fa_ca_cert, "pat-101", pat_pub)
+    ).decode("ascii")
 
     # Issue credentials from Authorities
     # 1. Dr. Bob: role:physician (authority-med) & specialty:cardiology (authority-net)
@@ -305,17 +419,35 @@ def run_scenario(
     share1 = em_shares[0]
     share3 = em_shares[2]
 
-    # Deposit Share 3 with Audit Service
+    # Deposit Share 3 with Audit Service, sealed to its share key (ADR-0079)
+    audit_recipient = fetch_share_recipient(
+        client, endpoints.audit, kind="audit", trusted_root=trusted_root
+    )
     audit_reg_res = client.post(
         f"{endpoints.audit}/breakglass/shares",
         json={
             "share_key": record_id,
-            "x": share3[0],
-            "share_hex": share3[1].hex(),
+            "sealed_share": sealed_json(
+                share3, record_id=record_id, recipient=audit_recipient
+            ),
         },
     )
     audit_reg_res.raise_for_status()
     log(f"  * Share 3 deposited in Audit Service custody for record {record_id}")
+    if endpoints.custodian:
+        # Share 1 in clinician custody, so expiry can rotate it (ADR-0069).
+        custodian = fetch_share_recipient(
+            client, endpoints.custodian, kind="custodian", trusted_root=trusted_root
+        )
+        client.post(
+            f"{endpoints.custodian}/records/{record_id}/shares",
+            json={
+                "sealed_share": sealed_json(
+                    share1, record_id=record_id, recipient=custodian
+                )
+            },
+        ).raise_for_status()
+        log(f"  * Share 1 deposited in clinician custody for record {record_id}")
 
     # Ingest record via Facility A
     ingest_res = client.post(
@@ -329,6 +461,13 @@ def run_scenario(
             "search_terms": ["cardiac", "infarction", "aspirin"],
             "emergency_key_b64": base64.b64encode(emergency_key).decode("ascii"),
             "record_id": record_id,
+            "clinical": sign_clinical_labels(
+                ClinicalMetadata(),
+                record_id=record_id,
+                patient_id="pat-101",
+                signing_key=pat_priv,
+                certificate_pem=pat_cert_pem,
+            ).model_dump(mode="json"),
         },
     )
     ingest_res.raise_for_status()
@@ -402,14 +541,18 @@ def run_scenario(
     assert record_id in discovered_ids
     log(f"  * Discovery located records for patient pat-101: {discovered_ids}")
 
-    # Dr. Carol signs EmergencyAssertion
-    assertion = create_emergency_assertion(
+    # Dr. Carol signs the EmergencyAssertion and the open transition
+    justification = "Unconscious on arrival; medication history needed now."
+    assertion, transition_event = emergency_open(
+        client,
+        facility_url=endpoints.facility_b,
+        record_id=record_id,
         patient_id="pat-101",
         clinician_id="doc-301",
         facility_id="facility-b",
+        clinician_key=carol_priv,
         reason_code=ReasonCode.UNCONSCIOUS_PATIENT,
-        signing_key=carol_priv,
-        ttl=datetime.timedelta(seconds=300),
+        justification=justification,
     )
     log("  * Signed EmergencyAssertion generated for pat-101 (UNCONSCIOUS_PATIENT)")
 
@@ -419,6 +562,11 @@ def run_scenario(
     log("[7/9] Releasing Share 3 from Audit Service & Unlocking...")
     # Request Share 3 release from Audit Service (log-before-release)
     corr_id = "corr-bg-alice-001"
+    # Share 3 is sealed to Facility B's gate (ADR-0079).
+    gate_statement = fetch_share_key(client, endpoints.facility_b)
+    gate = verify_key_statement(
+        gate_statement, trusted_root=trusted_root, kind="facility"
+    )
     release_res = client.post(
         f"{endpoints.audit}/breakglass/release",
         json={
@@ -432,40 +580,42 @@ def run_scenario(
             },
             "actor_id": "audit-service",
             "correlation_id": corr_id,
+            # The audit service validates the assertion itself (ADR-0067).
+            "assertion": assertion.model_dump(mode="json"),
+            "clinician_certificate_pem": carol_cert_pem,
+            "justification": justification,
+            "recipient": gate_statement.model_dump(mode="json"),
         },
     )
     release_res.raise_for_status()
     release_data = release_res.json()
-    rel_x = release_data["x"]
-    rel_share_hex = release_data["share_hex"]
+    rel_sealed = release_data["sealed_share"]
+    rel_x = rel_sealed["x"]
     new_seq = release_data["entry"]["seq"]
     log(
         f"  * Audit Service committed entry to hash chain (new seq={new_seq})\n"
         f"  * Share 3 released: x={rel_x}"
     )
 
-    # Submit 2 shares (Share 1 from Carol + Share 3 from Audit) to Facility B
+    # Submit 2 shares (Share 1 from Carol + Share 3 from Audit) to Facility B,
+    # both sealed to its gate: no share bytes on the wire (ADR-0079).
     shares_payload = [
-        (share1[0], share1[1].hex()),
-        (rel_x, rel_share_hex),
+        sealed_json(share1, record_id=record_id, recipient=gate),
+        rel_sealed,
     ]
 
-    fb_ca_cert_pem = certificate_to_pem(fb_ca_cert).decode("ascii")
-
-    # Baseline wrapping key (the policy root secret) allows EmergencyExpiryManager
-    # to register the active session and re-baseline at expiry.
+    # Carol's own signed transition, not a private key, goes on the wire
+    # (ADR-0068); expiry rotates every key itself (ADR-0069).
     unlock_res = client.post(
         f"{endpoints.facility_b}/records/{record_id}/breakglass",
         json={
             "assertion": assertion.model_dump(mode="json"),
             "clinician_certificate_pem": carol_cert_pem,
-            "facility_ca_certificate_pem": fb_ca_cert_pem,
-            "trusted_root_certificate_pem": root_cert_pem,
-            "shares": shares_payload,
+            "sealed_shares": shares_payload,
             "pre_rewrap_key": carol_pre_pub,
-            "lifecycle_signing_key_pem": life_priv_pem,
+            "transition_event": transition_event.model_dump(mode="json"),
             "correlation_id": corr_id,
-            "baseline_wrapping_key_b64": base64.b64encode(k_physician).decode("ascii"),
+            "justification": justification,
             "emergency_duration_seconds": emergency_duration_seconds,
         },
     )
@@ -489,7 +639,7 @@ def run_scenario(
     log("[8/9] Emergency search under active emergency session...")
     search_res = client.post(
         f"{endpoints.facility_b}/records/{record_id}/emergency-search",
-        json={"search_term": "cardiac"},
+        json={"search_term": "cardiac", "requester_id": "doc-301"},
     )
     if search_res.status_code == 200:
         matched = search_res.json()["record_ids"]
@@ -497,6 +647,30 @@ def run_scenario(
         log(f"  * Emergency search for 'cardiac' matched: {matched}")
     else:
         log(f"  * Emergency search returned status {search_res.status_code}")
+
+    # Revocation crosses the wire too (PROJECT §4A(1): "normal read,
+    # revocation, or break-glass"; review N4). The patient signs the
+    # GRANTED -> REVOKED transition with their own key, as the custodian does
+    # for them (ADR-0080); no private key or DEK is sent. The record is
+    # emergency-open here, so the facility refuses it (409) -- the bytes still
+    # cross the wire for the capture to check.
+    revoke_event = create_transition_event(
+        record_id=record_id,
+        from_state=LifecycleState.GRANTED,
+        to_state=LifecycleState.REVOKED,
+        actor_id="pat-101",
+        signing_key=pat_priv,
+    )
+    revoke_res = client.post(
+        f"{endpoints.facility_a}/records/{record_id}/revoke",
+        json={
+            "transition_event": revoke_event.model_dump(mode="json"),
+            "actor_certificate_pem": pat_cert_pem,
+            "new_clinical_policy": clinical_policy.model_dump(mode="json"),
+            "correlation_id": f"{corr_id}-revoke",
+        },
+    )
+    log(f"  * Revocation request sent; facility answered {revoke_res.status_code}")
 
     # -------------------------------------------------------------------------
     # Step 9: Time-Box Expiry & Full Audit Chain Verification
@@ -513,16 +687,56 @@ def run_scenario(
             f"  * Head Seq: {h_seq}, Verified: {v_status}"
         )
 
+    if search_workload:
+        if not config or "root_certificate_pem" not in config:
+            raise RuntimeError("the search workload needs deploy/pki/federation.json")
+        workload = run_search_workload(
+            client,
+            endpoints,
+            record_id=record_id,
+            federation_config=config,
+            spacing=(
+                SEARCH_SPACING_SECONDS
+                if search_spacing_seconds is None
+                else search_spacing_seconds
+            ),
+            clinician=SearchClinician(
+                clinician_id="doc-301",
+                facility_id="facility-b",
+                signing_key=carol_priv,
+                certificate_pem=carol_cert_pem,
+                pre_keypair=(carol_pre_priv, carol_pre_pub),
+            ),
+            log=log,
+        )
+        if searches_out is not None:
+            searches_out.parent.mkdir(parents=True, exist_ok=True)
+            searches_out.write_text(
+                json.dumps(
+                    {"run_id": run_id, "searches": workload["searches"]}, indent=2
+                ),
+                encoding="utf-8",
+            )
+            log(f"  * Search manifest written to {searches_out}")
+
     if canaries_out is not None:
         _write_canaries(
             canaries_out,
             record_id=record_id,
+            run_id=run_id,
+            started_at=started_at,
             secrets={
                 "record_plaintext": ("phi", plaintext),
                 "dek": ("dek", recovered_dek),
                 "emergency_key": ("emergency_key", emergency_key),
                 "share1": ("share", share1[1]),
                 "share3": ("share", share3[1]),
+                # Not a secret: the sealed share 3 as the audit service sent
+                # it, which claim 2 times against the audit COMMIT (ADR-0079).
+                "share3_sealed": (
+                    "sealed_share",
+                    base64.b64decode(rel_sealed["ciphertext_b64"]),
+                ),
                 "attr_key:authority-med:role:physician": (
                     "attribute_key",
                     k_physician,
@@ -536,10 +750,6 @@ def run_scenario(
                     k_cardio,
                 ),
                 "attr_key:authority-net:owner:pat-101": ("attribute_key", k_owner),
-                "lifecycle_signing_key_pem": (
-                    "private_key",
-                    life_priv_pem.encode("ascii"),
-                ),
                 "clinician_signing_key_pem": (
                     "private_key",
                     private_key_to_pem(carol_priv),
@@ -554,14 +764,273 @@ def run_scenario(
     return True
 
 
+# P5-3 search workload (ADR-0070). Indexed terms are "cardiac", "infarction"
+# and "aspirin"; the rest miss. Repeats measure frequency leakage, hits against
+# misses measure response-size leakage, and the fixed spacing lets the timing
+# an observer recovers be compared with what the client actually did.
+SEARCH_WORKLOAD_OPEN = (
+    "cardiac",
+    "aspirin",
+    "cardiac",
+    "pneumonia",
+    "infarction",
+    "cardiac",
+    "fracture",
+    "aspirin",
+    "cardiac",
+    "warfarin",
+)
+# Searched again after expiry and a second break-glass: the same terms under
+# the rotated emergency key, so their tokens can be compared (ADR-0069).
+SEARCH_WORKLOAD_REOPENED = ("cardiac", "aspirin", "fracture", "cardiac")
+SEARCH_SPACING_SECONDS = 0.5
+
+
+@dataclass(frozen=True)
+class SearchClinician:
+    """The emergency clinician the workload searches as, and re-declares as."""
+
+    clinician_id: str
+    facility_id: str
+    signing_key: object
+    certificate_pem: str
+    pre_keypair: tuple[int, int]
+
+
+def _emergency_search(
+    client: httpx.Client,
+    facility_url: str,
+    record_id: str,
+    term: str,
+    who: str,
+    *,
+    phase: str,
+    searches: list[dict[str, Any]],
+) -> httpx.Response:
+    """One search, recorded in ``searches`` with when it left and was answered.
+
+    The record is ground truth for labelling captured exchanges (ADR-0071),
+    never an observation: what the observer learns still comes off the wire.
+    """
+    sent_at = time.time()
+    res = client.post(
+        f"{facility_url}/records/{record_id}/emergency-search",
+        json={"search_term": term, "requester_id": who},
+    )
+    searches.append(
+        {
+            "phase": phase,
+            "term": term,
+            "status": res.status_code,
+            "record_count": (
+                res.json()["record_count"] if res.status_code == 200 else None
+            ),
+            "sent_at": sent_at,
+            "answered_at": time.time(),
+        }
+    )
+    return res
+
+
+def _search_batch(
+    client: httpx.Client,
+    facility_url: str,
+    record_id: str,
+    clinician_id: str,
+    terms: tuple[str, ...],
+    spacing: float,
+    *,
+    phase: str,
+    searches: list[dict[str, Any]],
+) -> list[tuple[str, int]]:
+    """Run ``terms`` in order, ``spacing`` apart; any non-200 is a failure."""
+    results: list[tuple[str, int]] = []
+    for term in terms:
+        res = _emergency_search(
+            client,
+            facility_url,
+            record_id,
+            term,
+            clinician_id,
+            phase=phase,
+            searches=searches,
+        )
+        if res.status_code != 200:
+            raise RuntimeError(
+                f"workload search {term!r} failed: {res.status_code} {res.text}"
+            )
+        results.append((term, res.json()["record_count"]))
+        time.sleep(spacing)
+    return results
+
+
+def _wait_for_state(
+    client: httpx.Client,
+    facility_url: str,
+    record_id: str,
+    state: LifecycleState,
+    timeout: float,
+) -> None:
+    deadline = time.monotonic() + timeout
+    seen = None
+    while time.monotonic() < deadline:
+        res = client.get(f"{facility_url}/records/{record_id}/lifecycle")
+        res.raise_for_status()
+        seen = res.json()["state"]
+        if seen == state.value:
+            return
+        time.sleep(0.25)
+    raise RuntimeError(f"{record_id} stuck at {seen!r}, expected {state.value!r}")
+
+
+def run_search_workload(
+    client: httpx.Client,
+    endpoints: ScenarioEndpoints,
+    *,
+    record_id: str,
+    clinician: SearchClinician,
+    federation_config: dict[str, Any],
+    log: Callable[[str], None] = print,
+    spacing: float = SEARCH_SPACING_SECONDS,
+    rotation_timeout: float = 60.0,
+) -> dict[str, list[Any]]:
+    """Drive the P5-3 search workload against a running federation (ADR-0070).
+
+    Opt-in and synthetic: it only searches the scenario's own record. Phases:
+
+    1. ``open`` -- :data:`SEARCH_WORKLOAD_OPEN` under the scenario's session.
+    2. wait for the time box to expire and the forced rotation to finish
+       (``granted``, ADR-0069), then search once more: it must be refused (403),
+       or the dead-token property has regressed.
+    3. ``reopened`` -- a second break-glass through the custodian, which alone
+       holds the rotated share 1, then :data:`SEARCH_WORKLOAD_REOPENED`. The
+       custodian gets the federation's public trust anchors and the
+       clinician's synthetic material first, as the portal seed would give it.
+
+    Every request crosses the wire, so the capture -- not this function's
+    return value -- is the evidence; the return value lets a test check the
+    workload did what it says. Its ``searches`` list (term, outcome and
+    timing of every search, the refused one included) is what
+    ``--searches-out`` writes, to label the captured exchanges (ADR-0071).
+    """
+    if not endpoints.custodian:
+        raise RuntimeError("the search workload needs the custodian (rotated share 1)")
+    facility_urls = {
+        "facility-a": endpoints.facility_a,
+        "facility-b": endpoints.facility_b,
+    }
+    open_url = facility_urls[clinician.facility_id]
+    searches: list[dict[str, Any]] = []
+
+    log("[P5-3] Search workload: repeated and distinct emergency searches...")
+    opened = _search_batch(
+        client,
+        open_url,
+        record_id,
+        clinician.clinician_id,
+        SEARCH_WORKLOAD_OPEN,
+        spacing,
+        phase="open",
+        searches=searches,
+    )
+    log(f"  * {len(opened)} searches under the first session: {opened}")
+
+    log("[P5-3] Waiting for expiry and the forced rotation...")
+    _wait_for_state(
+        client, open_url, record_id, LifecycleState.GRANTED, rotation_timeout
+    )
+    refused = _emergency_search(
+        client,
+        open_url,
+        record_id,
+        SEARCH_WORKLOAD_OPEN[0],
+        clinician.clinician_id,
+        phase="expired",
+        searches=searches,
+    )
+    if refused.status_code != 403:
+        raise RuntimeError(
+            f"search after expiry answered {refused.status_code}, expected 403"
+        )
+    log("  * Search after expiry refused (403); the record was re-keyed")
+    time.sleep(spacing)
+
+    log("[P5-3] Second break-glass through the custodian...")
+    audit_key = client.get(f"{endpoints.audit}/public-key")
+    audit_key.raise_for_status()
+    client.put(
+        f"{endpoints.custodian}/trust",
+        json={
+            "root_certificate_pem": federation_config["root_certificate_pem"],
+            "facility_ca_certificate_pems": {
+                fid: ca["ca_certificate_pem"]
+                for fid, ca in federation_config["facilities"].items()
+            },
+            "audit_public_key_pem": audit_key.json()["public_key_pem"],
+        },
+    ).raise_for_status()
+    pre_priv, pre_pub = clinician.pre_keypair
+    client.post(
+        f"{endpoints.custodian}/subjects/{clinician.clinician_id}/material",
+        json={
+            "kind": "clinician",
+            "signing_key_pem": private_key_to_pem(clinician.signing_key).decode(  # type: ignore[arg-type]
+                "ascii"
+            ),
+            "facility_id": clinician.facility_id,
+            "certificate_pem": clinician.certificate_pem,
+            "pre_private_key": pre_priv,
+            "pre_public_key": pre_pub,
+        },
+    ).raise_for_status()
+    declared = client.post(
+        f"{endpoints.custodian}/subjects/{clinician.clinician_id}/breakglass",
+        json={
+            "patient_id": "pat-101",
+            "record_id": record_id,
+            "justification": "Still unresponsive; second look at medication history.",
+            # The scenario's labels count as restricted at the custodian.
+            "sensitive_justification": "Anticoagulant history decides the next step.",
+            "reason_code": ReasonCode.UNCONSCIOUS_PATIENT.value,
+            "facility_id": clinician.facility_id,
+        },
+    )
+    if declared.status_code != 200:
+        raise RuntimeError(
+            f"second break-glass failed: {declared.status_code} {declared.text}"
+        )
+    reopen_url = facility_urls[declared.json()["facility_id"]]
+    log(f"  * Re-declared at {declared.json()['facility_id']}")
+
+    reopened = _search_batch(
+        client,
+        reopen_url,
+        record_id,
+        clinician.clinician_id,
+        SEARCH_WORKLOAD_REOPENED,
+        spacing,
+        phase="reopened",
+        searches=searches,
+    )
+    log(f"  * {len(reopened)} searches under the second session: {reopened}")
+    return {"open": opened, "reopened": reopened, "searches": searches}
+
+
 def _write_canaries(
-    path: Path, *, record_id: str, secrets: dict[str, tuple[str, bytes]]
+    path: Path,
+    *,
+    record_id: str,
+    run_id: str,
+    started_at: float,
+    secrets: dict[str, tuple[str, bytes]],
 ) -> None:
     """Write the run's secrets for the P5-5 canary search (ADR-0045)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     manifest = {
         "warning": "synthetic capture canaries -- never commit this file",
         "record_id": record_id,
+        "run_id": run_id,
+        "started_at": started_at,
         "canaries": {
             name: {"class": cls, "hex": value.hex()}
             for name, (cls, value) in secrets.items()
@@ -584,8 +1053,9 @@ def main() -> int:
     parser.add_argument(
         "--duration",
         type=float,
-        default=5.0,
-        help="Emergency duration time-box in seconds.",
+        default=None,
+        help="Emergency duration time-box in seconds (default 5, or 20 with "
+        "--search-workload so its first batch fits in the window).",
     )
     parser.add_argument(
         "--scheme",
@@ -600,7 +1070,24 @@ def main() -> int:
         help="Write the run's secrets here for the P5-5 wire analyser "
         "(keep under the gitignored wire/captures/).",
     )
+    parser.add_argument(
+        "--search-workload",
+        action="store_true",
+        help="After the scenario, run the P5-3 search workload: repeated and "
+        "distinct searches, one after expiry, more after a second break-glass "
+        "(ADR-0070).",
+    )
+    parser.add_argument(
+        "--searches-out",
+        type=Path,
+        default=None,
+        help="With --search-workload, write each search's term, outcome and "
+        "timing here to label the capture (ADR-0071; keep under wire/captures/).",
+    )
     args = parser.parse_args()
+    duration = args.duration
+    if duration is None:
+        duration = 20.0 if args.search_workload else 5.0
     if args.scheme == "https":
         os.environ["TLS_ENABLED"] = "true"
         configure_transport()
@@ -619,25 +1106,19 @@ def main() -> int:
         audit=f"{scheme}://127.0.0.1:8020",
         facility_a=f"{scheme}://127.0.0.1:8001",
         facility_b=f"{scheme}://127.0.0.1:8002",
+        custodian=f"{scheme}://127.0.0.1:8030",
     )
-
-    if config_data:
-        endpoints = ScenarioEndpoints(
-            authority_med=f"{scheme}://127.0.0.1:8010",
-            authority_net=f"{scheme}://127.0.0.1:8011",
-            audit=f"{scheme}://127.0.0.1:8020",
-            facility_a=f"{scheme}://127.0.0.1:8001",
-            facility_b=f"{scheme}://127.0.0.1:8002",
-        )
 
     print("Executing Cross-Hospital Break-Glass Scenario (P4-4)...")
     try:
         success = run_scenario(
             endpoints,
             config=config_data,
-            emergency_duration_seconds=args.duration,
+            emergency_duration_seconds=duration,
             verbose=True,
             canaries_out=args.canaries_out,
+            search_workload=args.search_workload,
+            searches_out=args.searches_out,
         )
         return 0 if success else 1
     except Exception as exc:

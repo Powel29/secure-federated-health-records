@@ -7,19 +7,21 @@ claim fails.
 
 1. **No plaintext on the wire.** Every secret the scenario handled is searched
    for in every encoding (:mod:`wire.canaries`), and JSON bodies are checked
-   against a denylist of key-carrying fields (review F18). The *scope* is the
-   open team decision D6:
+   against a denylist of key-carrying fields (review F18). The *scope* is
+   decision D6-b (ADR-0073):
 
-   - ``all`` (default): neither capture may expose a secret. This fails today,
-     because the plain profile carries keys, shares and plaintext in bodies --
-     the review's point is that the analyser must say so.
-   - ``tls`` (D6-b): only the TLS capture must be clean; the plain capture then
-     serves as the positive control proving the detector fires.
+   - ``tls`` (default, the claim the paper makes): only the TLS capture must
+     be clean; the plain capture then serves as the positive control proving
+     the detector fires.
+   - ``all``: neither capture may expose a secret. This fails on the plain
+     profile, which still carries plaintext, the DEK and attribute keys in
+     bodies; it reports what an observer of an unencrypted link would see.
 
 2. **Commit-before-release.** In the plain capture, the audit service's
    Postgres ``COMMIT`` for the release entry crosses the wire before the
-   ``/breakglass/release`` response that carries share 3, and share 3 never
-   appears outside custody setup before that response.
+   ``/breakglass/release`` response that carries share 3, sealed to the
+   facility's gate (ADR-0079), and those sealed bytes never appear before
+   that response.
 3. **Search leakage.** The P5-3 profile, computed from the same capture.
 4. **Break-glass is metadata, not content.** The break-glass URI is visible in
    plain mode; in TLS mode an observer can still pick out the exchange from
@@ -29,7 +31,6 @@ claim fails.
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -42,7 +43,15 @@ SECRET_CLASSES = frozenset(
     {"share", "attribute_key", "dek", "emergency_key", "phi", "private_key"}
 )
 BREAKGLASS_CLASSES = frozenset({"share", "emergency_key", "dek"})
-POSITIVE_CONTROL_CLASSES = frozenset({"share", "attribute_key"})
+# Shares travel sealed to their recipient on every profile (ADR-0079), so the
+# plain capture's positive control is the attribute keys it still carries.
+POSITIVE_CONTROL_CLASSES = frozenset({"attribute_key"})
+# Secrets the application layer keeps off the wire whatever the transport:
+# one readable in the plain capture fails claim 1 in either scope.
+APP_LAYER_CLASSES = frozenset({"share"})
+# The sealed share 3 as the audit service released it: not a secret, but the
+# bytes claim 2 times against the audit COMMIT (ADR-0079).
+SEALED_SHARE3_CANARY = "share3_sealed"
 
 # JSON fields that carry key material or plaintext (review F18).
 DENYLISTED_JSON_KEYS = frozenset(
@@ -61,7 +70,6 @@ DENYLISTED_JSON_SUFFIXES = ("_signing_key_pem",)
 CLAIM1_SCOPES = ("all", "tls")
 
 RELEASE_PATH = "/breakglass/release"
-CUSTODY_PATH = "/breakglass/shares"
 DEFAULT_DB_PORT = 5432
 # Postgres CommandComplete for COMMIT: 'C', int32 length 11, "COMMIT\0".
 PG_COMMIT_COMPLETE = b"C\x00\x00\x00\x0bCOMMIT\x00"
@@ -147,9 +155,31 @@ def denylisted_fields(capture: Capture) -> dict[str, list[str]]:
 # ---------------------------------------------------------------------------
 
 
-def check_no_plaintext(plain: Capture, tls: Capture, scope: str = "all") -> ClaimResult:
+def gapped_service_flows(capture: Capture) -> list[str]:
+    """Service-port flows with a lost segment, named for the report (N8)."""
+    return [
+        f"{capture.mode} stream {key.stream} {key.src_port}->{key.dst_port}"
+        for key, flow in capture.flows.items()
+        if flow.gaps and server_port(key, capture.service_ports) is not None
+    ]
+
+
+def check_no_plaintext(plain: Capture, tls: Capture, scope: str = "tls") -> ClaimResult:
     if scope not in CLAIM1_SCOPES:
         raise ValueError(f"claim-1 scope must be one of {CLAIM1_SCOPES}")
+
+    # A lost segment could hide a secret, so "nothing found" is not evidence
+    # for a gapped flow: the claim is inconclusive, which fails (review N8).
+    gapped = gapped_service_flows(plain) + gapped_service_flows(tls)
+    if gapped:
+        return ClaimResult(
+            "1-no-plaintext",
+            False,
+            "strong",
+            f"inconclusive: {len(gapped)} service flow(s) lost segments, so a "
+            "secret could have been missed; recapture",
+            {"gapped_flows": gapped},
+        )
 
     plain_hits = [h for h in plain.hits if h.cls in SECRET_CLASSES]
     tls_hits = [h for h in tls.hits if h.cls in SECRET_CLASSES]
@@ -171,6 +201,18 @@ def check_no_plaintext(plain: Capture, tls: Capture, scope: str = "all") -> Clai
             evidence,
         )
 
+    sealed_breaches = [h for h in plain_hits if h.cls in APP_LAYER_CLASSES]
+    if sealed_breaches:
+        return ClaimResult(
+            "1-no-plaintext",
+            False,
+            "strong",
+            f"{len(_hit_summary(sealed_breaches))} threshold share(s) readable in "
+            "the plain capture: shares must travel sealed on every profile "
+            "(ADR-0079)",
+            evidence,
+        )
+
     if scope == "all":
         if plain_hits or plain_fields:
             return ClaimResult(
@@ -179,8 +221,8 @@ def check_no_plaintext(plain: Capture, tls: Capture, scope: str = "all") -> Clai
                 "strong",
                 f"plain profile exposes {len(_hit_summary(plain_hits))} secret(s) "
                 f"and denylisted fields in {len(plain_fields)} message type(s); "
-                "TLS capture is clean. Claim holds only if narrowed to TLS "
-                "(decision D6) -- rerun with --claim1-scope tls once decided",
+                "TLS capture is clean. The claim is scoped to TLS (D6-b, "
+                "ADR-0073); --claim1-scope tls checks that claim",
                 evidence,
             )
         return ClaimResult(
@@ -280,15 +322,17 @@ def check_commit_before_release(plain: Capture) -> ClaimResult:
             {"status": resp.status},
         )
 
-    custody = [ex.request for ex in plain.exchanges if ex.request.path == CUSTODY_PATH]
-    share3 = [
-        h
-        for h in plain.hits
-        if h.canary == "share3" and not any(_contains(req, h) for req in custody)
-    ]
+    # Share 3 travels sealed to the facility's gate (ADR-0079); its sealed
+    # bytes are unique to this release, so their first appearance is the
+    # moment the audit service let share 3 go.
+    share3 = [h for h in plain.hits if h.canary == SEALED_SHARE3_CANARY]
     if not share3:
         return ClaimResult(
-            name, False, "strong", "share 3 never observed outside custody setup"
+            name,
+            False,
+            "strong",
+            "sealed share 3 never observed (the canary manifest needs "
+            f"{SEALED_SHARE3_CANARY!r}; recapture)",
         )
     first = share3[0]
     if not _contains(resp, first):
@@ -343,7 +387,7 @@ def check_commit_before_release(plain: Capture) -> ClaimResult:
         True,
         "strong",
         f"audit COMMIT acknowledged {lead_ms:.2f} ms before the release response; "
-        "share 3 first appears inside that response",
+        "sealed share 3 first appears inside that response",
         evidence,
     )
 
@@ -389,7 +433,13 @@ def _events_from_exchanges(exchanges: list[Exchange]) -> list[dict[str, Any]]:
 
 
 def search_leakage_rows(plain: Capture) -> list[dict[str, Any]]:
-    """One CSV row per search, with the query hashed, never stored."""
+    """One CSV row per search; each distinct query gets a per-run label.
+
+    The label (``q1``, ``q2``, ...) keeps the leakage analysis -- which
+    searches repeat -- without storing anything reversible. An unsalted hash
+    of a dictionary word such as "cardiac" can be reversed (review N15).
+    """
+    labels: dict[str, str] = {}
     rows = []
     for ex in plain.exchanges:
         if not ex.request.path.endswith(("/search", "/emergency-search")):
@@ -404,7 +454,7 @@ def search_leakage_rows(plain: Capture) -> list[dict[str, Any]]:
                 "frame": ex.request.frame,
                 "timestamp": ex.request.timestamp,
                 "path": ex.request.path,
-                "query_sha256": hashlib.sha256(query.encode("utf-8")).hexdigest(),
+                "query_id": labels.setdefault(query, f"q{len(labels) + 1}"),
                 "request_bytes": len(ex.request.body),
                 "response_status": ex.response.status if ex.response else "",
                 "response_bytes": len(ex.response.body) if ex.response else "",
@@ -421,10 +471,10 @@ def check_search_leakage(plain: Capture) -> ClaimResult:
     rows = search_leakage_rows(plain)
     query_counts: dict[str, int] = {}
     for row in rows:
-        query_counts[row["query_sha256"]] = query_counts.get(row["query_sha256"], 0) + 1
+        query_counts[row["query_id"]] = query_counts.get(row["query_id"], 0) + 1
     evidence = {
         "profile": {k: v for k, v in profile.items() if k != "queries"},
-        "repeated_query_hashes": {h: n for h, n in query_counts.items() if n > 1},
+        "repeated_queries": {q: n for q, n in query_counts.items() if n > 1},
         "rows": rows,
     }
     if not rows:
@@ -523,7 +573,7 @@ def _breakglass_request(capture: Capture) -> HttpMessage | None:
 
 
 def check_breakglass_metadata_only(
-    plain: Capture, tls: Capture, scope: str = "all"
+    plain: Capture, tls: Capture, scope: str = "tls"
 ) -> ClaimResult:
     name = "4-breakglass-metadata-only"
     request = _breakglass_request(plain)
@@ -559,6 +609,21 @@ def check_breakglass_metadata_only(
             "mode, so the TLS identification cannot be trusted",
             evidence,
         )
+    # TLS only adds bytes, so a real unlock under TLS is at least as large as
+    # the plain request. A smaller "largest burst" means the TLS run never
+    # reached the unlock (review N5).
+    plain_request_bytes = request.end - request.start
+    evidence["plain_unlock_request_bytes"] = plain_request_bytes
+    if tls_pick.size < plain_request_bytes:
+        return ClaimResult(
+            name,
+            False,
+            "metadata-only",
+            f"TLS run incomplete: the largest TLS burst to facility-b is "
+            f"{tls_pick.size} bytes, smaller than the {plain_request_bytes}-byte "
+            "plain unlock request",
+            evidence,
+        )
     if content_hits:
         return ClaimResult(
             name,
@@ -579,7 +644,7 @@ def check_breakglass_metadata_only(
     )
 
 
-def run_all(plain: Capture, tls: Capture, scope: str = "all") -> list[ClaimResult]:
+def run_all(plain: Capture, tls: Capture, scope: str = "tls") -> list[ClaimResult]:
     return [
         check_no_plaintext(plain, tls, scope),
         check_commit_before_release(plain),

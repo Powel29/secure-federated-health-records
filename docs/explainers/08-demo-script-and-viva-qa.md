@@ -31,7 +31,7 @@ full name in the family field) to show that even misses are in the chain.
 
 **3. Consent is necessary, not sufficient (1.5 min).** As `house`, request
 consent for `rec-002`. As `david`, approve it. As `house`, open the read:
-**Refused: policy denied**. Say: "The grant is live but House does not hold
+**Refused: policy denied**. Say: "The grant is live but Rao does not hold
 physician + endocrinology, so the key cannot be rebuilt."
 
 **4. The right doctor succeeds (1 min).** Repeat as `cameron`: request, david
@@ -49,7 +49,7 @@ share 2 not requested), the countdown, and run an emergency search
 **7. The evidence (1 min).** As `auditor`: chain **PASS**. Trace the break-glass
 correlation id and show the order: share 3 committed before release,
 re-wrap event, then the two timer transitions. As `david`, show the access
-history and the notification that House opened the record.
+history and the notification that Rao opened the record.
 
 ## What can go wrong live
 
@@ -106,10 +106,13 @@ Phase 6).
 
 14. **What are your known limitations?** Forward-only revocation, trusted timer,
     non-collusion-resistant policy tree, shared custodian in the demo, search
-    leakage, synthetic data (file 7).
+    leakage, synthetic data, local-only deployment with in-memory keys (file 7).
 15. **What did testing find?** Three bugs (patient binding, stale
     emergency-open after expiry, admin page error); fixed with tests; one fix is
-    a stop-gap pending full re-key persistence.
+    a stop-gap pending full re-key persistence. Running each service as its
+    own container then exposed a fourth: cross-facility reads failed because
+    policy and consent lived in one process's memory; now shared through
+    Postgres (ADR-0047).
 16. **What is not done yet?** Benchmarks, search-leakage analysis, final traffic
     assertions over both captures, edge cases, the paper, rehearsal and the
     fallback video.

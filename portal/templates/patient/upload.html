@@ -1,40 +1,46 @@
 {% extends "base.html" %}
 {% block title %}Upload a record · {{ product_name }}{% endblock %}
 {% block content %}
-<div><a class="btn btn-ghost btn-sm" href="{% url 'patient:records' %}">← Back to records</a></div>
+<div><a class="btn btn-ghost btn-sm" href="{% url 'patient:records' %}">{% include "_icon.html" with name="back" %}Back to records</a></div>
 
 <div class="grid-2">
-  <div class="card card-accent">
-    <h3 class="card-title">Upload a record of your own</h3>
-    <div class="small text-muted">The file goes to your key agent, which has the facility encrypt it (AES-256-GCM, one fresh DEK), compile the access policy you choose with your <span class="mono">owner:{{ subject_id }}</span> leaf added, split a 2-of-3 emergency key (share 3 to the audit service), and index the search terms. The portal keeps nothing.</div>
-    <form method="post" enctype="multipart/form-data" class="stack mt-2">
+  <section class="card card-frame" aria-labelledby="up-h">
+    <h2 class="card-title" id="up-h">Upload a record of your own</h2>
+    <p class="small text-muted mb-0">The file goes to your key agent. The facility encrypts it with a fresh key, adds your <span class="mono">owner:{{ subject_id }}</span> key to the access policy you choose, splits a 2-of-3 emergency key and indexes the search terms. The portal keeps nothing.</p>
+    <form method="post" enctype="multipart/form-data" class="stack">
       {% csrf_token %}
-      <div class="field"><label for="file">File (up to {{ max_mb }} MB — PDF, image, JSON or text)</label><input class="input" id="file" type="file" name="file" required></div>
+      <label>Clinical title<input class="input" name="title" maxlength="200" required></label>
+      <label>Clinical event date (leave blank if unknown)<input class="input" type="date" name="clinical_date"></label>
+      <label>Care episode identifier (leave blank if unknown)<input class="input" name="episode_id" maxlength="128"></label>
+      <label>Record type<select class="input" name="record_type"><option value="patient_document">Patient-supplied document</option><option value="laboratory_report">Laboratory report</option><option value="imaging_report">Imaging report</option><option value="discharge_summary">Discharge summary</option></select></label>
+      <label>Sensitivity<select class="input" name="sensitivity"><option value="general">General</option><option value="mental_health">Mental health</option><option value="hiv">HIV</option><option value="substance_use">Substance use</option><option value="restricted">Other restricted information</option></select></label>
+      <div class="field"><label for="file">File</label><input class="input" id="file" type="file" name="file" aria-describedby="file-hint" required><div class="hint" id="file-hint">PDF, image, JSON or text, up to {{ max_mb }} MB.</div></div>
       <div class="form-grid">
         <div class="field">
           <label for="facility">Facility that will hold it</label>
           <select class="input mono" id="facility" name="facility_id">{% for f in facilities %}<option value="{{ f }}" {% if f == facility_id %}selected{% endif %}>{{ f }}</option>{% endfor %}</select>
         </div>
         <div class="field">
-          <label for="preset">Who may read it (clinical branch)</label>
-          <select class="input" id="preset" name="preset">{% for key, label in presets %}<option value="{{ key }}" {% if key == preset %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+          <label for="preset">Who may read it</label>
+          <select class="input" id="preset" name="preset" aria-describedby="preset-hint">{% for key, label in presets %}<option value="{{ key }}" {% if key == preset %}selected{% endif %} title="{{ label }}">{{ label }}</option>{% endfor %}</select>
+          <div class="hint" id="preset-hint">The clinical branch of the policy. Your owner key is always added.</div>
         </div>
       </div>
-      <div class="field"><label for="terms">Search terms (comma-separated; usable only during break-glass)</label><input class="input" id="terms" name="search_terms" value="{{ search_terms }}" placeholder="anticoagulant, echocardiogram, penicillin"></div>
-      <button class="btn btn-primary btn-block" {% if not enrolled %}disabled{% endif %}>Seal and store</button>
+      <div class="field"><label for="terms">Search terms</label><input class="input" id="terms" name="search_terms" value="{{ search_terms }}" placeholder="e.g. anticoagulant, echocardiogram, penicillin" aria-describedby="terms-hint"><div class="hint" id="terms-hint">Comma-separated. Searchable only while a break-glass window is open.</div></div>
+      <button class="btn btn-primary btn-block" {% if not enrolled %}disabled aria-describedby="up-why"{% endif %}>Seal and store</button>
     </form>
-    {% if not enrolled %}<div class="notice notice-info small">No key agent material is held for <span class="mono">{{ subject_id }}</span>, so no owner key can be sealed in. Uploads are refused until an authority issues your owner credential (ADR-0016/0021).</div>{% endif %}
-  </div>
+    {% if not enrolled %}<div class="notice notice-info small" id="up-why" role="status">{% include "_icon.html" with name="info" %}<div>No key agent material is held for <span class="mono">{{ subject_id }}</span>, so no owner key can be sealed in. Uploads are refused until an authority issues your owner credential <span class="mono">(ADR-0016/0021)</span>.</div></div>{% endif %}
+  </section>
 
-  <div class="card">
-    <h3 class="card-title">What is stored, and where</h3>
-    <div class="grid-stats">
-      <div><div class="kicker">Store</div><div class="value">Ciphertext, nonce, wrapped DEK, coded search tokens — never the file</div></div>
-      <div><div class="kicker">Policy</div><div class="value">OR(your chosen clinical branch, owner:{{ subject_id }})</div></div>
-      <div><div class="kicker">Break-glass</div><div class="value">Emergency key split 2-of-3: clinician custody + audit service (log-before-release)</div></div>
-      <div><div class="kicker">This portal</div><div class="value">Nothing — bytes pass through this one request</div></div>
-    </div>
-    <div class="tiny text-muted">A clinician outside the chosen branch can reach the record only by consent you sign, or by a logged, time-boxed break-glass you are notified of.</div>
-  </div>
+  <section class="card" aria-labelledby="where-h">
+    <h2 class="card-title" id="where-h">What is stored, and where</h2>
+    <dl class="facts">
+      <div><dt>Store</dt><dd>Ciphertext, nonce, wrapped key, coded search tokens. Never the file.</dd></div>
+      <div><dt>Policy</dt><dd>OR(your chosen clinical branch, <span class="mono">owner:{{ subject_id }}</span>)</dd></div>
+      <div><dt>Break-glass</dt><dd>Emergency key split 2-of-3: clinician custody and the audit service, which logs before it releases</dd></div>
+      <div><dt>This portal</dt><dd>Nothing. The bytes pass through this one request.</dd></div>
+    </dl>
+    <p class="basis">Routine clinician access requires both your signed grant and the selected clinical policy. The treating-physician preset supports ED and other physicians regardless of specialty. Emergency access requires a logged, time-boxed break-glass. The source is always labelled patient upload, not hospital-authored.</p>
+  </section>
 </div>
 {% endblock %}

@@ -43,6 +43,8 @@ from breakglass import (
     validate_emergency_assertion,
     verify_request_envelope,
 )
+from breakglass.assertion import MAX_ASSERTION_TTL
+from breakglass.exceptions import AssertionLifetimeError
 from contracts.enums import ReasonCode
 from crypto_core import InvalidSignatureError, generate_ec_keypair
 from identity.certificates import (
@@ -110,6 +112,8 @@ def _validate(federation, assertion, **overrides):
         facility_ca_certificate=federation["fa_cert"],
         trusted_root=federation["root"].certificate,
         expected_facility_id="facility-a",
+        consumed_store=ConsumedAssertionIds(),
+        revoked_serials=frozenset(),
     )
     defaults.update(overrides)
     validate_emergency_assertion(**defaults)
@@ -211,6 +215,8 @@ class TestUntrustedCertificate:
                 facility_ca_certificate=evil_fa_cert,
                 trusted_root=federation["root"].certificate,
                 expected_facility_id="facility-a",
+                consumed_store=ConsumedAssertionIds(),
+                revoked_serials=frozenset(),
             )
 
     def test_wrong_signer_rejected(self, federation):
@@ -226,6 +232,8 @@ class TestUntrustedCertificate:
                 facility_ca_certificate=federation["fb_cert"],
                 trusted_root=federation["root"].certificate,
                 expected_facility_id="facility-a",
+                consumed_store=ConsumedAssertionIds(),
+                revoked_serials=frozenset(),
             )
 
 
@@ -269,6 +277,8 @@ class TestClinicianMismatch:
                 facility_ca_certificate=federation["fa_cert"],
                 trusted_root=federation["root"].certificate,
                 expected_facility_id="facility-a",
+                consumed_store=ConsumedAssertionIds(),
+                revoked_serials=frozenset(),
             )
 
 
@@ -290,7 +300,9 @@ class TestFacilityMismatch:
                 clinician_certificate=federation["cl_cert"],
                 facility_ca_certificate=federation["fa_cert"],
                 trusted_root=federation["root"].certificate,
-                expected_facility_id="facility-b",  # wrong facility
+                expected_facility_id="facility-b",  # wrong facility,
+                consumed_store=ConsumedAssertionIds(),
+                revoked_serials=frozenset(),
             )
 
 
@@ -336,7 +348,82 @@ class TestAssertionExpiry:
                 trusted_root=federation["root"].certificate,
                 expected_facility_id="facility-a",
                 at=now,
+                consumed_store=ConsumedAssertionIds(),
+                revoked_serials=frozenset(),
             )
+
+
+class TestAssertionLifetime:
+    """Paper claim (F6): an assertion is short-lived, never a standing permission.
+
+    The maximum lifetime is 15 minutes (ADR-0056); the issue time may be at
+    most 30 seconds in the future to tolerate clock drift.
+    """
+
+    def _assertion(self, federation, issued_at, expires_at):
+        return create_emergency_assertion(
+            patient_id="patient-001",
+            clinician_id="dr-alice",
+            facility_id="facility-a",
+            reason_code=ReasonCode.UNCONSCIOUS_PATIENT,
+            signing_key=federation["cl_priv"],
+            issued_at=issued_at,
+            expires_at=expires_at,
+        )
+
+    def test_assertion_at_the_maximum_lifetime_accepted(self, federation):
+        """Setup is valid: exactly the maximum lifetime passes."""
+        now = datetime.datetime.now(datetime.timezone.utc)
+        _validate(
+            federation,
+            self._assertion(federation, now, now + MAX_ASSERTION_TTL),
+        )
+
+    def test_assertion_with_ten_year_lifetime_rejected(self, federation):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        assertion = self._assertion(
+            federation, now, now + datetime.timedelta(days=3650)
+        )
+        with pytest.raises(AssertionLifetimeError, match="exceeds the maximum"):
+            _validate(federation, assertion)
+
+    def test_assertion_one_second_over_the_maximum_rejected(self, federation):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        assertion = self._assertion(
+            federation,
+            now,
+            now + MAX_ASSERTION_TTL + datetime.timedelta(seconds=1),
+        )
+        with pytest.raises(AssertionLifetimeError):
+            _validate(federation, assertion)
+
+    def test_three_day_assertion_rejected(self, federation):
+        """The old ADR-0049 ceiling is now a standing permission and refused."""
+        now = datetime.datetime.now(datetime.timezone.utc)
+        assertion = self._assertion(federation, now, now + datetime.timedelta(days=3))
+        with pytest.raises(AssertionLifetimeError, match="exceeds the maximum"):
+            _validate(federation, assertion)
+
+    def test_future_dated_assertion_rejected(self, federation):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        assertion = self._assertion(
+            federation,
+            now + datetime.timedelta(minutes=5),
+            now + datetime.timedelta(minutes=10),
+        )
+        with pytest.raises(AssertionLifetimeError, match="in the future"):
+            _validate(federation, assertion)
+
+    def test_rejected_lifetime_does_not_burn_the_assertion_id(self, federation):
+        """A refused assertion's id is not consumed (ADR-0030 ordering)."""
+        now = datetime.datetime.now(datetime.timezone.utc)
+        store = ConsumedAssertionIds()
+        assertion = self._assertion(
+            federation, now, now + datetime.timedelta(days=3650)
+        )
+        with pytest.raises(AssertionLifetimeError):
+            _validate(federation, assertion, consumed_store=store)
+        assert not store.has_seen(assertion.assertion_id)
 
 
 # ---------------------------------------------------------------------------
@@ -396,11 +483,15 @@ class TestEnvelopeSecurity:
             signing_key=priv,
         )
         # Positive control
-        verify_request_envelope(envelope, pub, "audit-service")
+        verify_request_envelope(
+            envelope, pub, "audit-service", consumed_store=ConsumedRequestIds()
+        )
 
         tampered = envelope.model_copy(update={"body": b"evil-payload"})
         with pytest.raises(InvalidSignatureError):
-            verify_request_envelope(tampered, pub, "audit-service")
+            verify_request_envelope(
+                tampered, pub, "audit-service", consumed_store=ConsumedRequestIds()
+            )
 
     def test_tampered_operation_rejected(self):
         priv, pub = generate_ec_keypair()
@@ -413,7 +504,9 @@ class TestEnvelopeSecurity:
         )
         tampered = envelope.model_copy(update={"operation": "grant_admin"})
         with pytest.raises(InvalidSignatureError):
-            verify_request_envelope(tampered, pub, "audit-service")
+            verify_request_envelope(
+                tampered, pub, "audit-service", consumed_store=ConsumedRequestIds()
+            )
 
     def test_tampered_caller_rejected(self):
         priv, pub = generate_ec_keypair()
@@ -426,7 +519,9 @@ class TestEnvelopeSecurity:
         )
         tampered = envelope.model_copy(update={"caller_id": "facility-evil"})
         with pytest.raises(InvalidSignatureError):
-            verify_request_envelope(tampered, pub, "audit-service")
+            verify_request_envelope(
+                tampered, pub, "audit-service", consumed_store=ConsumedRequestIds()
+            )
 
     def test_retargeted_envelope_rejected(self):
         priv, pub = generate_ec_keypair()
@@ -439,7 +534,9 @@ class TestEnvelopeSecurity:
         )
         # Signature is valid but recipient is wrong
         with pytest.raises(EnvelopeRecipientMismatchError):
-            verify_request_envelope(envelope, pub, "authority-med")
+            verify_request_envelope(
+                envelope, pub, "authority-med", consumed_store=ConsumedRequestIds()
+            )
 
     def test_envelope_replay_rejected(self):
         priv, pub = generate_ec_keypair()
@@ -488,4 +585,6 @@ class TestEnvelopeSecurity:
             signing_key=priv,
         )
         with pytest.raises(InvalidSignatureError):
-            verify_request_envelope(envelope, other_pub, "audit")
+            verify_request_envelope(
+                envelope, other_pub, "audit", consumed_store=ConsumedRequestIds()
+            )

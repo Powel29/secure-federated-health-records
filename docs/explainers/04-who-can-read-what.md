@@ -36,7 +36,7 @@ not. It is in the paper's limitations and real CP-ABE is a stretch goal.
 
 ## The screenshot you saw: why `house` was refused on `rec-002`
 
-Dr. House holds `role:emergency-physician` and `specialty:emergency-medicine`.
+Dr. Rao holds `role:emergency-physician` and `specialty:emergency-medicine`.
 `rec-002` needs `physician` AND `endocrinology`. The patient's consent was
 granted, but the policy tree still said no, so nothing was decrypted and the
 denial went into the chain. This is the intended demo of **"consent is

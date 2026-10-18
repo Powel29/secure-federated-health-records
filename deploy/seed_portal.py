@@ -30,9 +30,11 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
-from crypto_core import certificate_to_pem
+from api.share_transport import fetch_share_recipient, sealed_json
+from crypto_core import certificate_from_pem, certificate_to_pem
 
 from demo.seed_data import SyntheticDataset, create_synthetic_dataset
 from deploy.config import configure_transport, tls_enabled
@@ -59,10 +61,17 @@ def deposit_custodian(
     custodian_url: str,
     seed_result: dict[str, Any],
     *,
+    audit_url: str,
     client: httpx.Client | None = None,
 ) -> dict[str, int]:
-    """Deposit trust anchors, per-subject material and share 1s. Returns counts."""
+    """Deposit trust anchors, per-subject material and share 1s. Returns counts.
+
+    The audit service's public key is read here, by the trusted bootstrap, so
+    the custodian can verify every share-release entry it is handed (F31).
+    """
     http = client or httpx.Client(timeout=15.0)
+    audit_key = http.get(f"{audit_url}/public-key")
+    audit_key.raise_for_status()
     facility_ca_pems = {
         fid: certificate_to_pem(cert).decode("ascii")
         for fid, (_priv, cert) in seed_result["facility_cas"].items()
@@ -72,6 +81,7 @@ def deposit_custodian(
         json={
             "root_certificate_pem": seed_result["root_cert_pem"],
             "facility_ca_certificate_pems": facility_ca_pems,
+            "audit_public_key_pem": audit_key.json()["public_key_pem"],
         },
     ).raise_for_status()
 
@@ -102,17 +112,30 @@ def deposit_custodian(
                 "display_name": patient.name,
                 "facility_id": patient.home_facility,
                 "signing_key_pem": meta["private_key_pem"],
+                # Facilities verify the patient's signatures against this
+                # certificate, never a bare key (ADR-0064).
+                "certificate_pem": meta["certificate_pem"],
                 "credentials": meta["credentials"],
             },
         ).raise_for_status()
         subjects += 1
 
+    # Share 1 goes to the custodian sealed to its verified share key (ADR-0079).
+    custodian = fetch_share_recipient(
+        http,
+        custodian_url,
+        kind="custodian",
+        trusted_root=certificate_from_pem(seed_result["root_cert_pem"].encode("ascii")),
+    )
     shares = 0
     for record_id, meta in seed_result["records"].items():
-        x, share_bytes = meta["share1"]
         http.post(
             f"{custodian_url}/records/{record_id}/shares",
-            json={"x": x, "share_hex": share_bytes.hex()},
+            json={
+                "sealed_share": sealed_json(
+                    meta["share1"], record_id=record_id, recipient=custodian
+                )
+            },
         ).raise_for_status()
         shares += 1
 
@@ -217,9 +240,32 @@ def seed_portal_accounts(dataset: SyntheticDataset) -> dict[str, int]:
     return {"users": users, "directory": directory}
 
 
+COMPOSE_ENV = Path(__file__).resolve().parent / ".env"
+
+
+def _use_compose_store_password(database_url: str) -> None:
+    """Take the Compose store password from ``deploy/.env`` when none is given.
+
+    The Compose store requires ``POSTGRES_PASSWORD`` (review N12); a host-side
+    run with a password-less DSN (the documented ``portal-compose`` entry)
+    would otherwise fail to connect. An explicit password always wins.
+    """
+    if urlparse(database_url).password or os.environ.get("PGPASSWORD"):
+        return
+    if not COMPOSE_ENV.is_file():
+        return
+    for line in COMPOSE_ENV.read_text(encoding="utf-8").splitlines():
+        name, _, value = line.partition("=")
+        if name.strip() == "POSTGRES_PASSWORD" and value.strip():
+            os.environ["PGPASSWORD"] = value.strip()
+            return
+
+
 def main(argv: list[str] | None = None) -> int:
     """Seed the portal schema + logins, then serve the portals on localhost."""
     from deploy.run_portal_demo import (
+        PORTAL_APP_PASSWORD,
+        PORTAL_APP_USER,
         STORE_RO_PASSWORD,
         STORE_RO_USER,
         _db_parts,
@@ -244,8 +290,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    # Restarting only the portal must preserve consents and case history.
-    _prepare_portal_schema(database_url, reset=False)
+    _use_compose_store_password(database_url)
     if tls_enabled():
         os.environ.setdefault("CUSTODIAN_URL", "https://127.0.0.1:8030")
         os.environ.setdefault("AUDIT_SERVICE_URL", "https://127.0.0.1:8020")
@@ -257,14 +302,17 @@ def main(argv: list[str] | None = None) -> int:
             "AUTHORITY_URLS",
             "authority-med=https://127.0.0.1:8010,authority-net=https://127.0.0.1:8011",
         )
+    # Before the first store connection: the TLS profile covers it (ADR-0071).
     configure_transport()
+    # Restarting only the portal must preserve consents and case history.
+    _prepare_portal_schema(database_url, reset=False)
     db = _db_parts(database_url)
     env = {
         "PORTAL_DB_HOST": db["host"],
         "PORTAL_DB_PORT": db["port"],
         "PORTAL_DB_NAME": db["name"],
-        "PORTAL_DB_USER": db["user"],
-        "PORTAL_DB_PASSWORD": db["password"],
+        "PORTAL_DB_USER": PORTAL_APP_USER,
+        "PORTAL_DB_PASSWORD": PORTAL_APP_PASSWORD,
         "STORE_DB_USER": STORE_RO_USER,
         "STORE_DB_PASSWORD": STORE_RO_PASSWORD,
         "DJANGO_SETTINGS_MODULE": "config.settings",

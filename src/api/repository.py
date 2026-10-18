@@ -11,7 +11,7 @@ Decouples API orchestration routes from underlying storage engines. Provides:
 from __future__ import annotations
 
 import threading
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 import psycopg
@@ -21,33 +21,51 @@ from contracts.enums import LifecycleState
 from contracts.lifecycle import TransitionEvent
 from contracts.records import DEKWrapping, Record
 from federation.discovery import find_record_ids_by_patient
+from lifecycle.exceptions import StateConflictError
+from lifecycle.rotation import RotationPlan
 from policy.engine import CompiledPolicy
 from psycopg.types.json import Jsonb
+from search.service import SealedSearchTerms
 from storage.policy_codec import decode_policy, encode_policy
 from storage.repositories import (
     consume_id,
+    delete_emergency_session,
     find_records_by_search_term,
     get_chain_head,
     get_dek_wrapping,
     get_lifecycle_state,
     get_record,
+    get_sealed_search_terms,
     get_transition_event,
     has_consumed_id,
     insert_audit_entry,
     insert_dek_wrapping,
+    insert_lifecycle_state,
     insert_record,
     insert_search_term,
     insert_transition_event,
+    list_emergency_sessions,
+    put_sealed_search_terms,
+    replace_search_index,
+    rotate_record_ciphertext,
+    save_emergency_session,
     transition_lifecycle_state,
     upsert_lifecycle_state,
 )
 
 
-class StateConflictError(Exception):
-    """A compare-and-set lost: the record's state was not what the caller expected.
+class RecordExistsError(Exception):
+    """An ingest named a ``record_id`` that is already stored (review F4).
 
-    Two concurrent transitions from the same state must not both succeed
-    (review F12). Callers map this to HTTP 409 and never treat it as success.
+    The API maps this to 409. Overwriting would replace the record while its
+    emergency shares still belong to the old one.
+    """
+
+
+class RotationConflictError(Exception):
+    """The record's ciphertext changed underneath a rotation (ADR-0069).
+
+    Nothing of the rotation was stored; the expiry is retried.
     """
 
 
@@ -78,6 +96,15 @@ class StorageRepository(Protocol):
 
     def get_lifecycle_state(self, record_id: str) -> LifecycleState | None:
         """Get the current lifecycle state of a record."""
+        ...
+
+    def insert_lifecycle_state(
+        self,
+        record_id: str,
+        state: LifecycleState,
+        last_event_id: str | None = None,
+    ) -> None:
+        """Create the first state row; raise StateConflictError if one exists."""
         ...
 
     def upsert_lifecycle_state(
@@ -171,6 +198,45 @@ class StorageRepository(Protocol):
         """Whether a one-time id has been consumed (diagnostics and tests only)."""
         ...
 
+    def put_sealed_search_terms(
+        self, record_id: str, sealed: SealedSearchTerms
+    ) -> None:
+        """Store (or replace) a record's sealed search terms (ADR-0069)."""
+        ...
+
+    def get_sealed_search_terms(self, record_id: str) -> SealedSearchTerms | None:
+        """A record's sealed search terms, or ``None`` if it has none."""
+        ...
+
+    def apply_rotation(self, plan: RotationPlan) -> None:
+        """Store a rotation atomically; a repeat of a stored one is a no-op.
+
+        Replaces the record's ciphertext only if it is still the one the plan
+        rotated, then adds the new wrappings and compiled policy and replaces
+        the search index and sealed terms, all in one transaction.
+
+        Raises:
+            RotationConflictError: The ciphertext is neither the rotated one
+                nor the plan's.
+        """
+        ...
+
+    def save_emergency_session(self, row: dict[str, Any]) -> None:
+        """Record an open emergency session (ADR-0081); no key material.
+
+        Raises:
+            StateConflictError: A session is already recorded for the record.
+        """
+        ...
+
+    def delete_emergency_session(self, record_id: str) -> None:
+        """Forget a finished emergency session; a missing one is fine."""
+        ...
+
+    def list_emergency_sessions(self, facility_id: str) -> list[dict[str, Any]]:
+        """Every open session ``facility_id`` recorded, oldest first."""
+        ...
+
 
 class InMemoryStorageRepository:
     """Thread-safe, fully in-memory repository implementation."""
@@ -181,6 +247,7 @@ class InMemoryStorageRepository:
         self.wrappings: dict[str, DEKWrapping] = {}
         self.record_wrappings: dict[str, list[DEKWrapping]] = {}
         self.lifecycle_states: dict[str, LifecycleState] = {}
+        self.lifecycle_last_event_ids: dict[str, str | None] = {}
         self.transition_events: dict[str, TransitionEvent] = {}
         self.audit_log: list[AuditEntry] = []
         self.search_index: list[tuple[str, bytes]] = []
@@ -188,6 +255,8 @@ class InMemoryStorageRepository:
         self.consent_requests: dict[UUID, ConsentRequest] = {}
         self.consent_grants: dict[UUID, ConsentGrant] = {}
         self.consumed_ids: set[tuple[str, UUID]] = set()
+        self.sealed_search_terms: dict[str, SealedSearchTerms] = {}
+        self.emergency_sessions: dict[str, dict[str, Any]] = {}
 
     def get_record(self, record_id: str) -> Record | None:
         with self._lock:
@@ -228,8 +297,24 @@ class InMemoryStorageRepository:
         state: LifecycleState,
         last_event_id: str | None = None,
     ) -> None:
+        """Overwrite the state. Test seeding only (review N1)."""
         with self._lock:
             self.lifecycle_states[record_id] = state
+            self.lifecycle_last_event_ids[record_id] = last_event_id
+
+    def insert_lifecycle_state(
+        self,
+        record_id: str,
+        state: LifecycleState,
+        last_event_id: str | None = None,
+    ) -> None:
+        with self._lock:
+            if record_id in self.lifecycle_states:
+                raise StateConflictError(
+                    f"record {record_id!r} already has a lifecycle state"
+                )
+            self.lifecycle_states[record_id] = state
+            self.lifecycle_last_event_ids[record_id] = last_event_id
 
     def transition_lifecycle_state(
         self,
@@ -245,6 +330,7 @@ class InMemoryStorageRepository:
                     f"record {record_id!r} is {current}, expected {expected}"
                 )
             self.lifecycle_states[record_id] = new
+            self.lifecycle_last_event_ids[record_id] = last_event_id
 
     def consume_once(self, kind: str, item_id: UUID) -> bool:
         with self._lock:
@@ -327,6 +413,58 @@ class InMemoryStorageRepository:
                 if grant.patient_id == patient_id
             ]
 
+    def put_sealed_search_terms(
+        self, record_id: str, sealed: SealedSearchTerms
+    ) -> None:
+        with self._lock:
+            self.sealed_search_terms[record_id] = sealed
+
+    def get_sealed_search_terms(self, record_id: str) -> SealedSearchTerms | None:
+        with self._lock:
+            return self.sealed_search_terms.get(record_id)
+
+    def apply_rotation(self, plan: RotationPlan) -> None:
+        record_id = plan.record.record_id
+        with self._lock:
+            current = self.records.get(record_id)
+            if current is not None and current.nonce == plan.record.nonce:
+                return  # already stored by an earlier attempt
+            if current is None or current.nonce != plan.previous_nonce:
+                raise RotationConflictError(
+                    f"record {record_id!r} changed underneath its rotation"
+                )
+            self.records[record_id] = plan.record
+            self.insert_dek_wrapping(plan.baseline_wrapping)
+            self.insert_dek_wrapping(plan.emergency_wrapping)
+            self.compiled_policies[plan.record.policy_id] = plan.compiled_policy
+            self.search_index = [
+                (rid, term) for rid, term in self.search_index if rid != record_id
+            ] + [(record_id, token) for token in plan.search_tokens]
+            if plan.sealed_search_terms is not None:
+                self.sealed_search_terms[record_id] = plan.sealed_search_terms
+
+    def save_emergency_session(self, row: dict[str, Any]) -> None:
+        with self._lock:
+            if row["record_id"] in self.emergency_sessions:
+                raise StateConflictError(
+                    f"an emergency session is already recorded for "
+                    f"{row['record_id']!r}"
+                )
+            self.emergency_sessions[row["record_id"]] = dict(row)
+
+    def delete_emergency_session(self, record_id: str) -> None:
+        with self._lock:
+            self.emergency_sessions.pop(record_id, None)
+
+    def list_emergency_sessions(self, facility_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = [
+                dict(row)
+                for row in self.emergency_sessions.values()
+                if row["facility_id"] == facility_id
+            ]
+        return sorted(rows, key=lambda row: row["opened_at"])
+
 
 class PostgresStorageRepository:
     """PostgreSQL storage repository backed by ``storage.repositories``."""
@@ -338,7 +476,12 @@ class PostgresStorageRepository:
         return get_record(self._conn, record_id)
 
     def insert_record(self, record: Record) -> None:
-        insert_record(self._conn, record)
+        try:
+            insert_record(self._conn, record)
+        except psycopg.errors.UniqueViolation as exc:
+            raise RecordExistsError(
+                f"record {record.record_id!r} already exists"
+            ) from exc
 
     def get_dek_wrapping(self, wrapping_id: str) -> DEKWrapping | None:
         return get_dek_wrapping(self._conn, wrapping_id)
@@ -379,6 +522,17 @@ class PostgresStorageRepository:
         last_event_id: str | None = None,
     ) -> None:
         upsert_lifecycle_state(self._conn, record_id, state, last_event_id)
+
+    def insert_lifecycle_state(
+        self,
+        record_id: str,
+        state: LifecycleState,
+        last_event_id: str | None = None,
+    ) -> None:
+        if not insert_lifecycle_state(self._conn, record_id, state, last_event_id):
+            raise StateConflictError(
+                f"record {record_id!r} already has a lifecycle state"
+            )
 
     def transition_lifecycle_state(
         self,
@@ -469,3 +623,45 @@ class PostgresStorageRepository:
             "SELECT payload FROM consent_grants WHERE patient_id = %s", (patient_id,)
         ).fetchall()
         return [ConsentGrant.model_validate(row[0]) for row in rows]
+
+    def put_sealed_search_terms(
+        self, record_id: str, sealed: SealedSearchTerms
+    ) -> None:
+        put_sealed_search_terms(self._conn, record_id, sealed.ciphertext, sealed.nonce)
+
+    def get_sealed_search_terms(self, record_id: str) -> SealedSearchTerms | None:
+        row = get_sealed_search_terms(self._conn, record_id)
+        return SealedSearchTerms(ciphertext=row[0], nonce=row[1]) if row else None
+
+    def apply_rotation(self, plan: RotationPlan) -> None:
+        record_id = plan.record.record_id
+        with self._conn.transaction():
+            if not rotate_record_ciphertext(
+                self._conn, plan.record, expected_nonce=plan.previous_nonce
+            ):
+                current = get_record(self._conn, record_id)
+                if current is not None and current.nonce == plan.record.nonce:
+                    return  # already stored by an earlier attempt
+                raise RotationConflictError(
+                    f"record {record_id!r} changed underneath its rotation"
+                )
+            insert_dek_wrapping(self._conn, plan.baseline_wrapping)
+            insert_dek_wrapping(self._conn, plan.emergency_wrapping)
+            self.store_compiled_policy(plan.record.policy_id, plan.compiled_policy)
+            replace_search_index(self._conn, record_id, list(plan.search_tokens))
+            if plan.sealed_search_terms is not None:
+                self.put_sealed_search_terms(record_id, plan.sealed_search_terms)
+
+    def save_emergency_session(self, row: dict[str, Any]) -> None:
+        try:
+            save_emergency_session(self._conn, row)
+        except psycopg.errors.UniqueViolation as exc:
+            raise StateConflictError(
+                f"an emergency session is already recorded for {row['record_id']!r}"
+            ) from exc
+
+    def delete_emergency_session(self, record_id: str) -> None:
+        delete_emergency_session(self._conn, record_id)
+
+    def list_emergency_sessions(self, facility_id: str) -> list[dict[str, Any]]:
+        return list_emergency_sessions(self._conn, facility_id)

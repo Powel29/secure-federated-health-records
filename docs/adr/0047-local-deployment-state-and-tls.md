@@ -56,7 +56,7 @@ classifying an emergency-open record as stuck.
   the bundle. Directory mounts, not file mounts, because Docker turns a missing
   file mount into an empty directory when TLS certificates were never generated.
   The certificate SANs already include the Compose hostnames.
-- **Store mirror failure.** If the store write after a committed expiry audit entry
+- **Store mirror failure** *(superseded by ADR-0050: the mirror moved into the expiry manager as a compare-and-set, and a failure is retried rather than logged and dropped).* If the store write after a committed expiry audit entry
   fails, it is logged at ERROR and not raised, because raising stops the expiry
   monitor thread (review F20). Access is already closed past `expires_at`, and the
   facility reconciles the stale `emergency_open` on its next state read (ADR-0044).

@@ -1,4 +1,4 @@
-"""Certificate issuance for facility CAs, authorities, and clinicians (C5).
+"""Certificate issuance for facility CAs, authorities, clinicians, services (C5).
 
 One generic signer (:func:`issue_certificate`) backs three role-specific
 helpers so every issued certificate in the federation goes through the same
@@ -25,6 +25,20 @@ def _common_name(cert: Certificate) -> str:
 DEFAULT_FACILITY_VALID_DAYS = 3650  # facility CAs are long-lived, like the root
 DEFAULT_AUTHORITY_VALID_DAYS = 3650  # attribute authorities are long-lived too
 DEFAULT_CLINICIAN_VALID_DAYS = 365  # ARCHITECTURE.md §8: credentials must expire
+DEFAULT_PATIENT_VALID_DAYS = 365  # patient identity certificates expire too
+DEFAULT_SERVICE_VALID_DAYS = 365  # one deployment's lifetime, re-issued at bootstrap
+
+# Subject OU of a patient certificate. A clinician certificate carries none, so
+# neither can stand in for the other (ADR-0064).
+PATIENT_ROLE = "patient"
+
+# Subject OU of a federation service certificate is ``service:<kind>``
+# (ADR-0066). The kind decides which endpoints of another service it may call;
+# the CN is the service id its signed requests carry.
+SERVICE_ROLE_PREFIX = "service:"
+SERVICE_KINDS = frozenset(
+    {"facility", "custodian", "audit", "authority", "portal", "bootstrap"}
+)
 
 
 def issue_certificate(
@@ -35,6 +49,7 @@ def issue_certificate(
     subject_common_name: str,
     valid_days: int,
     is_ca: bool = False,
+    subject_role: str | None = None,
 ) -> Certificate:
     """Issue a certificate signed by ``issuer_private_key``.
 
@@ -47,6 +62,8 @@ def issue_certificate(
             clinician id).
         valid_days: Validity window length in days, starting now.
         is_ca: Whether the subject may itself sign certificates.
+        subject_role: Optional role recorded in the subject's OU (e.g.
+            :data:`PATIENT_ROLE`).
 
     Returns:
         The signed certificate.
@@ -59,6 +76,7 @@ def issue_certificate(
         issuer_common_name=issuer_common_name,
         valid_days=valid_days,
         is_ca=is_ca,
+        subject_role=subject_role,
     )
 
 
@@ -159,4 +177,82 @@ def issue_clinician_certificate(
         subject_common_name=clinician_id,
         valid_days=valid_days,
         is_ca=False,
+    )
+
+
+def issue_patient_certificate(
+    facility_ca_private_key: ECPrivateKey,
+    facility_ca_certificate: Certificate,
+    patient_id: str,
+    patient_public_key: ECPublicKey,
+    valid_days: int = DEFAULT_PATIENT_VALID_DAYS,
+) -> Certificate:
+    """Issue a patient certificate, signed by the patient's home facility CA.
+
+    The same issuance path as a clinician's (ADR-0064), marked with
+    :data:`PATIENT_ROLE`, so a facility can verify a patient's signature (on
+    record labels or a consent decision) against a key it has certified rather
+    than one a caller hands it.
+
+    Args:
+        facility_ca_private_key: The home facility CA's private key.
+        facility_ca_certificate: The home facility CA's own certificate.
+        patient_id: The patient's identifier.
+        patient_public_key: The patient's own signing public key.
+        valid_days: Validity window length in days, starting now.
+
+    Returns:
+        The patient's leaf certificate (``is_ca=False``, OU ``patient``).
+    """
+    return issue_certificate(
+        issuer_private_key=facility_ca_private_key,
+        issuer_certificate=facility_ca_certificate,
+        subject_public_key=patient_public_key,
+        subject_common_name=patient_id,
+        valid_days=valid_days,
+        is_ca=False,
+        subject_role=PATIENT_ROLE,
+    )
+
+
+def issue_service_certificate(
+    root: RootAnchor,
+    service_id: str,
+    kind: str,
+    service_public_key: ECPublicKey,
+    valid_days: int = DEFAULT_SERVICE_VALID_DAYS,
+) -> Certificate:
+    """Issue a federation service's identity certificate, signed by the root.
+
+    The certificate a service presents with every signed request it sends
+    (ADR-0066, review D5-a): the callee checks it chains to the federation
+    root, reads the caller's id from the CN and its kind from the OU, and
+    verifies the request's signature against its key. Signed by the root
+    directly, like an authority certificate, so no facility CA can mint a
+    service identity.
+
+    Args:
+        root: The federation's root anchor.
+        service_id: The service's identifier, e.g. ``"facility-a"`` or
+            ``"custodian"``.
+        kind: One of :data:`SERVICE_KINDS`.
+        service_public_key: The service's request-signing public key.
+        valid_days: Validity window length in days, starting now.
+
+    Returns:
+        The service's leaf certificate (``is_ca=False``, OU ``service:<kind>``).
+
+    Raises:
+        ValueError: ``kind`` is not a known service kind.
+    """
+    if kind not in SERVICE_KINDS:
+        raise ValueError(f"unknown service kind {kind!r}")
+    return issue_certificate(
+        issuer_private_key=root.private_key,
+        issuer_certificate=root.certificate,
+        subject_public_key=service_public_key,
+        subject_common_name=service_id,
+        valid_days=valid_days,
+        is_ca=False,
+        subject_role=SERVICE_ROLE_PREFIX + kind,
     )

@@ -41,12 +41,16 @@ from typing import Any
 
 import httpx
 import psycopg
+from api.audit_client import _tls_verify
+from api.hospital import FacilityTrust
+from api.service_auth import ServiceIdentity, signed_client
 from contracts import Facility
 from contracts.enums import FacilityStatus
 from crypto_core import (
     certificate_from_pem,
     certificate_to_pem,
     generate_ec_keypair,
+    private_key_from_pem,
     private_key_to_pem,
     public_key_from_pem,
     public_key_to_pem,
@@ -54,6 +58,7 @@ from crypto_core import (
 from identity.certificates import (
     issue_authority_certificate,
     issue_facility_ca_certificate,
+    issue_service_certificate,
 )
 from identity.root_anchor import RootAnchor, generate_root_anchor
 from psycopg.conninfo import conninfo_to_dict
@@ -61,6 +66,7 @@ from storage.migrate import apply_migrations, reset_schema
 from storage.repositories import insert_authority, insert_facility, insert_patient
 
 from demo.seed_data import create_synthetic_dataset, seed_synthetic_data
+from deploy.config import env_flag
 from deploy.run_scenario import ScenarioEndpoints
 from deploy.seed_portal import deposit_custodian
 
@@ -69,9 +75,30 @@ class BootstrapError(RuntimeError):
     """The bootstrap sequence could not complete -- fail closed, start nothing."""
 
 
+# Every federation process's service id and kind (ADR-0066). Each gets a
+# root-issued certificate at bootstrap and signs every request it sends.
+SERVICE_IDENTITIES: dict[str, str] = {
+    "authority-med": "authority",
+    "authority-net": "authority",
+    "audit-service": "audit",
+    "facility-a": "facility",
+    "facility-b": "facility",
+    "custodian": "custodian",
+    "portal": "portal",
+    "bootstrap": "bootstrap",
+}
+AUDIT_SERVICE_ID = "audit-service"
+SERVICE_KEY_FILE = "service.key"
+SERVICE_CERT_FILE = "service.crt"
+
+
 def _http_verify() -> bool:
-    """Return whether HTTPS certificate verification is enabled."""
-    return os.environ.get("TLS_VERIFY", "true").lower() not in {"0", "false", "no"}
+    """Whether HTTPS certificates are verified: always, except the capture gate.
+
+    A lone ``TLS_VERIFY=false`` no longer turns verification off (review
+    N14); only the double-gated capture escape hatch of ADR-0042 does.
+    """
+    return _tls_verify()
 
 
 @dataclass(frozen=True)
@@ -93,7 +120,7 @@ class FederationPKI:
 
 def seed_enabled() -> bool:
     """Whether bootstrap step 6 seeds the synthetic dataset (``SEED_DATA``)."""
-    return os.environ.get("SEED_DATA", "true").lower() not in {"0", "false", "no"}
+    return env_flag("SEED_DATA", default=True)
 
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
@@ -179,6 +206,155 @@ def generate_federation_pki(
     return root, pki
 
 
+def issue_service_identities(
+    root: RootAnchor, services: dict[str, str] | None = None
+) -> dict[str, ServiceIdentity]:
+    """Issue each service its request-signing key and root certificate (ADR-0066).
+
+    Args:
+        root: The federation root anchor.
+        services: ``service_id -> kind``; defaults to :data:`SERVICE_IDENTITIES`.
+    """
+    identities: dict[str, ServiceIdentity] = {}
+    for service_id, kind in (services or SERVICE_IDENTITIES).items():
+        key, public_key = generate_ec_keypair()
+        certificate = issue_service_certificate(root, service_id, kind, public_key)
+        identities[service_id] = ServiceIdentity(
+            service_id=service_id,
+            kind=kind,
+            signing_key=key,
+            certificate_pem=certificate_to_pem(certificate).decode("ascii"),
+        )
+    return identities
+
+
+def write_service_identities(
+    directory: Path, identities: dict[str, ServiceIdentity]
+) -> None:
+    """Write ``<directory>/<service_id>/service.key|service.crt`` per service.
+
+    Each service mounts or reads only its own directory. The key files are
+    private key material and live under the git-ignored ``deploy/pki/``.
+    """
+    for service_id, identity in identities.items():
+        target = directory / service_id
+        target.mkdir(parents=True, exist_ok=True)
+        key_path = target / SERVICE_KEY_FILE
+        key_path.write_bytes(private_key_to_pem(identity.signing_key))
+        try:
+            key_path.chmod(0o600)
+        except OSError:
+            pass  # best effort on filesystems without POSIX modes
+        (target / SERVICE_CERT_FILE).write_text(identity.certificate_pem, "ascii")
+
+
+def load_service_identity_dir(directory: Path, service_id: str) -> ServiceIdentity:
+    """Load what :func:`write_service_identities` wrote for ``service_id``."""
+    target = directory / service_id
+    return ServiceIdentity.from_pem(
+        key_pem=(target / SERVICE_KEY_FILE).read_bytes(),
+        certificate_pem=(target / SERVICE_CERT_FILE).read_bytes(),
+    )
+
+
+def service_env(directory: Path, service_id: str, trust_dir: Path) -> dict[str, str]:
+    """The environment that points a service process at its identity files."""
+    return {
+        "SERVICE_KEY_FILE": str(directory / service_id / SERVICE_KEY_FILE),
+        "SERVICE_CERT_FILE": str(directory / service_id / SERVICE_CERT_FILE),
+        "FEDERATION_ROOT_CERT": str(trust_dir / "root.crt"),
+    }
+
+
+def bootstrap_client(
+    identity: ServiceIdentity,
+    *,
+    authorities: dict[str, str],
+    facilities: dict[str, str],
+    audit: str,
+    custodian: str | None = None,
+    timeout: float = 15.0,
+) -> httpx.Client:
+    """A client that signs every request as ``identity`` to these services."""
+    recipients = {
+        **{url: aid for aid, url in authorities.items()},
+        **{url: fid for fid, url in facilities.items()},
+        audit: AUDIT_SERVICE_ID,
+        **({custodian: "custodian"} if custodian else {}),
+    }
+    return signed_client(identity, recipients, timeout=timeout, verify=_http_verify())
+
+
+def facility_trust(pki: FederationPKI) -> FacilityTrust:
+    """The break-glass trust anchors an in-process facility is configured with.
+
+    For the standalone demo and tests, which build facility apps in-process
+    instead of reading :func:`write_trust_bundle`'s files (review F1).
+    """
+    return FacilityTrust(
+        root=certificate_from_pem(pki.root_certificate_pem.encode("ascii")),
+        facility_cas={
+            facility_id: certificate_from_pem(f.ca_certificate_pem.encode("ascii"))
+            for facility_id, f in pki.facilities.items()
+        },
+    )
+
+
+def write_trust_bundle(directory: Path, pki: FederationPKI) -> None:
+    """Write the public break-glass trust anchors facilities load at startup (F1).
+
+    ``<directory>/root.crt`` plus ``<directory>/facility-cas/<id>.crt``.
+    Certificates only -- no private key goes here, so this directory is what
+    the facility containers mount.
+    """
+    cas = directory / "facility-cas"
+    cas.mkdir(parents=True, exist_ok=True)
+    for stale in cas.glob("*.crt"):
+        stale.unlink()
+    (directory / "root.crt").write_text(pki.root_certificate_pem, encoding="ascii")
+    for facility_id, facility in pki.facilities.items():
+        (cas / f"{facility_id}.crt").write_text(
+            facility.ca_certificate_pem, encoding="ascii"
+        )
+
+
+def save_federation_pki(path: Path, root: RootAnchor, pki: FederationPKI) -> None:
+    """Persist the generated PKI for the Compose bootstrap job to load.
+
+    Compose generates the PKI in a one-shot job *before* the facilities start
+    (they need the trust anchors at startup, F1), but bootstrap needs the
+    root key later to sign authority certificates. The file holds private
+    keys and lives under the git-ignored ``deploy/pki/``, like
+    ``federation.json``.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "root_private_key_pem": private_key_to_pem(root.private_key).decode("ascii"),
+        "root_certificate_pem": pki.root_certificate_pem,
+        "facilities": {fid: asdict(f) for fid, f in pki.facilities.items()},
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def load_federation_pki(path: Path) -> tuple[RootAnchor, FederationPKI]:
+    """Load what :func:`save_federation_pki` wrote."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    private_key = private_key_from_pem(payload["root_private_key_pem"].encode("ascii"))
+    certificate = certificate_from_pem(payload["root_certificate_pem"].encode("ascii"))
+    root = RootAnchor(
+        private_key=private_key,
+        public_key=private_key.public_key(),
+        certificate=certificate,
+    )
+    pki = FederationPKI(
+        root_certificate_pem=payload["root_certificate_pem"],
+        facilities={
+            fid: FacilityPKI(**fields) for fid, fields in payload["facilities"].items()
+        },
+    )
+    return root, pki
+
+
 def wait_for_health(
     base_url: str, *, timeout: float = 30.0, interval: float = 0.5
 ) -> None:
@@ -210,7 +386,12 @@ def wait_for_health(
 
 
 def register_authority(
-    base_url: str, root: RootAnchor, authority_id: str, *, timeout: float = 10.0
+    base_url: str,
+    root: RootAnchor,
+    authority_id: str,
+    *,
+    client: httpx.Client,
+    timeout: float = 10.0,
 ) -> str:
     """Bootstrap step 3: fetch an authority's public key, sign it, register it back.
 
@@ -219,6 +400,7 @@ def register_authority(
         root: The federation's root anchor.
         authority_id: The authority's identifier (must match how the
             service itself was started, e.g. ``"authority-med"``).
+        client: Signs the registration as bootstrap (ADR-0066).
         timeout: Per-request HTTP timeout in seconds.
 
     Returns:
@@ -233,11 +415,10 @@ def register_authority(
     certificate = issue_authority_certificate(root, authority_id, public_key)
     certificate_pem = certificate_to_pem(certificate).decode("ascii")
 
-    resp = httpx.put(
+    resp = client.put(
         f"{base_url}/certificate",
         json={"certificate_pem": certificate_pem},
         timeout=timeout,
-        verify=_http_verify(),
     )
     resp.raise_for_status()
     return certificate_pem
@@ -295,7 +476,11 @@ def populate_registry(
 
 
 def seed_federation(
-    endpoints: ScenarioEndpoints, config: dict[str, Any], custodian_url: str
+    endpoints: ScenarioEndpoints,
+    config: dict[str, Any],
+    custodian_url: str,
+    *,
+    client: httpx.Client,
 ) -> str:
     """Bootstrap step 6b: ingest the synthetic dataset and fill the custodian.
 
@@ -306,12 +491,15 @@ def seed_federation(
         endpoints: The five federation services' base URLs.
         config: The payload from :func:`write_federation_config`.
         custodian_url: The key custodian's base URL.
+        client: Signs every seeding request as bootstrap (ADR-0066).
 
     Returns:
         A one-line summary for the bootstrap log.
     """
-    seed = seed_synthetic_data(endpoints, config)
-    counts = deposit_custodian(custodian_url, seed)
+    seed = seed_synthetic_data(endpoints, config, client=client)
+    counts = deposit_custodian(
+        custodian_url, seed, audit_url=endpoints.audit, client=client
+    )
     return (
         f"{len(seed['records'])} records ingested; custodian holds "
         f"{counts['subjects']} subjects and {counts['shares']} clinician shares"

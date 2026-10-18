@@ -1,71 +1,108 @@
 {% extends "base.html" %}
 {% block title %}{{ case.case_number }} · Emergency session · {{ product_name }}{% endblock %}
+{% block flow_marker %}<div class="flow-marker">{% include "_icon.html" with name="route" %}<span>Following flow <span class="cid" title="{{ case.correlation_id }}">{{ case.correlation_id|truncatechars:28 }}</span></span></div>{% endblock %}
 {% block content %}
-{# At expiry, navigate (GET) to this case -- never reload: a reload of the declare response would re-POST it and declare again. #}
-{% if case.status == "open" %}<script>document.body.setAttribute("data-reload-on-expiry", "{% url 'clinician:case_detail' case.pk %}");</script>{% endif %}
-{% if just_opened %}<script>history.replaceState(null, "", "{% url 'clinician:case_detail' case.pk %}");</script>{% endif %}
-<div><a class="btn btn-ghost btn-sm" href="{% url 'clinician:cases' %}">← All emergency sessions</a></div>
+<p><a href="{% url 'clinician:breakglass' %}">Open another record for this patient</a> · <a href="{% url 'clinician:note' case.pk %}">Write clinical note</a> · <a href="{% url 'clinician:encounter' %}">Manage encounter</a></p>
+{% url 'clinician:case_detail' case.pk as case_url %}
+{% if case.status == "open" %}<script>document.body.setAttribute("data-reload-on-expiry", "{{ case_url|escapejs }}");</script>{% endif %}
+{% if just_opened %}<script>if (window.history && history.replaceState) { history.replaceState(null, "", "{{ case_url|escapejs }}"); }</script>{% endif %}
+<div><a class="btn btn-ghost btn-sm" href="{% url 'clinician:cases' %}">{% include "_icon.html" with name="back" %}All emergency sessions</a></div>
 
-{% if just_opened %}
-<div class="notice notice-success">Break-glass opened. Two of three shares reconstructed the emergency key; the DEK reached your key agent through the PRE delivery package; the record's lifecycle moved to <span class="mono">emergency_open</span>. The patient has been notified.</div>
+{% if just_opened and unlock.joined %}
+<div class="notice notice-success" role="status">{% include "_icon.html" with name="check" %}<div>Joined the emergency session already open on this record. Two of three shares reconstructed the emergency key and the audit entry was written first; the window is the existing one, not extended. The patient has been notified.</div></div>
+{% elif just_opened %}
+<div class="notice notice-success" role="status">{% include "_icon.html" with name="check" %}<div>Break-glass opened. Two of three shares reconstructed the emergency key; the record key reached your key agent through the PRE delivery package; the record's lifecycle moved to <span class="mono">emergency_open</span>. The patient has been notified.</div></div>
 {% endif %}
+{% if view_error %}<div class="notice notice-error" role="alert">{% include "_icon.html" with name="x" %}<div>{{ view_error }}</div></div>{% endif %}
+<div class="notice notice-emergency" id="expiry-banner" role="status" hidden>{% include "_icon.html" with name="clock" %}<div><strong>Window closed.</strong> The key was rotated back to baseline and the search token is dead. This page reloads in 5 seconds.</div></div>
 
-<div class="card">
-  <div class="flex between gap-4 baseline">
-    <div>
-      <h3 class="card-title">Threshold collection · 2 of 3</h3>
-      <div class="small text-muted mono mt-2">{{ case.case_number }} · record {{ case.record_id }} · patient {{ case.patient_id }}{% if directory %} ({{ directory.full_name }}){% endif %} · declared at {{ case.facility_id }} · reason {{ case.reason_code }}</div>
-      <div class="small text-muted mono">correlation {{ case.correlation_id }}{% if case.assertion_id %} · assertion {{ case.assertion_id|truncatechars:13 }}{% endif %}</div>
-    </div>
-    <div class="right">
-      <div class="kicker">Emergency window</div>
-      {% if case.status == "open" %}<div class="clock" data-countdown="{{ case.expires_at|date:'c' }}">--:--</div>
+<div class="callpoint-row">
+  <section class="callpoint {% if case.status == 'expired' %}is-reset{% elif case.status != 'open' %}is-failed{% endif %}" aria-labelledby="cp-h">
+    <div class="callpoint-label" id="cp-h">{% include "_icon.html" with name="glass" %}{% if case.status == "open" %}Break glass · open{% elif case.status == "expired" %}Reset · key rotated{% else %}Failed closed{% endif %}</div>
+    <div class="callpoint-pane">
+      {% if case.status == "open" %}<div class="clock" role="timer" aria-label="Emergency window remaining" data-countdown="{{ case.expires_at|date:'c' }}">--:--</div>
       {% elif case.status == "expired" %}<div class="clock dead">00:00</div>
-      {% else %}<div class="clock dead">—</div>{% endif %}
-    </div>
-  </div>
-
-  <div class="grid-3 mt-4">
-    {% for s in share_cards %}
-      <div class="share {% if s.held %}held{% endif %}">
-        <div class="flex between baseline"><span class="kicker">{{ s.kicker }}</span><span class="tag {% if s.held %}tag-accent{% else %}tag-neutral{% endif %}">{{ s.state }}</span></div>
-        <div class="who">{{ s.who }}</div>
-        <div class="note">{{ s.note }}</div>
-        {% if s.x %}<div class="mono tiny text-muted mt-2">x = {{ s.x }}</div>{% endif %}
-      </div>
-    {% endfor %}
-  </div>
-
-  <div class="flex gap-4 mt-4" style="padding-top:var(--space-4);border-top:1px solid var(--color-divider)">
-    <div class="grow" style="min-width:260px">
-      {% if case.status == "open" %}<div class="verdict ok">Threshold met · emergency key reconstructed · record EMERGENCY-OPEN</div>
+      {% else %}<div class="clock dead">--:--</div>{% endif %}
+      {% if case.status == "open" %}<div class="verdict open">Threshold met · emergency key reconstructed · record EMERGENCY-OPEN</div>
       {% elif case.status == "expired" %}<div class="verdict">Window closed · forced rotation back to baseline · search tokens dead</div>
       {% else %}<div class="verdict bad">Failed closed · {{ case.failure_reason }}</div>{% endif %}
+      {% if case.audit_entry_seq %}<span class="tag {% if case.status == 'open' %}tag-emergency{% else %}tag-quiet{% endif %}">Audit entry written before share 3 · seq {{ case.audit_entry_seq }}</span>{% endif %}
     </div>
-    {% if case.audit_entry_seq %}<span class="tag tag-dark">audit head written before share 3 · seq {{ case.audit_entry_seq }}</span>{% endif %}
-  </div>
+  </section>
+
+  <section class="threshold" aria-labelledby="th-h">
+    <h2 class="card-title" id="th-h">Threshold collection · 2 of 3</h2>
+    <div class="case-meta">
+      <span class="mono">{{ case.case_number }}</span>
+      <span>record <span class="mono">{{ case.record_id }}</span></span>
+      <span>patient <span class="mono">{{ case.patient_id }}</span>{% if directory %} ({{ directory.full_name }}){% endif %}</span>
+      <span>declared at <span class="mono">{{ case.facility_id }}</span></span>
+      <span>reason {{ case.reason_code|humanize_code }}</span>
+    </div>
+    <div class="case-meta"><span class="cid">{% include "_icon.html" with name="route" %}{{ case.correlation_id }}</span>{% if case.assertion_id %}<span class="mono">assertion {{ case.assertion_id|truncatechars:13 }}</span>{% endif %}</div>
+    <div class="shares">
+      {% for s in share_cards %}
+        <div class="share {% if s.held %}held{% endif %}">
+          <div class="flex between baseline"><span class="kicker">{{ s.kicker }}</span><span class="tag {% if s.held %}tag-accent{% else %}tag-neutral{% endif %}">{{ s.state }}</span></div>
+          <div class="who">{{ s.who }}</div>
+          <div class="note">{{ s.note }}</div>
+          {% if s.x %}<div class="mono tiny text-muted mt-2">x = {{ s.x }}</div>{% endif %}
+        </div>
+      {% endfor %}
+    </div>
+  </section>
 </div>
 
-{% if plaintext %}
-<div class="card card-emergency">
+{% if plaintext or record_uri %}
+<section class="card card-frame" aria-labelledby="pt-h">
   <div class="subhead">
-    <h3 class="card-title card-title-lg">Decrypted record · shown once</h3>
-    <span class="tag tag-accent">this response only</span>
+    <h2 class="card-title" id="pt-h">Decrypted record</h2>
+    <span class="tag tag-emergency">Not stored</span>
   </div>
-  <pre class="plaintext">{{ plaintext }}</pre>
-  <div class="tiny text-muted">The DEK was recovered by your key agent from the PRE delivery package and the ciphertext decrypted for this response. The portal stores nothing; reloading this page will not show it again. Rotation at expiry makes the emergency wrapping useless.</div>
-</div>
+  <p class="mb-0">Shown whenever you open this case while the window is open. The portal stores nothing; each time the page loads, the access is logged before the key is released.</p>
+  {% include "clinician/_record_body.html" %}
+  <p class="basis">Your key agent recovered the record key from the PRE delivery package and decrypted the ciphertext for this response. Rotation at expiry makes the emergency wrapping useless.</p>
+</section>
 {% endif %}
 
 <div class="grid-2">
-  {% include "clinician/_search_card.html" %}
-
-  <div class="card">
+  <section class="card" aria-labelledby="es-h">
     <div class="subhead">
-      <h3 class="card-title">Chain segment · <span class="mono" style="font-size:15px">{{ case.correlation_id|truncatechars:24 }}</span></h3>
-      <span class="tag tag-outline">{{ entries|length }} entries</span>
+      <h2 class="card-title" id="es-h">Emergency search</h2>
+      {% if case.status == "open" %}<span class="tag tag-emergency">{{ search_state|default:"Token live" }}</span>{% else %}<span class="tag tag-expired">{{ search_state|default:"Token dead" }}</span>{% endif %}
     </div>
-    {% if store_error %}<div class="notice notice-error small">{{ store_error }}</div>{% endif %}
+    <p class="small text-muted mb-0">Search tokens derive from the emergency key (HKDF). They exist only while the record is EMERGENCY-OPEN and die at expiry.</p>
+    <form method="post" action="{% url 'clinician:case_detail' case.pk %}">
+      {% csrf_token %}
+      <fieldset class="flex" {% if case.status != "open" %}disabled{% endif %}>
+        <label for="es-term" class="sr-only">Search term</label>
+        <input class="input grow" id="es-term" type="text" name="search_term" value="{{ search_term|default:'' }}" placeholder="e.g. anticoagulant" list="search-vocabulary" style="min-width:200px">
+        <button class="btn btn-primary nowrap">Search this record</button>
+      </fieldset>
+      {% if case.status != "open" %}<p class="tiny text-muted mt-2 mb-0">Search closed with the window: the key that derives tokens was rotated away.</p>{% endif %}
+    </form>
+    <datalist id="search-vocabulary">{% for t in search_vocabulary %}<option value="{{ t }}">{% endfor %}</datalist>
+    {% if case.status == "open" %}<form method="post" action="{% url 'clinician:federated_search' case.pk %}">{% csrf_token %}
+      <label>Search term across this patient's open records<input class="input" name="search_term" list="search-vocabulary" required></label>
+      <p class="hint">Searches every record you currently hold open for this patient, at any facility. It opens nothing new: records not yet opened are listed as unsearched. Close misspellings and listed synonyms are searched too; this is not full-text or semantic search.</p>
+      <button class="btn btn-primary">Search all open records</button>
+    </form>{% endif %}
+    {% if search_error %}<div class="notice notice-error small" role="alert">{% include "_icon.html" with name="x" %}<div>{{ search_error }}</div></div>{% endif %}
+    {% if search_results is not None %}
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>Record</th><th>Matched on</th><th>How</th></tr></thead>
+        <tbody>{% for rid in search_results %}<tr><td class="mono">{{ rid }}</td><td class="mono small">HKDF(emergency key, term) for {{ search_terms|join:", " }}</td><td class="small">Coded-index equality; the store never reads contents</td></tr>
+        {% empty %}<tr><td colspan="3" class="empty">No indexed record matches this term.</td></tr>{% endfor %}</tbody></table></div>
+    {% endif %}
+  </section>
+
+  <section class="card" aria-labelledby="cs-h">
+    <div class="subhead">
+      <h2 class="card-title" id="cs-h">Chain segment</h2>
+      <span class="tag tag-trace">{{ entries|length }} entries</span>
+    </div>
+    <div class="cid">{% include "_icon.html" with name="route" %}{{ case.correlation_id|truncatechars:40 }}</div>
+    {% if store_error %}<div class="notice notice-error small" role="alert">{% include "_icon.html" with name="x" %}<div>{{ store_error }}</div></div>{% endif %}
     <div class="chain">
       <div class="chain-head"><span class="seq">Seq</span><span class="head">Head</span><span class="ev">Event</span></div>
       {% for e in entries %}
@@ -77,36 +114,6 @@
         <div class="chain-row"><span class="ev">No entries readable for this correlation id.</span></div>
       {% endfor %}
     </div>
-  </div>
+  </section>
 </div>
-
-<script>
-// In-page search: swap only the search card, so a search never reloads the
-// page and never drops a decrypted record shown above it. Without JS the
-// form still posts and the page re-renders as before.
-document.addEventListener("submit", function (ev) {
-  var form = ev.target;
-  if (!form.hasAttribute("data-inplace-search")) return;
-  ev.preventDefault();
-  var button = form.querySelector("button");
-  if (button) button.disabled = true;
-  fetch(form.action, {
-    method: "POST",
-    body: new FormData(form),
-    headers: { "X-Requested-With": "fetch" },
-    credentials: "same-origin",
-  })
-    .then(function (resp) {
-      if (!resp.ok) throw new Error(resp.status);
-      return resp.text();
-    })
-    .then(function (html) {
-      var card = document.getElementById("emergency-search");
-      card.outerHTML = html;
-      var input = document.querySelector("#emergency-search input[name=search_term]");
-      if (input) input.focus();
-    })
-    .catch(function () { form.submit(); });
-});
-</script>
 {% endblock %}

@@ -29,6 +29,19 @@ class AssertionExpiredError(BreakglassError):
     """
 
 
+class AssertionLifetimeError(BreakglassError):
+    """The assertion's lifetime is too long or it is dated in the future.
+
+    ``expires_at - issued_at`` must not exceed the configured maximum, and
+    ``issued_at`` must not be later than now plus the allowed clock skew (F6).
+    A long-lived assertion would be a standing permission, not an emergency.
+    """
+
+
+class CertificateRevokedError(BreakglassError):
+    """The presenting clinician's certificate serial is on the revoked list (F1)."""
+
+
 class ClinicianMismatchError(BreakglassError):
     """``assertion.clinician_id`` does not match the presenting certificate's CN.
 
@@ -80,6 +93,21 @@ class EnvelopeRecipientMismatchError(BreakglassError):
     """
 
 
+class EnvelopeOperationMismatchError(BreakglassError):
+    """``envelope.operation`` names another method or path than the request's.
+
+    An envelope signed for one endpoint must not authorize another (ADR-0066).
+    """
+
+
+class EnvelopeExpiredError(BreakglassError):
+    """``envelope.issued_at`` is too old, or too far in the future (ADR-0066).
+
+    Bounds how long a captured request stays usable if a callee's
+    consumed-id store is lost, e.g. on a restart of an in-memory store.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Emergency unlock gate (P3-5)
 # ---------------------------------------------------------------------------
@@ -92,4 +120,19 @@ class InsufficientSharesError(BreakglassError):
     any single custodian's share alone -- including the audit service's) does
     not satisfy the 2-of-3 threshold. No single party can open a record
     unilaterally (ARCHITECTURE.md §8).
+    """
+
+
+# ---------------------------------------------------------------------------
+# Share transport (ADR-0079)
+# ---------------------------------------------------------------------------
+
+
+class SealedShareError(BreakglassError):
+    """A sealed share or a share-key statement does not check out.
+
+    The statement is not signed by a root-issued service certificate of the
+    expected kind, or a sealed share does not open for this recipient and
+    record (wrong key, wrong recipient, wrong record, or tampered). Fail
+    closed: the share is never used.
     """

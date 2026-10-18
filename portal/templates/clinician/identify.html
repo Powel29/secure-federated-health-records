@@ -1,26 +1,35 @@
 {% extends "base.html" %}
 {% block title %}Identify patient · {{ product_name }}{% endblock %}
 {% block content %}
+<p><a href="{% url 'clinician:encounter' %}">Register unidentified arrival</a> · <a href="{% url 'clinician:downtime' %}">Downtime procedure</a></p>
+{% if next != "consent" %}
+<ol class="steps" aria-label="Break-glass steps">
+  <li class="step now" aria-current="step"><span class="label">1 · Identify</span><strong>Find the patient by name and date of birth</strong></li>
+  <li class="step todo"><span class="label">2 · Locate records</span><strong>Run federated discovery</strong></li>
+  <li class="step todo"><span class="label">3 · Declare</span><strong>Sign the emergency assertion</strong></li>
+</ol>
+{% endif %}
+
 <div class="grid-2">
-  <div class="card">
-    <h3 class="card-title">Identify patient</h3>
-    <div class="small text-muted">Name + date of birth against the portal directory (ADR-0033). Identification is not authorisation: choosing a match releases no key. Every lookup — hit or miss — is written to the audit chain before its results are shown.</div>
-    <form method="post" class="stack mt-2">
+  <section class="card card-frame" aria-labelledby="id-h">
+    <h2 class="card-title" id="id-h">Identify patient</h2>
+    <p class="small text-muted mb-0">Name and date of birth against the portal directory <span class="mono">(ADR-0033)</span>. Identification is not authorisation: choosing a match releases no key. Every lookup, hit or miss, is written to the audit chain before its results are shown.</p>
+    <form method="post" class="stack">
       {% csrf_token %}
       <input type="hidden" name="next" value="{{ next }}">
       <div class="form-grid">
-        <div class="field"><label for="fam">Family name</label><input class="input" id="fam" name="family_name" value="{{ family_name|default:'' }}" required autofocus></div>
-        <div class="field"><label for="dob">Date of birth</label><input class="input mono" id="dob" name="date_of_birth" type="date" value="{{ date_of_birth|default:'' }}" required></div>
+        <div class="field"><label for="fam">Family name or single name</label><input class="input" id="fam" name="family_name" value="{{ family_name|default:'' }}" autofocus></div>
+        <div class="field"><label for="dob">Date of birth (leave blank if unknown)</label><input class="input mono" id="dob" name="date_of_birth" type="date" value="{{ date_of_birth|default:'' }}"></div>
       </div>
-      <div class="field"><label for="giv">Given name (optional, narrows ambiguous matches)</label><input class="input" id="giv" name="given_name" value="{{ given_name|default:'' }}"></div>
-      <button class="btn btn-secondary btn-block">Search directory</button>
+      <div class="field"><label for="giv">Given name <span class="text-muted">(optional)</span></label><input class="input" id="giv" name="given_name" value="{{ given_name|default:'' }}" aria-describedby="giv-hint"><div class="hint" id="giv-hint">Narrows an ambiguous match.</div></div>
+      <button class="btn btn-primary btn-block">Search directory</button>
     </form>
 
     {% if candidates is not None %}
-    <div class="mt-4" style="padding-top:var(--space-3);border-top:1px solid var(--color-divider)">
-      <div class="flex between kicker">
-        <span>{{ candidates|length }} candidate{{ candidates|length|pluralize }} — none auto-selected</span>
-        <span>lookup logged · seq {{ lookup_seq }}</span>
+    <div class="mt-2" style="padding-top:var(--s-4);border-top:var(--frame)">
+      <div class="flex between">
+        <h3 class="mb-0">{{ candidates|length }} candidate{{ candidates|length|pluralize }} — none auto-selected</h3>
+        <span class="tag tag-trace">Lookup logged · seq {{ lookup_seq }}</span>
       </div>
       {% for c in candidates %}
         <form method="post" action="{% url 'clinician:select_candidate' %}">
@@ -28,26 +37,26 @@
           <input type="hidden" name="patient_id" value="{{ c.subject_id }}">
           <input type="hidden" name="next" value="{{ next }}">
           <button class="candidate" type="submit">
-            <div class="name">{{ c.given_name }} {{ c.family_name }}</div>
-            <div class="ids">DOB {{ c.date_of_birth|date:"Y-m-d" }} · {{ c.subject_id }}{% if c.home_facility_id %} · home {{ c.home_facility_id|upper }}{% endif %}{% if c.home_authority_id %} · authority {{ c.home_authority_id|upper }}{% endif %}</div>
+            <div class="name">{{ c.given_name }} {{ c.family_name }}</div><p>{{ c.locality|default:"Locality unknown" }} · {{ c.identifier_hint|default:"Additional identifier unavailable" }} · {% if c.is_minor %}Minor{% elif c.is_minor == None %}Age unknown{% else %}Adult{% endif %}</p><p>Suggested match only. Verify two independent identifiers with local records or a reliable source before selecting.</p>
+            <div class="ids">DOB {{ c.date_of_birth|date:"Y-m-d" }} · {{ c.subject_id }}{% if c.home_facility_id %} · home {{ c.home_facility_id }}{% endif %}{% if c.home_authority_id %} · authority {{ c.home_authority_id }}{% endif %}</div>
           </button>
         </form>
       {% empty %}
-        <div class="empty mt-2">No directory match. The miss is in the chain (<span class="mono">{{ correlation_id }}</span>); nothing was carried forward.</div>
+        <p class="empty mt-2">No directory match. The miss is in the chain (<span class="cid">{{ correlation_id }}</span>); nothing was carried forward. Check the spelling and date of birth.</p>
       {% endfor %}
-      {% if candidates|length > 1 %}<div class="notice notice-info small mt-3">Ambiguous match: {{ candidates|length }} people share this name and date of birth. All are shown; you must choose — the portal never picks for you.</div>{% endif %}
+      {% if candidates|length > 1 %}<div class="notice notice-info small mt-3" role="status">{% include "_icon.html" with name="alert" %}<div><strong>Ambiguous match:</strong> {{ candidates|length }} people match this search, including close spellings and aliases. All are shown; you must choose. The portal never picks for you.</div></div>{% endif %}
     </div>
     {% endif %}
-  </div>
+  </section>
 
-  <div class="card card-strong">
-    <h3 class="card-title">What happens next</h3>
-    <ol class="small" style="padding-left:18px;line-height:1.8">
-      <li>Select one candidate; the selection is logged as a second <span class="mono">patient.lookup</span> entry under the same correlation id.</li>
-      <li>The resolved <span class="mono">patient_id</span> is carried into {% if next == "consent" %}a signed <span class="mono">ConsentRequest</span>{% else %}the signed <span class="mono">EmergencyAssertion</span>{% endif %} — you cannot retype it.</li>
+  <section class="card" aria-labelledby="next-h">
+    <h2 class="card-title" id="next-h">What happens next</h2>
+    <ol class="small" style="padding-left:20px;line-height:1.7;margin:0">
+      <li>Select one candidate. The selection is logged as a second <span class="mono">patient.lookup</span> entry under the same correlation id.</li>
+      <li>The resolved <span class="mono">patient_id</span> is carried into {% if next == "consent" %}a signed <span class="mono">ConsentRequest</span>{% else %}the signed <span class="mono">EmergencyAssertion</span>{% endif %}. You cannot retype it.</li>
       <li>{% if next == "consent" %}The patient signs a decision; only a <span class="mono">GRANTED</span> grant plus a satisfied policy tree releases a key.{% else %}Federated discovery finds the sealed records; the 2-of-3 threshold gate, not this page, decides whether they open.{% endif %}</li>
     </ol>
-    <div class="tiny text-muted">PII (name, DOB) lives only in this portal's database; the encrypted store holds opaque identifiers only (ADR-0011).</div>
-  </div>
+    <p class="basis">Name and date of birth live only in this portal's database; the encrypted store holds opaque identifiers <span class="ref">ADR-0011</span>.</p>
+  </section>
 </div>
 {% endblock %}

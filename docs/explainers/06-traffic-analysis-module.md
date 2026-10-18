@@ -18,6 +18,12 @@ profile so that, if the capture shows no patient data, the credit goes to our
 | `capture-plain` | plain HTTP between services | the evidence |
 | `capture-tls` | TLS | defence in depth |
 
+The TLS profile uses **verified** certificates (ADR-0047). `python -m wire.tls`
+writes one key directory per service plus a shared trust bundle
+(`wire/certs/trust/ca-bundle.crt`); every federation client trusts that bundle,
+and no `verify=false` is used anywhere. In Compose each container mounts only
+its own key. Turn it on with `TLS_ENABLED=true`.
+
 ## The four things the analysers must prove
 
 1. **No plaintext on the wire.** No patient data, data keys, attribute keys or
@@ -45,9 +51,10 @@ python -m wire.analyze_traffic --captures wire/captures
 ```
 
 On Windows pass the Npcap loopback adapter (`tshark -D` to list it). The
-capture harness and TLS profile exist (P4-6, ADR-0042); the full assertion run
-over both captures is **Phase 5 (P5-5)**, so describe it as built-but-pending
-final evidence unless you have run it.
+capture harness (P4-6, ADR-0042) and the analyser that asserts all four claims
+(P5-5, ADR-0045, negative tests in CI) exist. The run over real captures of
+both profiles is the remaining P5-5 evidence, so describe it as built-but-pending
+unless you have run it yourself.
 
 ## If asked "why not another module?"
 

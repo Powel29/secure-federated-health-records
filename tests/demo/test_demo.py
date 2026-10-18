@@ -58,7 +58,7 @@ def test_synthetic_dataset_structure_and_zero_phi():
 
     for p in dataset.patients:
         assert isinstance(p, SyntheticPatient)
-        assert p.name in {"Alice Vance", "David Miller", "Emma Watson"}
+        assert p.name in {"Alice Vance", "David Miller", "Emma Hartwell"}
         assert p.blood_type in {"O+", "A-", "B+"}
         assert p.home_facility in {"facility-a", "facility-b"}
         assert p.owner_authority == "authority-net"
@@ -149,7 +149,9 @@ def test_seed_synthetic_data_integration():
         endpoints = fed["endpoints"]
         config = fed["config"]
 
-        seeded = seed_synthetic_data(endpoints=endpoints, config=config, verbose=True)
+        seeded = seed_synthetic_data(
+            endpoints=endpoints, config=config, client=fed["client"], verbose=True
+        )
 
         assert "dataset" in seeded
         assert "records" in seeded
@@ -163,7 +165,7 @@ def test_seed_synthetic_data_integration():
         assert rec1_meta["share3"][0] == 3
         assert isinstance(rec1_meta["share3"][1], bytes)
         assert len(rec1_meta["share3"][1]) > 0
-        assert rec1_meta["search_terms_indexed"] == 5
+        assert rec1_meta["search_terms_indexed"] == 7
 
 
 @pytest.mark.skipif(not _postgres_available(), reason="PostgreSQL not available")
@@ -181,6 +183,7 @@ def test_full_demo_scenario_8_acts():
             step_mode=False,
             no_color=True,
             verbose=True,
+            client=fed["client"],
         )
 
         assert success is True

@@ -14,7 +14,9 @@ from typing import Any
 
 import httpx
 import psycopg
+from api.share_transport import fetch_share_recipient, sealed_json
 from breakglass.emergency_key import generate_emergency_key, split_emergency_key
+from contracts.clinical import ClinicalMetadata
 from contracts.enums import PolicyNodeType
 from contracts.policy import Attribute, PolicyTree
 from crypto_core import (
@@ -24,8 +26,9 @@ from crypto_core import (
     private_key_from_pem,
     private_key_to_pem,
 )
-from identity.certificates import issue_clinician_certificate
+from identity.certificates import issue_clinician_certificate, issue_patient_certificate
 from pre.elgamal import generate_keypair as generate_pre_keypair
+from records.labels import sign_clinical_labels
 from storage.repositories import get_patient, insert_patient
 
 from deploy.run_scenario import ScenarioEndpoints
@@ -90,7 +93,7 @@ def create_synthetic_dataset() -> SyntheticDataset:
 
     emma = SyntheticPatient(
         patient_id="pat-103",
-        name="Emma Watson",
+        name="Emma Hartwell",
         date_of_birth="1994-07-03",
         blood_type="B+",
         home_facility="facility-a",
@@ -99,7 +102,7 @@ def create_synthetic_dataset() -> SyntheticDataset:
 
     doc_house = SyntheticClinician(
         clinician_id="doc-201",
-        name="Dr. Gregory House",
+        name="Dr. Arjun Rao",
         facility_id="facility-b",
         role="emergency-physician",
         specialty="emergency-medicine",
@@ -107,7 +110,7 @@ def create_synthetic_dataset() -> SyntheticDataset:
 
     doc_chase = SyntheticClinician(
         clinician_id="doc-301",
-        name="Dr. Robert Chase",
+        name="Dr. Leela Menon",
         facility_id="facility-a",
         role="physician",
         specialty="cardiology",
@@ -115,7 +118,7 @@ def create_synthetic_dataset() -> SyntheticDataset:
 
     doc_cameron = SyntheticClinician(
         clinician_id="doc-202",
-        name="Dr. Allison Cameron",
+        name="Dr. Samuel Okafor",
         facility_id="facility-b",
         role="physician",
         specialty="endocrinology",
@@ -178,18 +181,23 @@ def create_synthetic_dataset() -> SyntheticDataset:
         facility_id="facility-a",
         title="Emergency Department & Inpatient Cardiology Encounter",
         target_specialty="cardiology",
-        clinical_policy=policy_cardiology,
+        clinical_policy=PolicyTree(
+            node_type=PolicyNodeType.OR,
+            children=[policy_cardiology.children[0], policy_trauma.children[1]],
+        ),
         search_terms=[
             "cardiac",
             "infarction",
             "aspirin",
             "troponin",
             "stemi",
+            "penicillin",
+            "anaphylaxis",
         ],
         payload={
             "patient_id": "pat-101",
             "encounter_id": "enc-2026-09-10-01",
-            "facility": "St. Jude Hospital (facility-a)",
+            "facility": "Northvale General Hospital (facility-a)",
             "admission_type": "EMERGENCY",
             "chief_complaint": (
                 "Crushing retrosternal chest pain radiating to left arm and jaw"
@@ -219,9 +227,9 @@ def create_synthetic_dataset() -> SyntheticDataset:
                     "route": "PO load",
                 },
                 {
-                    "name": "Metoprolol Tartrate",
-                    "dose": "5 mg",
-                    "route": "IV",
+                    "name": "Noradrenaline",
+                    "dose": "0.1 mcg/kg/min",
+                    "route": "IV infusion, titrated to MAP >= 65 mmHg",
                 },
                 {
                     "name": "Heparin",
@@ -237,8 +245,9 @@ def create_synthetic_dataset() -> SyntheticDataset:
             ],
             "notes": (
                 "Patient presents in cardiogenic shock secondary to acute STEMI. "
-                "Catheterization lab activated immediately. Strictly avoid "
-                "beta-lactams due to confirmed anaphylaxis."
+                "Catheterization lab activated immediately. Beta-blocker withheld "
+                "while in shock. Avoid penicillins (confirmed anaphylaxis); other "
+                "beta-lactams only after allergy review."
             ),
         },
     )
@@ -249,24 +258,28 @@ def create_synthetic_dataset() -> SyntheticDataset:
         facility_id="facility-b",
         title="Endocrinology Outpatient Consultation & Glycemic Control Plan",
         target_specialty="endocrinology",
-        clinical_policy=policy_endocrinology,
+        clinical_policy=PolicyTree(
+            node_type=PolicyNodeType.OR,
+            children=[policy_endocrinology.children[0], policy_trauma.children[1]],
+        ),
         search_terms=[
             "endocrinology",
             "diabetes",
             "metformin",
-            "ketoacidosis",
+            "insulin",
             "glucose",
         ],
         payload={
             "patient_id": "pat-102",
             "encounter_id": "enc-2026-08-14-03",
-            "facility": "Mercy Hospital (facility-b)",
+            "facility": "Eastbrook Hospital (facility-b)",
             "admission_type": "OUTPATIENT",
             "chief_complaint": (
                 "Follow-up for poorly controlled blood sugar, polyuria, polydipsia"
             ),
             "diagnosis": (
-                "Type 2 Diabetes Mellitus with hyperosmolar hyperglycemic tendencies"
+                "Type 2 diabetes mellitus with hyperglycaemia, poorly controlled "
+                "(HbA1c 10.8%)"
             ),
             "vitals": {
                 "heart_rate_bpm": 78,
@@ -302,7 +315,8 @@ def create_synthetic_dataset() -> SyntheticDataset:
                 }
             ],
             "notes": (
-                "Step-up basal insulin therapy initiated. "
+                "Insulin glargine increased to 24 units at night. "
+                "Sulfa antibiotic rash noted; tolerating glipizide. "
                 "Dietitian counseling scheduled."
             ),
         },
@@ -314,7 +328,9 @@ def create_synthetic_dataset() -> SyntheticDataset:
         facility_id="facility-a",
         title="Trauma Resuscitation & Emergency Surgical Evaluation",
         target_specialty="emergency-medicine",
-        clinical_policy=policy_trauma,
+        clinical_policy=PolicyTree(
+            node_type=PolicyNodeType.OR, children=list(policy_trauma.children)
+        ),
         search_terms=[
             "trauma",
             "emergency",
@@ -325,7 +341,7 @@ def create_synthetic_dataset() -> SyntheticDataset:
         payload={
             "patient_id": "pat-103",
             "encounter_id": "enc-2026-09-02-09",
-            "facility": "St. Jude Hospital (facility-a)",
+            "facility": "Northvale General Hospital (facility-a)",
             "admission_type": "TRAUMA_LEVEL_1",
             "chief_complaint": (
                 "Motor vehicle collision, restrained driver with steering wheel impact"
@@ -358,8 +374,14 @@ def create_synthetic_dataset() -> SyntheticDataset:
                     "dose": "1 g",
                     "route": "IV over 10 min",
                 },
+                {
+                    "name": "Packed red blood cells",
+                    "dose": "2 units (crossmatched)",
+                    "route": "IV, massive transfusion protocol activated",
+                },
             ],
             "allergies": [],
+            "allergy_status": "No known drug allergies (confirmed with patient, GCS 13)",
             "notes": (
                 "Emergency FAST examination positive for fluid in splenorenal recess. "
                 "Orthopedic surgery on standby."
@@ -386,6 +408,22 @@ def _parse_ca_credentials(ca_data: object) -> tuple[object, object]:
         private_key_from_pem(priv_pem.encode("ascii")),
         certificate_from_pem(cert_pem.encode("ascii")),
     )
+
+
+def _signed_labels(
+    patient: dict[str, Any], record_id: str, patient_id: str, labels: dict[str, Any]
+) -> dict[str, Any]:
+    """The record's clinical labels, signed by its patient (ADR-0064).
+
+    Unsigned labels would get the strictest disclosure rules at the facility.
+    """
+    return sign_clinical_labels(
+        ClinicalMetadata(**labels),
+        record_id=record_id,
+        patient_id=patient_id,
+        signing_key=patient["private_key"],
+        certificate_pem=patient["certificate_pem"],
+    ).model_dump(mode="json")
 
 
 def seed_synthetic_data(
@@ -518,12 +556,21 @@ def seed_synthetic_data(
         # sign consent decisions on their behalf (ADR-0043). Kept in memory
         # only, like every other key here.
         pat_priv, pat_pub = generate_ec_keypair()
+        # The home facility certifies the patient's key (ADR-0064), so a
+        # facility verifies their signatures -- on record labels and consent
+        # decisions -- against a key it trusts, not one a caller supplies.
+        home_ca_priv, home_ca_cert = facility_cas[patient.home_facility]
+        pat_cert = issue_patient_certificate(
+            home_ca_priv, home_ca_cert, patient.patient_id, pat_pub
+        )
         patient_meta[patient.patient_id] = {
             "patient": patient,
             "credentials": [owner_res.json()["credential"]],
             "private_key": pat_priv,
             "public_key": pat_pub,
             "private_key_pem": private_key_to_pem(pat_priv).decode("ascii"),
+            "certificate": pat_cert,
+            "certificate_pem": certificate_to_pem(pat_cert).decode("ascii"),
         }
 
     def get_author_key(
@@ -581,6 +628,14 @@ def seed_synthetic_data(
         "facility-b": endpoints.facility_b,
     }
 
+    # Share 3 goes to the audit service sealed to its verified share key.
+    audit_recipient = fetch_share_recipient(
+        http,
+        endpoints.audit,
+        kind="audit",
+        trusted_root=certificate_from_pem(root_cert_pem.encode("ascii")),
+    )
+
     for rec in dataset.records:
         emergency_key = generate_emergency_key()
         shares = split_emergency_key(emergency_key)
@@ -590,8 +645,9 @@ def seed_synthetic_data(
             f"{endpoints.audit}/breakglass/shares",
             json={
                 "share_key": rec.record_id,
-                "x": share3[0],
-                "share_hex": share3[1].hex(),
+                "sealed_share": sealed_json(
+                    share3, record_id=rec.record_id, recipient=audit_recipient
+                ),
             },
         )
         audit_deposit_res.raise_for_status()
@@ -614,6 +670,26 @@ def seed_synthetic_data(
                 "search_terms": rec.search_terms,
                 "emergency_key_b64": base64.b64encode(emergency_key).decode("ascii"),
                 "record_id": rec.record_id,
+                "clinical": _signed_labels(
+                    patient_meta[rec.patient_id],
+                    rec.record_id,
+                    rec.patient_id,
+                    {
+                        "title": rec.title,
+                        "author_id": (
+                            "doc-301"
+                            if rec.record_id == "rec-001"
+                            else (
+                                "doc-202" if rec.record_id == "rec-002" else "doc-201"
+                            )
+                        ),
+                        "clinical_date": rec.payload["encounter_id"][4:14],
+                        "record_type": "clinical_encounter",
+                        "episode_id": rec.payload["encounter_id"],
+                        "source": "hospital",
+                        "care_team_consent": True,
+                    },
+                ),
             },
         )
         ingest_res.raise_for_status()

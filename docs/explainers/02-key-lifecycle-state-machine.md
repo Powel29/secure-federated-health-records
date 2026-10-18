@@ -40,12 +40,12 @@ check afterwards what happened and who authorised it.
 
 ## Why this is more than a status column
 
-Compare two ways to "revoke Dr. Chase":
+Compare two ways to "revoke Dr. Menon":
 
 | | Database flag | Our way |
 |---|---|---|
-| What changes | `status = 'REVOKED'` | New random key; record re-encrypted; wrappings rebuilt without Chase |
-| If Chase kept an old copy of the key | Still opens every future version | Opens nothing new |
+| What changes | `status = 'REVOKED'` | New random key; record re-encrypted; wrappings rebuilt without Menon |
+| If Menon kept an old copy of the key | Still opens every future version | Opens nothing new |
 | Who must be trusted | Whoever runs the database | Nobody; the math enforces it |
 
 This is revocation-by-rotation (ADR-0036): decrypt with the old key, mint a

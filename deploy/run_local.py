@@ -24,6 +24,8 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,6 +36,11 @@ from deploy.run_scenario import ScenarioEndpoints
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC_DIR = REPO_ROOT / "src"
 FEDERATION_CONFIG_PATH = REPO_ROOT / "deploy" / "pki" / "federation.json"
+# Public trust anchors the facilities load at startup (review F1); written by
+# step 2, before any facility starts.
+TRUST_DIR = REPO_ROOT / "deploy" / "pki" / "trust"
+# Each service's request-signing key and certificate (ADR-0066), also step 2.
+SERVICES_DIR = REPO_ROOT / "deploy" / "pki" / "services"
 
 _AUDIT_PORT = 8020
 _CUSTODIAN_PORT = 8030  # Key Custodian, ADR-0043 (the portals' key agent)
@@ -51,7 +58,14 @@ class ServiceSpec:
     extra_env: dict[str, str]
 
 
+def _identity_env(service_id: str) -> dict[str, str]:
+    return bootstrap.service_env(SERVICES_DIR, service_id, TRUST_DIR)
+
+
 def _default_specs(database_url: str, audit_base_url: str) -> list[ServiceSpec]:
+    authority_urls = ",".join(
+        f"{aid}={_base_url(port)}" for aid, port in _AUTHORITY_PORTS.items()
+    )
     specs = [
         ServiceSpec(
             authority_id,
@@ -64,6 +78,9 @@ def _default_specs(database_url: str, audit_base_url: str) -> list[ServiceSpec]:
                     if authority_id == "authority-med"
                     else "specialty,facility,owner"
                 ),
+                # Subjects prove possession under these CAs (ADR-0082).
+                "FACILITY_CA_CERTS_DIR": str(TRUST_DIR / "facility-cas"),
+                **_identity_env(authority_id),
             },
         )
         for authority_id, port in _AUTHORITY_PORTS.items()
@@ -73,7 +90,12 @@ def _default_specs(database_url: str, audit_base_url: str) -> list[ServiceSpec]:
             "audit",
             "audit",
             _AUDIT_PORT,
-            {"DATABASE_URL": database_url, "AUDIT_ACTOR_ID": "audit-service"},
+            {
+                "DATABASE_URL": database_url,
+                "AUDIT_ACTOR_ID": "audit-service",
+                "FACILITY_CA_CERTS_DIR": str(TRUST_DIR / "facility-cas"),
+                **_identity_env("audit-service"),
+            },
         )
     )
     specs.extend(
@@ -85,6 +107,10 @@ def _default_specs(database_url: str, audit_base_url: str) -> list[ServiceSpec]:
                 "FACILITY_ID": facility_id,
                 "DATABASE_URL": database_url,
                 "AUDIT_SERVICE_URL": audit_base_url,
+                "AUTHORITY_URLS": authority_urls,
+                "CUSTODIAN_URL": _base_url(_CUSTODIAN_PORT),
+                "FACILITY_CA_CERTS_DIR": str(TRUST_DIR / "facility-cas"),
+                **_identity_env(facility_id),
             },
         )
         for facility_id, port in _FACILITY_PORTS.items()
@@ -97,12 +123,11 @@ def _default_specs(database_url: str, audit_base_url: str) -> list[ServiceSpec]:
             {
                 "DATABASE_URL": database_url,
                 "AUDIT_SERVICE_URL": audit_base_url,
-                "AUTHORITY_URLS": ",".join(
-                    f"{aid}={_base_url(port)}" for aid, port in _AUTHORITY_PORTS.items()
-                ),
+                "AUTHORITY_URLS": authority_urls,
                 "FACILITY_URLS": ",".join(
                     f"{fid}={_base_url(port)}" for fid, port in _FACILITY_PORTS.items()
                 ),
+                **_identity_env("custodian"),
             },
         )
     )
@@ -127,20 +152,28 @@ def _base_url(port: int) -> str:
     return f"{scheme}://127.0.0.1:{port}"
 
 
-def main() -> int:
-    """Run the full bootstrap sequence, then block until Ctrl+C."""
-    database_url = os.environ.get("DATABASE_URL")
-    if not database_url:
-        print(
-            "DATABASE_URL is not set. See README.md 'Database (PostgreSQL)' for a "
-            "throwaway `docker run` one-liner, or point at an existing instance.",
-            file=sys.stderr,
-        )
-        return 2
+@contextmanager
+def start_federation(
+    database_url: str, *, emergency_duration_seconds: float | None = None
+) -> Iterator[ScenarioEndpoints]:
+    """Bootstrap steps 1-7 as separate processes on the fixed ports.
 
+    Yields the federation's endpoints once the audit chain verifies; stops
+    every process on exit. ``deploy.run_portal_demo`` uses this too, so the
+    portal demo runs audit as its own process like §7 requires (review F38).
+
+    Raises:
+        bootstrap.BootstrapError: A step failed; nothing is left running.
+    """
     configure_transport()
     audit_base_url = _base_url(_AUDIT_PORT)
     specs = _default_specs(database_url, audit_base_url)
+    if emergency_duration_seconds is not None:
+        for spec in specs:
+            if spec.role == "facility":
+                spec.extra_env["EMERGENCY_DURATION_SECONDS"] = str(
+                    emergency_duration_seconds
+                )
     processes: dict[str, subprocess.Popen] = {}
 
     def shutdown() -> None:
@@ -161,6 +194,16 @@ def main() -> int:
 
         print("[2/7] generating federation PKI (root anchor + facility CAs)...")
         root, pki = bootstrap.generate_federation_pki(list(_FACILITY_PORTS))
+        bootstrap.write_trust_bundle(TRUST_DIR, pki)
+        identities = bootstrap.issue_service_identities(root)
+        bootstrap.write_service_identities(SERVICES_DIR, identities)
+        client = bootstrap.bootstrap_client(
+            identities["bootstrap"],
+            authorities={aid: _base_url(p) for aid, p in _AUTHORITY_PORTS.items()},
+            facilities={fid: _base_url(p) for fid, p in _FACILITY_PORTS.items()},
+            audit=audit_base_url,
+            custodian=_base_url(_CUSTODIAN_PORT),
+        )
 
         print("[3/7] starting authority services...")
         for spec in specs:
@@ -172,7 +215,7 @@ def main() -> int:
         print("      registering authorities with the root anchor...")
         authority_certificates = {
             authority_id: bootstrap.register_authority(
-                _base_url(port), root, authority_id
+                _base_url(port), root, authority_id, client=client
             )
             for authority_id, port in _AUTHORITY_PORTS.items()
         }
@@ -196,6 +239,14 @@ def main() -> int:
                 processes[spec.name] = _spawn(spec)
         bootstrap.wait_for_health(_base_url(_CUSTODIAN_PORT))
 
+        endpoints = ScenarioEndpoints(
+            authority_med=_base_url(8010),
+            authority_net=_base_url(8011),
+            audit=audit_base_url,
+            facility_a=_base_url(8001),
+            facility_b=_base_url(8002),
+            custodian=_base_url(_CUSTODIAN_PORT),
+        )
         print("      registering federation members and seeding synthetic data...")
         bootstrap.populate_registry(
             database_url,
@@ -213,15 +264,7 @@ def main() -> int:
         print(f"      federation config written to {FEDERATION_CONFIG_PATH}")
         if bootstrap.seed_enabled():
             summary = bootstrap.seed_federation(
-                ScenarioEndpoints(
-                    authority_med=_base_url(8010),
-                    authority_net=_base_url(8011),
-                    audit=audit_base_url,
-                    facility_a=_base_url(8001),
-                    facility_b=_base_url(8002),
-                ),
-                config,
-                _base_url(_CUSTODIAN_PORT),
+                endpoints, config, _base_url(_CUSTODIAN_PORT), client=client
             )
             print(f"      {summary}")
         else:
@@ -234,23 +277,43 @@ def main() -> int:
         print("\nfederation is up:")
         for spec in specs:
             print(f"  {spec.name:14s} {_base_url(spec.port)}")
-        print("\nPress Ctrl+C to stop the federation.")
+        yield endpoints
 
-        while True:
-            time.sleep(1)
-            for name, proc in processes.items():
-                if proc.poll() is not None:
-                    raise bootstrap.BootstrapError(
-                        f"{name} exited unexpectedly (code {proc.returncode})"
-                    )
+        for name, proc in processes.items():
+            if proc.poll() is not None:
+                raise bootstrap.BootstrapError(
+                    f"{name} exited unexpectedly (code {proc.returncode})"
+                )
+    finally:
+        shutdown()
+
+
+def custodian_url() -> str:
+    """The custodian's base URL on Path A."""
+    return _base_url(_CUSTODIAN_PORT)
+
+
+def main() -> int:
+    """Run the full bootstrap sequence, then block until Ctrl+C."""
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        print(
+            "DATABASE_URL is not set. See README.md 'Database (PostgreSQL)' for a "
+            "throwaway `docker run` one-liner, or point at an existing instance.",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        with start_federation(database_url):
+            print("\nPress Ctrl+C to stop the federation.")
+            while True:
+                time.sleep(1)
     except KeyboardInterrupt:
         print("\nshutting down...")
         return 0
     except bootstrap.BootstrapError as exc:
         print(f"bootstrap failed: {exc}", file=sys.stderr)
         return 1
-    finally:
-        shutdown()
 
 
 if __name__ == "__main__":

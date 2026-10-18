@@ -11,10 +11,10 @@ truth (`ARCHITECTURE.md`, an ADR, or a file you can open).
 | Language | Python 3.11+ | |
 | Crypto primitives | `cryptography` (pyca) | only imported inside `crypto_core` |
 | Services | FastAPI + Uvicorn | one process per federation role |
-| Storage | PostgreSQL, psycopg3, raw parameterised SQL (ADR-0020) | one shared store |
+| Storage | PostgreSQL, psycopg3, raw parameterised SQL (ADR-0020) | one shared store; also shares encrypted policy layouts and signed consent between facility processes (ADR-0047) |
 | Portals | Django + Bootstrap | their own `portal` schema, plus a read-only window on the store |
 | Contracts | Pydantic v2 (ADR-0007), nine frozen schemas (ADR-0008) | `src/contracts/` |
-| Tests | pytest (490 passing, 43 skipped without Postgres) + Django test runner | |
+| Tests | pytest (Postgres suites skip without `DATABASE_URL`; known-false claims are strict xfails, ADR-0046) + Django test runner | |
 | Style | black + ruff, line length 88 | CI runs lint, format, test on every PR |
 
 Rejected: Charm-Crypto (C build chain, ADR-0001).
@@ -28,7 +28,7 @@ Rejected: Charm-Crypto (C build chain, ADR-0001).
 | Key derivation | HKDF (SHA-256) via `hkdf_derive` | `crypto_core/symmetric.py` |
 | Hash chain | SHA-256 | `audit/chain.py` |
 | Shamir field | prime P = 2^256 + 297, shares as (x, y) | `shamir/finite_field.py` |
-| Proxy re-encryption | ElGamal-style, unidirectional, prime-order subgroup with generator 4; subgroup membership validated on every input (ADR-0023) | `pre/elgamal.py` |
+| Proxy re-encryption | ElGamal-style, bidirectional (ADR-0076), prime-order subgroup with generator 4; subgroup membership validated on every input (ADR-0023) | `pre/elgamal.py` |
 | Certificates | X.509, single root, cross-certified facility CAs (ADR-0024) | `identity/` |
 
 The seven rules in `CONVENTIONS.md` §2 are correctness requirements: all
@@ -69,7 +69,11 @@ store). The store keeps current state in `lifecycle_state` and history in
 HSM timer under a dedicated identity `system:hsm-timer`: sign
 `emergency_open → expired`, rotate DEK, sign `expired → granted`. A daemon
 monitor thread sweeps due sessions. The facility reconciles a stale
-`emergency_open` in the store when the timer holds no session (ADR-0044).
+`emergency_open` in the store when the timer holds no session (ADR-0044). In the
+deployment, each timer transition is mirrored into the store only after its
+audit append succeeds; a failed mirror is logged, not raised, so the monitor
+thread keeps running (ADR-0047). The rotated ciphertext itself is not persisted
+(throwaway re-baseline key, ADR-0043/0044).
 
 ## 5. Break-glass protocol
 
@@ -108,13 +112,31 @@ ports** and prints them; the table gives the fixed ports used by
 `deploy.run_local` and Docker Compose. All service URLs come from config
 (`CUSTODIAN_URL`, `AUDIT_SERVICE_URL`, `FACILITY_URLS`, `AUTHORITY_URLS`).
 
+Docker Compose (ADR-0047) also runs the portal on 8000 once bootstrap
+succeeds, publishes every port on `127.0.0.1` only, and exposes its store on
+`55433` with a password from the git-ignored `deploy/.env` (no trust auth).
+The portal runs with `DEBUG` off and fixed `ALLOWED_HOSTS`.
+
+**TLS profile.** `TLS_ENABLED=true` upgrades every federation URL to HTTPS.
+`python -m wire.tls` writes `wire/certs/<service>/` per service and a trust
+bundle `wire/certs/trust/ca-bundle.crt`; clients verify against the bundle,
+never with verification off. Each container mounts only its own key directory.
+The browser portal stays HTTP on loopback.
+
+**Bootstrap and restarts.** Bootstrap writes `deployment_bootstrap` (live
+service instance ids) only after seeding and chain verification succeed. A
+rerun re-checks those ids and the chain, and refuses a partial bootstrap, a
+changed seed mode or a restarted key service with a recovery instruction:
+recreate the whole demo (`down`, `up --build -d`). `run_migrations(reset=True)`
+refuses any non-loopback database host before connecting.
+
 ## 7. API surface
 
 **Facility node** (`api/hospital.py`): `GET /health`, `POST /records/ingest`,
 `POST /records/{id}/read`, `POST /records/{id}/revoke`,
 `POST /records/{id}/breakglass`, `POST /records/{id}/emergency-search`,
 `GET /patients/{id}/records` (discovery), `POST /search/records`,
-`POST /consent/requests`, `POST /consent/grants`, `POST /consent/grants/revoke`.
+`POST /consent/grants` (a grant or a revocation, signed by the custodian; ADR-0072).
 
 **Audit service**: `GET /health`, `GET /public-key`, `GET /chain/head`,
 `GET /chain/verify`, `POST /entries`, `POST /breakglass/shares`,
@@ -127,14 +149,17 @@ credential issue/verify/status/revoke, `POST /attribute-keys/release`,
 **Key Custodian**: `PUT /trust`, `POST /subjects/{id}/material`,
 `GET /subjects/{id}`, `GET /subjects/{id}/public-key`,
 `POST /subjects/{id}/consent/{request|decide|revoke}`,
-`POST /subjects/{id}/read`, `POST /subjects/{id}/breakglass`,
+`POST /subjects/{id}/read`, `POST /subjects/{id}/revoke`, `POST /subjects/{id}/breakglass`,
 `POST /subjects/{id}/records`, `POST /records/{id}/shares`.
 
 ## 8. Data model
 
 **Store tables** (`src/storage/migrations/`): `authorities`, `facilities`,
 `patients`, `attributes`, `records`, `dek_wrappings`, `lifecycle_state`,
-`transition_events`, `audit_log`, `search_index`.
+`transition_events`, `audit_log`, `search_index`, and from migration 0003:
+`compiled_policies` (encrypted leaf shares + tree layout, versioned JSON),
+`consent_requests`, `consent_grants` (signed contract JSON), and
+`deployment_bootstrap`. No plaintext keys or unencrypted shares.
 
 **Portal tables** (Django, schema `portal`): `Profile` (login to
 subject_id + role), `RegistrationRequest`, `PatientDirectory` (name + DOB,
@@ -193,7 +218,7 @@ A control is not finished until it has a negative test proving it fails closed
 
 ## 13. Decision log
 
-`docs/adr/README.md` is the tracker (44 ADRs). The ones most worth knowing:
+`docs/adr/README.md` is the tracker (47 ADRs). The ones most worth knowing:
 
 | ADR | Decision |
 |---|---|
@@ -210,3 +235,5 @@ A control is not finished until it has a negative test proving it fails closed
 | 0036 | Revocation by full key rotation |
 | 0043 | Key Custodian and portal integration |
 | 0044 | Break-glass patient binding, stale-state reconciliation (Proposed) |
+| 0045 / 0046 | P5-5 wire-claim checks; P5-1 claim registry with strict xfails (Proposed) |
+| 0047 | Shared policy/consent state, verified bootstrap, loopback Compose, verified TLS (Proposed) |

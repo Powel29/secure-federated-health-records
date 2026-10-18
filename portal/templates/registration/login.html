@@ -2,20 +2,19 @@
 {% block title %}Log in · {{ product_name }}{% endblock %}
 {% block shell %}
 <div class="auth">
-  <div class="auth-card">
-    <div class="wordmark">{{ product_name }}</div>
-    <div class="sub">Federated break-glass EHR · sign in</div>
-    {% if form.errors %}<div class="notice notice-error mb-3">Invalid username or password.</div>{% endif %}
+  <main class="auth-card" id="content">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span><span class="brand-name">{{ product_name }}</span><span class="brand-sub">Federated break-glass EHR</span></span></div>
+    <h1>Log in</h1>
+    {% if form.errors %}<div class="notice notice-error" role="alert">{% include "_icon.html" with name="x" %}<div>Invalid username or password. Check both and try again.</div></div>{% endif %}
     <form method="post" class="stack">
       {% csrf_token %}
-      <div class="field"><label for="u">Username</label><input class="input" id="u" name="username" autofocus autocomplete="username"></div>
-      <div class="field"><label for="p">Password</label><input class="input" id="p" type="password" name="password" autocomplete="current-password"></div>
+      <div class="field"><label for="u">Username</label><input class="input" id="u" name="username" value="{{ form.username.value|default:'' }}" autofocus autocomplete="username" required></div>
+      <div class="field"><label for="p">Password</label><input class="input" id="p" type="password" name="password" autocomplete="current-password" required></div>
       <input type="hidden" name="next" value="{{ next }}">
       <button class="btn btn-primary btn-block">Log in</button>
     </form>
-    <div class="hr"></div>
-    <div class="small text-muted">No account? <a href="{% url 'accounts:register_patient' %}">Register as patient</a> · <a href="{% url 'accounts:register_clinician' %}">Register as clinician</a></div>
-    <div class="tiny text-muted mt-3">A login identifies you. It grants no access: keys are issued by an authority and released only by the threshold gate (ADR-0021).</div>
-  </div>
+    <p class="small mb-0">No account? <a href="{% url 'accounts:register_patient' %}">Register as patient</a> · <a href="{% url 'accounts:register_clinician' %}">Register as clinician</a></p>
+    <p class="law">A login identifies you. It grants no access: keys are issued by an authority and released only by the threshold gate <span class="mono">(ADR-0021)</span>.</p>
+  </main>
 </div>
 {% endblock %}

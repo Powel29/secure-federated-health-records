@@ -6,8 +6,9 @@ integrity: a one-time ``request_id`` the callee's consumed-id store rejects
 on reuse, with the signature binding that id, the ``recipient_id``, and the
 ``body`` together so a captured envelope cannot be replayed or retargeted.
 
-The canonical payload format matches the project-wide convention
-(``_FIELD_SEPARATOR = b"\\x1f"``).
+Signed bytes use ``crypto_core.encode_fields``: a domain tag, then
+length-prefixed fields
+(ADR-0077).
 """
 
 from __future__ import annotations
@@ -17,14 +18,24 @@ import secrets
 from uuid import uuid4
 
 from contracts import RequestEnvelope
-from crypto_core import sign, verify
+from crypto_core import encode_fields, sign, verify
 from crypto_core.types import ECPrivateKey, ECPublicKey
 
-from breakglass.exceptions import EnvelopeRecipientMismatchError
+from breakglass.exceptions import (
+    EnvelopeExpiredError,
+    EnvelopeOperationMismatchError,
+    EnvelopeRecipientMismatchError,
+)
 from breakglass.replay import ConsumedRequestIds
 
-_FIELD_SEPARATOR = b"\x1f"
+_DOMAIN = "ehr/request-envelope/v1"  # encode_fields tag (ADR-0077)
 _NONCE_BYTES = 16
+
+# How long a signed request stays acceptable, and how far its issued_at may
+# run ahead of the callee's clock (ADR-0066). Replay is stopped by the
+# consumed-id store; this bounds the window if that store is lost.
+MAX_ENVELOPE_AGE = datetime.timedelta(seconds=120)
+ENVELOPE_CLOCK_SKEW = datetime.timedelta(seconds=30)
 
 
 # ---------------------------------------------------------------------------
@@ -57,7 +68,7 @@ def _canonical_envelope_payload(
         issued_at.astimezone(datetime.timezone.utc).isoformat().encode("utf-8"),
         nonce,
     ]
-    return _FIELD_SEPARATOR.join(fields)
+    return encode_fields(_DOMAIN, fields)
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +138,8 @@ def verify_request_envelope(
     envelope: RequestEnvelope,
     caller_public_key: ECPublicKey,
     expected_recipient_id: str,
-    consumed_store: ConsumedRequestIds | None = None,
+    *,
+    consumed_store: ConsumedRequestIds,
 ) -> None:
     """Verify the envelope's signature, recipient binding, and one-time id.
 
@@ -137,13 +149,14 @@ def verify_request_envelope(
        ``caller_public_key``.
     2. **Recipient binding** — ``envelope.recipient_id`` matches
        ``expected_recipient_id``.
-    3. **Replay** — ``envelope.request_id`` consumed (if store provided).
+    3. **Replay** — ``envelope.request_id`` consumed.
 
     Args:
         envelope: The request envelope to validate.
         caller_public_key: The calling service's public key.
         expected_recipient_id: The receiving service's identifier.
-        consumed_store: Optional anti-replay store.
+        consumed_store: Anti-replay store. Required, so the replay check can
+            never be skipped by omission (F21).
 
     Raises:
         InvalidSignatureError: Signature does not verify.
@@ -175,5 +188,50 @@ def verify_request_envelope(
         )
 
     # 3. Replay (last)
-    if consumed_store is not None:
-        consumed_store.consume(envelope.request_id)
+    consumed_store.consume(envelope.request_id)
+
+
+# ---------------------------------------------------------------------------
+# Binding to the HTTP request (ADR-0066)
+# ---------------------------------------------------------------------------
+
+
+def check_envelope_binding(
+    envelope: RequestEnvelope,
+    *,
+    expected_operation: str,
+    now: datetime.datetime,
+    max_age: datetime.timedelta = MAX_ENVELOPE_AGE,
+    clock_skew: datetime.timedelta = ENVELOPE_CLOCK_SKEW,
+) -> None:
+    """Refuse an envelope signed for another request, or outside its window.
+
+    Run before :func:`verify_request_envelope`; it has no side effects, so a
+    mismatched envelope never burns its ``request_id``.
+
+    Args:
+        envelope: The envelope presented with the request.
+        expected_operation: ``"<METHOD> <path>[?<query>]"`` of the request
+            actually received.
+        now: The callee's current time.
+        max_age: Oldest ``issued_at`` accepted.
+        clock_skew: How far ``issued_at`` may lie in the future.
+
+    Raises:
+        EnvelopeOperationMismatchError: The envelope names another operation.
+        EnvelopeExpiredError: ``issued_at`` is outside the window.
+    """
+    if envelope.operation != expected_operation:
+        raise EnvelopeOperationMismatchError(
+            f"envelope was signed for {envelope.operation!r}, "
+            f"not {expected_operation!r}"
+        )
+    if envelope.issued_at < now - max_age:
+        raise EnvelopeExpiredError(
+            f"envelope issued at {envelope.issued_at.isoformat()} is older "
+            f"than {max_age}"
+        )
+    if envelope.issued_at > now + clock_skew:
+        raise EnvelopeExpiredError(
+            f"envelope issued at {envelope.issued_at.isoformat()} is in the future"
+        )

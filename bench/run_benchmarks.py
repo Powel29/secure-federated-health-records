@@ -14,7 +14,6 @@ committed.
 from __future__ import annotations
 
 import argparse
-import base64
 import csv
 import ctypes
 import datetime as dt
@@ -32,24 +31,25 @@ import httpx
 import matplotlib.pyplot as plt
 import pandas as pd
 import psycopg
+from api.share_transport import fetch_share_recipient, sealed_json
 from audit.chain import verify_full_chain
-from breakglass import create_emergency_assertion
-from contracts.enums import ReasonCode
+from contracts.enums import LifecycleState, ReasonCode
 from crypto_core import (
-    certificate_to_pem,
+    certificate_from_pem,
     generate_ec_keypair,
     public_key_from_pem,
 )
 from crypto_core.symmetric import generate_key
-from policy import reconstruct_root_secret
+from lifecycle.state_machine import create_transition_event
 from pre.elgamal import encapsulate_key, generate_keypair, generate_rekey, reencrypt
 from records.ingest import ingest_record
 from records.revocation import revoke_record_access
-from records.service import encrypt_record, rewrap_dek, unwrap_dek, wrap_dek
+from records.service import encrypt_record, rewrap_dek, wrap_dek
 from shamir.split import combine_shares, split_secret
 
 from demo.driver import standalone_federation
 from demo.seed_data import create_synthetic_dataset, seed_synthetic_data
+from deploy.run_scenario import emergency_open
 
 DEFAULT_ITERATIONS = 30
 DEFAULT_WARMUP = 5
@@ -250,28 +250,27 @@ def benchmark_revocation(iterations: int) -> Row:
 
     ingested = fresh_record()
 
-    old_root = reconstruct_root_secret(
-        ingested.compiled_policy,
-        keyring,
+    # The patient's custodian signs the event before the facility rotates
+    # (review D6), so signing is setup here; verifying it is timed.
+    signing_key, public_key = generate_ec_keypair()
+    event = create_transition_event(
+        record_id=ingested.record.record_id,
+        from_state=LifecycleState.GRANTED,
+        to_state=LifecycleState.REVOKED,
+        actor_id=patient_id,
+        signing_key=signing_key,
     )
-    old_dek = unwrap_dek(
-        ingested.dek_wrapping,
-        old_root,
-    )
-
-    # Key generation is setup, not part of revocation -- keep it untimed.
-    signing_key, _ = generate_ec_keypair()
 
     def operation() -> None:
         revoke_record_access(
             current_record=ingested.record,
             current_wrapping=ingested.dek_wrapping,
-            old_dek=old_dek,
+            current_compiled_policy=ingested.compiled_policy,
             new_clinical_policy=clinical,
             owner_authority_id="authority-net",
             attribute_keyring=keyring,
-            actor_id=patient_id,
-            actor_signing_key=signing_key,
+            transition_event=event,
+            actor_public_key=public_key,
             correlation_id=f"bench-revocation-{time.perf_counter_ns()}",
         )
 
@@ -279,7 +278,7 @@ def benchmark_revocation(iterations: int) -> Row:
         "revocation_latency",
         timed_call(operation, iterations, "revocation_latency"),
         iterations,
-        "DEK rotation + policy recompilation + signed transition",
+        "event verification + DEK unwrap and rotation + policy recompilation",
     )
 
 
@@ -413,15 +412,31 @@ def run_db_benchmarks(iterations: int, database_url: str) -> list[Row]:
 
         print("Seeding synthetic federation data...")
 
+        # Every request is signed as bootstrap (ADR-0066).
+        client: httpx.Client = federation["client"]
         seeded = seed_synthetic_data(
             endpoints=endpoints,
             config=config,
             dataset=create_synthetic_dataset(),
+            client=client,
             database_url=database_url,
             verbose=False,
         )
-
-        client = httpx.Client(timeout=15.0)
+        # Share 1 in clinician custody, so an expiry can rotate it (ADR-0069),
+        # sealed to the custodian's verified share key (ADR-0079).
+        root = certificate_from_pem(seeded["root_cert_pem"].encode("ascii"))
+        custodian = fetch_share_recipient(
+            client, endpoints.custodian, kind="custodian", trusted_root=root
+        )
+        for record_id, meta in seeded["records"].items():
+            client.post(
+                f"{endpoints.custodian}/records/{record_id}/shares",
+                json={
+                    "sealed_share": sealed_json(
+                        meta["share1"], record_id=record_id, recipient=custodian
+                    )
+                },
+            ).raise_for_status()
 
         # ---------------------------------------------------------------
         # Cross-facility latency
@@ -461,43 +476,44 @@ def run_db_benchmarks(iterations: int, database_url: str) -> list[Row]:
         record_info = seeded["records"]["rec-001"]
         clinician = seeded["clinicians"]["doc-201"]
 
-        facility_ca = seeded["facility_cas"]["facility-b"]
-
-        facility_ca_pem = certificate_to_pem(facility_ca[1]).decode("ascii")
-
-        assertion = create_emergency_assertion(
+        # rec-001 carries patient-signed "hospital" labels, so the facility
+        # needs a clinical justification bound into the signed assertion
+        # (ADR-0064), and the open transition signed by the clinician
+        # (ADR-0068).
+        justification = (
+            "Unconscious patient requires urgent allergy and medication review."
+        )
+        assertion, transition_event = emergency_open(
+            client,
+            facility_url=endpoints.facility_b,
+            record_id="rec-001",
             patient_id="pat-101",
             clinician_id="doc-201",
             facility_id="facility-b",
+            clinician_key=clinician["private_key"],
             reason_code=ReasonCode.UNCONSCIOUS_PATIENT,
-            signing_key=clinician["private_key"],
+            justification=justification,
             ttl=dt.timedelta(minutes=5),
         )
 
-        # Use the two locally available threshold shares.
+        # Use the two locally available threshold shares, sealed to the
+        # facility's gate (ADR-0079).
+        gate = fetch_share_recipient(
+            client, endpoints.facility_b, kind="facility", trusted_root=root
+        )
         shares_payload = [
-            (
-                record_info["share1"][0],
-                record_info["share1"][1].hex(),
-            ),
-            (
-                record_info["share2"][0],
-                record_info["share2"][1].hex(),
-            ),
+            sealed_json(record_info[name], record_id="rec-001", recipient=gate)
+            for name in ("share1", "share2")
         ]
-
-        k_physician = seeded["attribute_keys"]["authority-med:role:physician"]
 
         unlock_payload = {
             "assertion": assertion.model_dump(mode="json"),
             "clinician_certificate_pem": clinician["certificate_pem"],
-            "facility_ca_certificate_pem": facility_ca_pem,
-            "trusted_root_certificate_pem": seeded["root_cert_pem"],
-            "shares": shares_payload,
+            "sealed_shares": shares_payload,
             "pre_rewrap_key": clinician["pre_public_key"],
-            "lifecycle_signing_key_pem": clinician["private_key_pem"],
+            "transition_event": transition_event.model_dump(mode="json"),
             "correlation_id": "bench-emergency-search",
-            "baseline_wrapping_key_b64": base64.b64encode(k_physician).decode("ascii"),
+            "justification": justification,
             "emergency_duration_seconds": 60.0,
         }
 
@@ -512,6 +528,7 @@ def run_db_benchmarks(iterations: int, database_url: str) -> list[Row]:
                 f"{endpoints.facility_b}/records/rec-001/emergency-search",
                 json={
                     "search_term": "cardiac",
+                    "requester_id": "doc-201",
                 },
             )
             response.raise_for_status()
@@ -545,8 +562,6 @@ def run_db_benchmarks(iterations: int, database_url: str) -> list[Row]:
             public_key = public_key_from_pem(
                 resp.json()["public_key_pem"].encode("ascii")
             )
-
-        client.close()
 
         db_conn = psycopg.connect(database_url)
 

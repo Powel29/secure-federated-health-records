@@ -6,7 +6,7 @@ every form it could plausibly travel in over our HTTP/JSON APIs, and the
 reassembled streams are searched for all of them:
 
 - raw bytes
-- hex, lower and upper case (shares travel as ``share_hex``)
+- hex, lower and upper case
 - base64, standard and URL-safe, at all three byte alignments -- a secret
   embedded inside a larger base64 blob only matches if the search accounts
   for where it starts within a 3-byte group
@@ -49,12 +49,28 @@ class Hit:
     timestamp: float
 
 
+class UnsearchableCanaryError(ValueError):
+    """A canary has no encoding long enough to search for (review N9)."""
+
+
 def load_manifest(path: Path) -> list[Canary]:
+    """Load a run's canaries; refuse one that could never be found.
+
+    A canary whose every encoding is under the minimum pattern length would
+    be silently skipped by :func:`find_hits` -- a false pass (review N9).
+    """
     manifest = json.loads(path.read_text(encoding="utf-8"))
-    return [
+    canaries = [
         Canary(name=name, cls=entry["class"], value=bytes.fromhex(entry["hex"]))
         for name, entry in manifest["canaries"].items()
     ]
+    unsearchable = [c.name for c in canaries if not encodings(c)]
+    if unsearchable:
+        raise UnsearchableCanaryError(
+            f"canaries too short to search for: {unsearchable} "
+            f"(every encoding is under {_MIN_PATTERN_LEN} characters)"
+        )
+    return canaries
 
 
 def _b64_cores(value: bytes, *, urlsafe: bool) -> list[bytes]:
@@ -112,6 +128,10 @@ def find_hits(flows: dict[FlowKey, Flow], canaries: list[Canary]) -> list[Hit]:
             for key, flow in flows.items():
                 start = flow.data.find(pattern)
                 while start != -1:
+                    if flow.spans_gap(start, start + len(pattern)):
+                        # Bytes either side of a lost segment (review N8).
+                        start = flow.data.find(pattern, start + 1)
+                        continue
                     frame, ts = flow.locate(start)
                     hits.append(
                         Hit(canary.name, canary.cls, label, key, start, frame, ts)

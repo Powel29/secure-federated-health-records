@@ -5,8 +5,8 @@ their canary manifests), so it skips cleanly without them -- the repo's
 Postgres-skip convention (ADR-0042). On a machine with captures this test is
 the course-module evidence: the analyser exits 0 only if every claim holds.
 
-The claim-1 scope comes from ``WIRE_CLAIM1_SCOPE`` (default ``tls``, the
-D6-b reading the current wire design can meet; set ``all`` once D6-a lands).
+The claim-1 scope comes from ``WIRE_CLAIM1_SCOPE`` (default ``all``, the
+unnarrowed claim; set ``tls`` only once decision D6 adopts D6-b).
 """
 
 from __future__ import annotations
@@ -37,6 +37,8 @@ def test_live_captures_satisfy_every_claim(tmp_path):
     if missing:
         pytest.skip(f"no captures yet ({missing}); run `python -m wire.capture`")
 
+    # Claim 1 is scoped to TLS (D6-b, ADR-0073); WIRE_CLAIM1_SCOPE=all
+    # reports what the plain profile still exposes.
     scope = os.environ.get("WIRE_CLAIM1_SCOPE", "tls")
     code = main(
         [

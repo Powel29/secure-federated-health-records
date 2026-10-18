@@ -1,6 +1,6 @@
 # ADR-0034: Audit hash-chain encoding, full-entry signing, and savepoint-based log-before-release
 
-- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping)
+- **Status:** Accepted (ratified 2026-09-06, Phase 3 close housekeeping); `0x1f` field encoding superseded by ADR-0077
 - **Date:** 2026-09-03
 - **Deciders:** Ojas (P3-3/P3-4 owner) → all four for ratification
 - **Task / source:** P3-3, P3-4 (WORKFLOW.md); ARCHITECTURE §2 C10, §5 step 3, §7

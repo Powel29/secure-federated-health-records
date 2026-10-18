@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Emergency search · {{ product_name }}{% endblock %}
+{% block content %}
+<section class="card"><h1>Emergency search across this patient's open records</h1>
+<p>{{ checked }} open record{{ checked|pluralize }} checked for “{{ term }}” (searched as: {{ terms|join:", " }}). Search matches indexed terms, not complete clinical content, and opens nothing new.</p>
+{% if errors or unsearched %}<div role="alert"><h2>Incomplete search — do not interpret missing results as absence</h2>
+{% for error in errors %}<p>{{ error }}</p>{% endfor %}
+{% if unsearched %}<p>Not searched, because they are not open under emergency for you:</p><ul>{% for r in unsearched %}<li>{{ r.label }}</li>{% endfor %}</ul><p><a href="{% url 'clinician:breakglass' %}">Open them under emergency</a>, then search again.</p>{% endif %}
+</div>{% endif %}
+{% for hit in hits %}<p><a href="{% url 'clinician:case_detail' hit.case.pk %}">{{ hit.case.record_id }} · {{ hit.case.facility_id }}</a> — matched {{ hit.terms|join:", " }}</p>{% empty %}<p>No matches in the records checked. This does not establish that an allergy, medication or condition is absent.</p>{% endfor %}
+<a href="{% url 'clinician:case_detail' case.pk %}">Return to original case</a></section>
+{% endblock %}

@@ -19,14 +19,16 @@ import datetime
 import time
 
 import pytest
+from contracts.clinical import ClinicalMetadata
 from contracts.enums import LifecycleState
 from crypto_core import generate_ec_keypair
-from crypto_core.symmetric import generate_key
 from lifecycle import ReplayedEventError
 from lifecycle.exceptions import EmergencySessionExpiredError, SessionNotFoundError
 from lifecycle.expiry import EmergencyExpiryManager
 from lifecycle.state_machine import verify_transition_event
-from records.service import decrypt_record, encrypt_record, unwrap_dek, wrap_dek
+from records.service import decrypt_record
+
+from tests.rotation_support import PlanRotator, build_rotation_scenario, rotated_dek
 
 FAKE_START = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
 
@@ -45,42 +47,8 @@ class _FakeClock:
 
 
 def _build_scenario(record_id: str = "rec-expiry-001") -> dict:
-    """One record's DEK, wrapped both under a policy-root ('baseline') key and
-    under a break-glass emergency key -- the two wrappings an already-open
-    emergency session carries, per the P3-6 plan's ``EmergencySession`` shape.
-    """
-    plaintext = b'{"note": "synthetic test record for P3-6"}'
-    baseline_key = generate_key(32)
-    emergency_key = generate_key(32)
-
-    record, dek = encrypt_record(
-        plaintext=plaintext,
-        patient_id="pat-001",
-        facility_id="fac-001",
-        policy_id="policy-001",
-        record_id=record_id,
-    )
-    baseline_wrapping = wrap_dek(
-        dek=dek,
-        record_id=record_id,
-        wrapping_key=baseline_key,
-        wrapped_for="policy-001",
-    )
-    emergency_wrapping = wrap_dek(
-        dek=dek,
-        record_id=record_id,
-        wrapping_key=emergency_key,
-        wrapped_for="emergency",
-    )
-    return {
-        "plaintext": plaintext,
-        "dek": dek,
-        "baseline_key": baseline_key,
-        "emergency_key": emergency_key,
-        "record": record,
-        "baseline_wrapping": baseline_wrapping,
-        "emergency_wrapping": emergency_wrapping,
-    }
+    """One ingested record and the material an open emergency session holds."""
+    return build_rotation_scenario(record_id)
 
 
 def _register(
@@ -90,16 +58,19 @@ def _register(
     actor_id="dr-alice",
     correlation_id="corr-001",
     duration_seconds=None,
+    return_state=LifecycleState.GRANTED,
 ):
+    # Expiry runs the real rotation for this scenario (ADR-0069).
+    scenario.setdefault("rotator", PlanRotator(scenario))
+    manager.attach_rotator(scenario["rotator"])
     return manager.register_session(
         record_id=scenario["record"].record_id,
         actor_id=actor_id,
         correlation_id=correlation_id,
         emergency_key=scenario["emergency_key"],
-        baseline_wrapping_key=scenario["baseline_key"],
-        baseline_wrapping=scenario["baseline_wrapping"],
         emergency_wrapping=scenario["emergency_wrapping"],
         current_record=scenario["record"],
+        return_state=return_state,
         duration_seconds=duration_seconds,
     )
 
@@ -177,11 +148,19 @@ def test_custom_and_default_timebox_duration(signing_keys, clock) -> None:
 def test_auto_expiry_full_rotation_cycle(scenario, signing_keys, clock) -> None:
     """expire_session emits both signed transitions and rotates the DEK."""
     signing_key, public_key = signing_keys
+    clinical = ClinicalMetadata(
+        title="Synthetic sensitive report",
+        source="hospital",
+        sensitivity="mental_health",
+        care_team_consent=True,
+    )
+    scenario["record"] = scenario["record"].model_copy(update={"clinical": clinical})
     manager = EmergencyExpiryManager(signing_key=signing_key, clock=clock)
     _register(manager, scenario, duration_seconds=30.0)
     clock.advance(30)  # now == expires_at
 
     result = manager.expire_session(scenario["record"].record_id)
+    assert result.rotated_record.clinical == clinical
 
     assert result.expired_event.from_state == LifecycleState.EMERGENCY_OPEN
     assert result.expired_event.to_state == LifecycleState.EXPIRED
@@ -201,7 +180,7 @@ def test_auto_expiry_full_rotation_cycle(scenario, signing_keys, clock) -> None:
     verify_transition_event(result.expired_event, public_key)
     verify_transition_event(result.rebaselined_event, public_key)
 
-    new_dek = unwrap_dek(result.rotated_wrapping, scenario["baseline_key"])
+    new_dek = rotated_dek(scenario, result)
     recovered_plaintext = decrypt_record(result.rotated_record, new_dek)
     assert recovered_plaintext == scenario["plaintext"]
 
@@ -273,16 +252,8 @@ def test_background_monitor_expires_without_admin_action(
     manager = EmergencyExpiryManager(
         signing_key=signing_key, default_duration_seconds=0.05
     )
-    manager.register_session(
-        record_id=scenario["record"].record_id,
-        actor_id="dr-alice",
-        correlation_id="corr-monitor-001",
-        emergency_key=scenario["emergency_key"],
-        baseline_wrapping_key=scenario["baseline_key"],
-        baseline_wrapping=scenario["baseline_wrapping"],
-        emergency_wrapping=scenario["emergency_wrapping"],
-        current_record=scenario["record"],
-        duration_seconds=0.05,
+    _register(
+        manager, scenario, correlation_id="corr-monitor-001", duration_seconds=0.05
     )
 
     manager.start_monitor(poll_interval=0.05)
@@ -301,3 +272,28 @@ def test_background_monitor_expires_without_admin_action(
         assert swept, "background monitor did not expire the session in time"
     finally:
         manager.stop_monitor()
+
+
+def test_expiry_without_a_rotator_never_returns_to_baseline(
+    scenario, signing_keys, clock
+) -> None:
+    """ADR-0069: no rotation, no re-baseline -- the session stays closed."""
+    from lifecycle.exceptions import RotationNotConfiguredError
+
+    signing_key, _ = signing_keys
+    manager = EmergencyExpiryManager(signing_key=signing_key, clock=clock)
+    manager.register_session(
+        record_id=scenario["record"].record_id,
+        actor_id="dr-alice",
+        correlation_id="corr-no-rotator",
+        emergency_key=scenario["emergency_key"],
+        emergency_wrapping=scenario["emergency_wrapping"],
+        current_record=scenario["record"],
+        return_state=LifecycleState.GRANTED,
+        duration_seconds=5.0,
+    )
+    clock.advance(5)
+    with pytest.raises(RotationNotConfiguredError):
+        manager.expire_session(scenario["record"].record_id)
+    with pytest.raises(EmergencySessionExpiredError):
+        manager.get_active_emergency_key(scenario["record"].record_id)

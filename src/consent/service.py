@@ -7,9 +7,9 @@ objects, and provides a single :func:`authorize_read` predicate that a caller
 runs before invoking the crypto path. It does *not* wrap or re-wrap records --
 that is P3-14's (ingest) and P3-7's (revocation-by-rotation) territory.
 
-The canonical payload format is the same shape as ``authority/issuance.py`` and
-``lifecycle/state_machine.py`` (``_FIELD_SEPARATOR = b"\\x1f"``) so every signed
-artifact in the project shares one construction.
+Signed bytes use ``crypto_core.encode_fields``: a domain tag, then
+length-prefixed fields
+(ADR-0077), like every other signed artefact in the project.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from uuid import UUID, uuid4
 
 from contracts import ConsentGrant, ConsentRequest, DEKWrapping, Record
 from contracts.enums import ConsentStatus
-from crypto_core import aes_gcm_decrypt, sign, verify
+from crypto_core import aes_gcm_decrypt, encode_fields, sign, verify
 from crypto_core.types import ECPrivateKey, ECPublicKey
 from policy.engine import AttributeKeyring, CompiledPolicy, unwrap_dek_via_policy
 
@@ -32,11 +32,16 @@ from consent.exceptions import (
     ConsentSubjectError,
 )
 
-_FIELD_SEPARATOR = b"\x1f"
+# encode_fields domain tags (ADR-0077); scope is a nested encoding.
+_REQUEST_DOMAIN = "ehr/consent-request/v1"
+_GRANT_DOMAIN = "ehr/consent-grant/v1"
+_SCOPE_DOMAIN = "ehr/consent-scope/v1"
 _NONCE_BYTES = 16  # matches contracts.base.MIN_ANTIREPLAY_NONCE_BYTES
 
-# One year -- ARCHITECTURE §8 "nothing issues forever." The caller normally
-# supplies a shorter duration matched to the clinical episode.
+# Requests live seven days and grants thirty -- ARCHITECTURE §8 "nothing
+# issues forever." The caller normally supplies a duration matched to the
+# clinical episode. (The old comment said one year; the values were always
+# these, review F30.)
 DEFAULT_REQUEST_TTL = datetime.timedelta(days=7)
 DEFAULT_GRANT_TTL = datetime.timedelta(days=30)
 
@@ -67,13 +72,13 @@ def _request_payload(
         str(request_id).encode("utf-8"),
         patient_id.encode("utf-8"),
         requester_id.encode("utf-8"),
-        _FIELD_SEPARATOR.join(item.encode("utf-8") for item in scope),
+        encode_fields(_SCOPE_DOMAIN, [item.encode("utf-8") for item in scope]),
         purpose.encode("utf-8"),
         requested_at.astimezone(datetime.timezone.utc).isoformat().encode("utf-8"),
         expires_at.astimezone(datetime.timezone.utc).isoformat().encode("utf-8"),
         nonce,
     ]
-    return _FIELD_SEPARATOR.join(fields)
+    return encode_fields(_REQUEST_DOMAIN, fields)
 
 
 def _grant_payload(
@@ -94,13 +99,13 @@ def _grant_payload(
         str(request_id).encode("utf-8"),
         patient_id.encode("utf-8"),
         grantee_id.encode("utf-8"),
-        _FIELD_SEPARATOR.join(item.encode("utf-8") for item in scope),
+        encode_fields(_SCOPE_DOMAIN, [item.encode("utf-8") for item in scope]),
         status.value.encode("utf-8"),
         decided_at.astimezone(datetime.timezone.utc).isoformat().encode("utf-8"),
         expires_at.astimezone(datetime.timezone.utc).isoformat().encode("utf-8"),
         nonce,
     ]
-    return _FIELD_SEPARATOR.join(fields)
+    return encode_fields(_GRANT_DOMAIN, fields)
 
 
 # ---------------------------------------------------------------------------

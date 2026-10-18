@@ -14,23 +14,29 @@ from __future__ import annotations
 import base64
 
 import pytest
-from api.hospital import create_hospital_app
+from api.hospital import FacilityTrust, create_hospital_app
 from api.repository import InMemoryStorageRepository
+from api.rotation import RotationPorts
 from breakglass.emergency_key import generate_emergency_key, split_emergency_key
+from contracts.clinical import ClinicalMetadata
 from contracts.enums import LifecycleState, PolicyNodeType
 from contracts.policy import Attribute, PolicyTree
 from crypto_core import (
+    certificate_to_pem,
     generate_ec_keypair,
 )
-from fastapi.testclient import TestClient
 from identity.certificates import (
     issue_clinician_certificate,
     issue_facility_ca_certificate,
+    issue_patient_certificate,
 )
 from identity.root_anchor import generate_root_anchor
 from lifecycle.expiry import EmergencyExpiryManager
 from pre.elgamal import generate_keypair as generate_pre_keypair
 from records.ingest import ingest_record
+from records.labels import sign_clinical_labels
+
+from tests.service_pki import ServicePKI
 
 
 @pytest.fixture()
@@ -54,8 +60,9 @@ def federation_pki():
     bob_priv, bob_pub = generate_ec_keypair()
     bob_cert = issue_clinician_certificate(fb_priv, fb_cert, "dr-bob", bob_pub)
 
-    # Patient 001
+    # Patient 001, certified by their home facility (ADR-0064)
     pat_priv, pat_pub = generate_ec_keypair()
+    pat_cert = issue_patient_certificate(fa_priv, fa_cert, "patient-001", pat_pub)
 
     # Facility lifecycle signing key
     life_priv, life_pub = generate_ec_keypair()
@@ -84,9 +91,105 @@ def federation_pki():
         "bob_pre_pub": bob_pre_pub,
         "pat_priv": pat_priv,
         "pat_pub": pat_pub,
+        "pat_cert": pat_cert,
+        "pat_cert_pem": certificate_to_pem(pat_cert).decode("ascii"),
         "life_priv": life_priv,
         "life_pub": life_pub,
+        # Root-issued service identities and signed clients (ADR-0066).
+        "services": ServicePKI(root),
     }
+
+
+class FromHost:
+    """ASGI wrapper that presents a fixed client address to the wrapped app.
+
+    Starlette's TestClient sends no client address at all, so address-based
+    checks (the F14 authoring allowlist) would refuse every test call.
+    """
+
+    def __init__(self, app, host: str = "testclient") -> None:
+        self.app = app
+        self.host = host
+
+    def __getattr__(self, name):
+        return getattr(self.app, name)
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] in ("http", "websocket"):
+            scope = {**scope, "client": (self.host, 50000)}
+        await self.app(scope, receive, send)
+
+
+class RecordingRotationPorts:
+    """Rotation ports for tests (ADR-0069): authoring keys from a keyring, and
+    the shares the rotation hands out kept for the test to read."""
+
+    def __init__(self, keyring: dict[tuple[str, str, str], bytes]) -> None:
+        self.keyring = keyring
+        self.deposits: list[dict] = []
+
+    def author_keys(self, leaves):
+        return {leaf: self.keyring[leaf] for leaf in leaves}
+
+    def deposit_shares(self, record_id, generation, clinician_share, audit_share):
+        self.deposits.append(
+            {
+                "record_id": record_id,
+                "generation": generation,
+                "clinician_share": clinician_share,
+                "audit_share": audit_share,
+            }
+        )
+
+    @property
+    def ports(self) -> RotationPorts:
+        # Late-bound, so a test can swap either call for a failing one.
+        return RotationPorts(
+            author_keys=lambda leaves: self.author_keys(leaves),
+            deposit_shares=lambda *args: self.deposit_shares(*args),
+        )
+
+
+class RecordingAuditSink:
+    """An explicit in-memory audit destination (review F19) that tests can read."""
+
+    def __init__(self) -> None:
+        self.events: list[dict] = []
+
+    def __call__(self, event_type, event_data, actor_id, correlation_id) -> None:
+        self.events.append(
+            {
+                "event_type": event_type,
+                "event_data": event_data,
+                "actor_id": actor_id,
+                "correlation_id": correlation_id,
+            }
+        )
+
+    def of_type(self, event_type: str) -> list[dict]:
+        return [e for e in self.events if e["event_type"] == event_type]
+
+
+def signed_labels(
+    pki, record_id: str, patient_id: str = "patient-001", **labels
+) -> ClinicalMetadata:
+    """Clinical labels signed by the patient, as the custodian signs them."""
+    return sign_clinical_labels(
+        ClinicalMetadata(**labels),
+        record_id=record_id,
+        patient_id=patient_id,
+        signing_key=pki["pat_priv"],
+        certificate_pem=pki["pat_cert_pem"],
+    )
+
+
+def make_trust(pki, revoked_serials=frozenset()) -> FacilityTrust:
+    """The facility's configured break-glass trust anchors (review F1)."""
+    return FacilityTrust(
+        root=pki["root"].certificate,
+        facility_cas={"facility-a": pki["fa_cert"], "facility-b": pki["fb_cert"]},
+        revoked_serials=frozenset(revoked_serials),
+    )
 
 
 @pytest.fixture()
@@ -160,6 +263,8 @@ def test_setup(federation_pki, attribute_materials):
         emergency_key=em_key,
         content_type="application/json",
         record_id="rec-001",
+        # Verified default labels: the record keeps the pre-label rules.
+        clinical=signed_labels(federation_pki, "rec-001"),
     )
 
     repo.insert_record(ingest_res.record)
@@ -171,6 +276,9 @@ def test_setup(federation_pki, attribute_materials):
     )
     for _term, token in ingest_res.search_tokens.items():
         repo.insert_search_term(ingest_res.record.record_id, token)
+    repo.put_sealed_search_terms(
+        ingest_res.record.record_id, ingest_res.sealed_search_terms
+    )
 
     # The emergency wrapping ingest produced: the record's DEK under the
     # emergency key. (Wrapping the policy root secret here instead would hand
@@ -178,15 +286,23 @@ def test_setup(federation_pki, attribute_materials):
     em_wrapping = ingest_res.emergency_dek_wrapping
     repo.insert_dek_wrapping(em_wrapping)
 
+    audit_sink = RecordingAuditSink()
+    rotation = RecordingRotationPorts(attribute_materials["attr_keyring"])
     app = create_hospital_app(
         facility_id="facility-a",
         repository=repo,
         expiry_manager=expiry_manager,
+        trust=make_trust(federation_pki),
+        audit_sink=audit_sink,
+        rotation_ports=rotation.ports,
     )
-    client = TestClient(app)
+    # Signed as bootstrap, which every facility route allows (ADR-0066).
+    client = federation_pki["services"].client(app, "facility-a")
 
     return {
         "repo": repo,
+        "audit_sink": audit_sink,
+        "rotation": rotation,
         "app": app,
         "client": client,
         "expiry_manager": expiry_manager,

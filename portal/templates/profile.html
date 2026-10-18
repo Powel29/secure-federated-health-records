@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Your profile · {{ product_name }}{% endblock %}
+{% block content %}
+<div class="grid-2">
+  <section class="card card-frame" aria-labelledby="acct-h">
+    <div class="subhead">
+      <h2 class="card-title" id="acct-h">Account</h2>
+      <span class="tag tag-quiet">{{ user.profile.get_role_display }}</span>
+    </div>
+    <dl class="facts">
+      <div><dt>Name</dt><dd>{% firstof subject.display_name directory.full_name user.get_full_name "Not recorded" %}</dd></div>
+      <div><dt>Username</dt><dd class="mono">{{ user.username }}</dd></div>
+      <div><dt>Email</dt><dd>{{ user.email|default:"Not recorded" }}</dd></div>
+      <div><dt>Subject</dt><dd class="mono">{{ subject_id }}</dd></div>
+      <div><dt>Member since</dt><dd class="mono">{{ user.date_joined|date:"Y-m-d" }}</dd></div>
+      <div><dt>Last sign-in</dt><dd class="mono">{{ user.last_login|date:"Y-m-d H:i"|default:"—" }}</dd></div>
+      {% if user.profile.role == "clinician" %}<div><dt>Facility</dt><dd class="mono">{{ facility_id|default:"—" }}</dd></div>{% endif %}
+    </dl>
+  </section>
+
+  {% if user.profile.role == "patient" %}
+  <section class="card" aria-labelledby="dir-h">
+    <div class="subhead"><h2 class="card-title" id="dir-h">Identification details</h2></div>
+    {% if directory %}
+    <dl class="facts">
+      <div><dt>Given name</dt><dd>{{ directory.given_name|default:"—" }}</dd></div>
+      <div><dt>Family name</dt><dd>{{ directory.family_name|default:"—" }}</dd></div>
+      <div><dt>Date of birth</dt><dd class="mono">{{ directory.date_of_birth|date:"Y-m-d"|default:"Not recorded" }}</dd></div>
+      <div><dt>Age group</dt><dd>{% if directory.is_minor %}Minor{% elif directory.is_minor == None %}Unknown{% else %}Adult{% endif %}</dd></div>
+      <div><dt>Locality</dt><dd>{{ directory.locality|default:"Not recorded" }}</dd></div>
+      <div><dt>Other names</dt><dd>{{ directory.aliases|join:", "|default:"None" }}</dd></div>
+      <div><dt>Home facility</dt><dd class="mono">{{ directory.home_facility_id|default:"—" }}</dd></div>
+      <div><dt>Home authority</dt><dd class="mono">{{ directory.home_authority_id|default:"—" }}</dd></div>
+    </dl>
+    <p class="basis">Clinicians use these details only to find you in an emergency. Finding you opens nothing; every lookup is in the audit chain <span class="ref">ADR-0033</span>.</p>
+    {% else %}
+    <p class="empty">You are not in the emergency directory, so a clinician cannot identify you by name and date of birth.</p>
+    {% endif %}
+  </section>
+  {% endif %}
+</div>
+
+<div class="grid-2">
+  <section class="card" aria-labelledby="cred-h">
+    <div class="subhead">
+      <h2 class="card-title" id="cred-h">Credentials and keys</h2>
+      {% if not subject %}<span class="tag tag-quiet">No key agent enrolled</span>{% elif user.profile.role != "clinician" %}<span class="tag tag-ok">{% include "_icon.html" with name="check" %}Key agent enrolled</span>{% elif subject.certificate_pem %}<span class="tag tag-ok">{% include "_icon.html" with name="check" %}Certificate chains to root</span>{% else %}<span class="tag tag-quiet">No certificate</span>{% endif %}
+    </div>
+    {% if subject %}
+    <dl class="facts">
+      <div><dt>Signing key</dt><dd>ECDSA P-256, held by the key custodian</dd></div>
+      {% if user.profile.role == "clinician" %}<div><dt>Re-encryption key</dt><dd>{% if subject.pre_public_key %}ElGamal, held by your key agent{% else %}None{% endif %}</dd></div>{% endif %}
+    </dl>
+    <div class="table-wrap"><table class="table stack-sm">
+      <thead><tr><th>Attribute</th><th>Issuer</th><th>Valid until</th><th>Status</th></tr></thead>
+      <tbody>{% for c in subject.credentials %}
+        <tr><td data-label="Attribute"><span class="tag tag-id">{{ c.name }}:{{ c.value }}</span></td><td data-label="Issuer" class="mono">{{ c.issuer_id }}</td><td data-label="Valid until" class="mono">{{ c.valid_until|slice:":10" }}</td><td data-label="Status">{% if c.status == "active" %}<span class="tag tag-ok">Active</span>{% else %}<span class="tag tag-quiet">{{ c.status|humanize_code }}</span>{% endif %}</td></tr>
+      {% empty %}<tr><td colspan="4" class="empty">No attribute credential issued yet.</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% else %}
+    <p class="empty">No authority-issued key is held for <span class="mono">{{ subject_id }}</span>, so nothing can be signed or opened for you yet <span class="ref">ADR-0021</span>.</p>
+    {% endif %}
+    {% for r in requests %}<p class="tiny text-muted mb-0">Registration: <span class="tag tag-quiet">{{ r.get_status_display }}</span> {{ r.requested_attributes }}</p>{% endfor %}
+  </section>
+
+  {% if user.profile.role == "patient" %}
+  <section class="card" aria-labelledby="rep-h">
+    <div class="subhead"><h2 class="card-title" id="rep-h">Guardians and contacts</h2></div>
+    <h3>People who represent you</h3>
+    {% for r in representatives %}
+      <p>{{ r.display_name }} · {{ r.get_relationship_display }} · verified until <span class="mono">{{ r.expires_at|date:"Y-m-d" }}</span>{% if r.receive_notifications %} · receives emergency notices{% endif %}</p>
+    {% empty %}<p class="empty">No guardian or contact is recorded for you.</p>{% endfor %}
+    {% if represented %}
+    <h3>Minors you represent</h3>
+    {% for p in represented %}<p>{{ p.full_name }} · <a href="{% url 'patient:access' %}?for={{ p.subject_id|urlencode }}">Manage their consent</a></p>{% endfor %}
+    {% endif %}
+    <p class="basis">A registration administrator verifies these relationships. A guardian or parent of a minor may decide that minor's consent; next of kin receive notices only <span class="ref">ADR-0061</span>.</p>
+  </section>
+  {% endif %}
+</div>
+<p class="tiny text-muted">These details are read only. To correct them, contact your registration desk or issuing authority.</p>
+{% endblock %}

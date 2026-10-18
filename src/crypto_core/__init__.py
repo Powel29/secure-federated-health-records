@@ -16,6 +16,7 @@ from crypto_core.asymmetric import (
     sign,
     verify,
 )
+from crypto_core.encoding import encode_fields
 from crypto_core.exceptions import (
     CertificateExpiredError,
     CryptoError,
@@ -37,6 +38,7 @@ from crypto_core.x509_certs import (
     build_self_signed_tls_cert,
     certificate_from_pem,
     certificate_public_key,
+    certificate_role,
     certificate_to_pem,
     check_certificate_validity_window,
     is_ca_certificate,
@@ -56,8 +58,10 @@ __all__ = [
     "build_self_signed_tls_cert",
     "certificate_from_pem",
     "certificate_public_key",
+    "certificate_role",
     "certificate_to_pem",
     "check_certificate_validity_window",
+    "encode_fields",
     "generate_ec_keypair",
     "generate_key",
     "generate_nonce",

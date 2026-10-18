@@ -1,13 +1,13 @@
-benchmark,ciphertext_bytes,expansion_percent,iterations,max_ms,mean_ms,median_ms,metric,min_ms,parameters,plaintext_bytes
-threshold_reconstruction,,,30,0.019458006136119366,0.005705464476098617,0.005042064003646374,latency_ms,0.004916917532682419,"Shamir k=2,n=3",
-rewrap_cost,,,30,0.04033301956951618,0.016956923839946587,0.0149579718708992,latency_ms,0.014541903510689735,AES-256-GCM unwrap + wrap,
-revocation_latency,,,30,1.735708094201982,0.23111384750033417,0.17427100101485848,latency_ms,0.15337509103119373,DEK rotation + policy recompilation + signed transition,
-pre_reencryption_component,,,30,0.23158302064985037,0.22259156685322523,0.22356200497597456,latency_ms,0.2025830326601863,ElGamal PRE,
-ciphertext_expansion,80,25.0,1,,,,expansion_percent,,plaintext_bytes=64,64
-ciphertext_expansion,272,6.25,1,,,,expansion_percent,,plaintext_bytes=256,256
-ciphertext_expansion,1040,1.5625,1,,,,expansion_percent,,plaintext_bytes=1024,1024
-ciphertext_expansion,4112,0.390625,1,,,,expansion_percent,,plaintext_bytes=4096,4096
-ciphertext_expansion,16400,0.09765625,1,,,,expansion_percent,,plaintext_bytes=16384,16384
-cross_facility_latency,,,30,22.020415985025465,16.16764993717273,15.41591651039198,latency_ms,15.125083969905972,facility-b HTTP discovery for patient pat-101,
-emergency_search_latency,,,30,3.9897080278024077,0.7585695944726467,0.619229453150183,latency_ms,0.5624169716611505,facility-b emergency-search endpoint,
-audit_verification,,,30,3.5242500016465783,2.2832777933217585,2.2463329951278865,latency_ms,2.076457953080535,verify_full_chain over persisted audit chain,
+benchmark,ciphertext_bytes,expansion_percent,iterations,max_ms,mean_ms,median_ms,metric,min_ms,p95_ms,parameters,plaintext_bytes,warmup
+threshold_reconstruction,,,30,0.007799999366397969,0.006713333368679741,0.00670000008540228,latency_ms,0.006399999620043673,0.007000000141488272,"Shamir k=2,n=3",,5
+rewrap_cost,,,30,0.03190000006725313,0.023549999968963675,0.022500000341096893,latency_ms,0.02099999983329326,0.030080000124144135,AES-256-GCM unwrap + wrap,,5
+revocation_latency,,,30,0.15749999965919415,0.14123666672579324,0.14009999995323597,latency_ms,0.13440000020636944,0.15302499955396343,DEK rotation + policy recompilation + signed transition,,5
+pre_reencryption_component,,,30,0.3281999997852836,0.17793666662934507,0.16265000022031018,latency_ms,0.16039999991335208,0.2910299997893162,ElGamal PRE,,5
+ciphertext_expansion,80,25.0,1,,,,expansion_percent,,,plaintext_bytes=64,64,
+ciphertext_expansion,272,6.25,1,,,,expansion_percent,,,plaintext_bytes=256,256,
+ciphertext_expansion,1040,1.5625,1,,,,expansion_percent,,,plaintext_bytes=1024,1024,
+ciphertext_expansion,4112,0.390625,1,,,,expansion_percent,,,plaintext_bytes=4096,4096,
+ciphertext_expansion,16400,0.09765625,1,,,,expansion_percent,,,plaintext_bytes=16384,16384,
+cross_facility_latency,,,30,193.6158999997133,171.78074000003107,170.8938499996293,latency_ms,150.29130000039004,190.18002999964665,facility-b HTTP discovery for patient pat-101,,5
+emergency_search_latency,,,30,188.88299999980518,167.38238999999643,169.42954999967696,latency_ms,152.19879999949626,185.43737500012867,facility-b emergency-search endpoint,,5
+audit_verification,,,30,9.30419999986043,6.963939999908082,6.818599999860453,latency_ms,6.292500000199652,7.785245000104624,verify_full_chain over persisted audit chain,,5

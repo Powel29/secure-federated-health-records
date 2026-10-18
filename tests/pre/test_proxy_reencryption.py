@@ -117,3 +117,22 @@ def test_decrypt_point_rejects_non_subgroup_c1() -> None:
     sk, _ = generate_keypair()
     with pytest.raises(PREKeyError):
         decrypt_point(sk, _NON_SUBGROUP_ELEMENT, c2=12345)
+
+
+def test_rekey_inverts_to_the_reverse_direction() -> None:
+    """ADR-0076 (review D11-a): the scheme is bidirectional, and says so.
+
+    Whoever holds rk_{A->B} computes rk^-1 mod q, which is rk_{B->A}: a
+    ciphertext for B re-encrypted with it decrypts under A's key. This test
+    documents the limitation the paper states; it is not a property we want.
+    """
+    sk_a, _pk_a = generate_keypair()
+    sk_b, pk_b = generate_keypair()
+    m = pow(GENERATOR_G, secrets.randbelow(SUBGROUP_ORDER_Q - 2) + 2, SAFE_PRIME_P)
+
+    rk_a_to_b = generate_rekey(sk_a, sk_b)
+    rk_b_to_a = pow(rk_a_to_b, -1, SUBGROUP_ORDER_Q)
+    assert rk_b_to_a == generate_rekey(sk_b, sk_a)
+
+    c1, c2 = encrypt_point(pk_b, m)
+    assert decrypt_point(sk_a, *reencrypt(rk_b_to_a, c1, c2)) == m

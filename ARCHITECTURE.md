@@ -19,7 +19,7 @@ sophistication win.
 | Hashing | `hashlib` (stdlib) | SHA-256 for the audit chain |
 | Randomness | `secrets` (stdlib) | Never `random` for anything security-relevant |
 | Shamir SSS | **Hand-rolled**, GF(p) with p a 256-bit prime | ~80 lines, it is a course topic, and it removes a dependency |
-| Proxy re-encryption | **Hand-rolled** ElGamal-style unidirectional PRE | No maintained easy-install PRE library exists |
+| Proxy re-encryption | **Hand-rolled** ElGamal-style PRE (bidirectional, ADR-0076) | No maintained easy-install PRE library exists |
 | Access structure | **Hand-rolled** policy tree over Shamir | Replaces CP-ABE — see §3 |
 | Services | FastAPI + Uvicorn | Trivial to run several processes; gives us real network boundaries |
 | Storage | **PostgreSQL** (one shared store) | Real concurrent multi-service access; holds only ciphertext, wrapped keys, and coded index — stores data, never decides access (ADR-0014) |
@@ -47,9 +47,11 @@ primitives *through here*, never directly.
 **C2 — `shamir`.** Threshold secret sharing over a prime field. Split, combine,
 share validation. Used by both the break-glass gate and the policy engine.
 
-**C3 — `pre`.** Unidirectional ElGamal-style proxy re-encryption: generate
-re-encryption key from A to B, transform a ciphertext without ever seeing
-plaintext.
+**C3 — `pre`.** ElGamal-style proxy re-encryption over a safe-prime group:
+re-encryption key `rk = sk_a · sk_b⁻¹ mod q` and a ciphertext transform. The
+scheme is **bidirectional** (`rk⁻¹` re-encrypts B to A) and computing `rk` needs
+both secret keys (ADR-0076). The break-glass path uses only its KEM: the
+facility unwraps the DEK and delivers it to the clinician's ElGamal key.
 
 **C4 — `storage`.** PostgreSQL schema and repository objects. Tables: patients,
 records, dek_wrappings, attributes, authorities, facilities, lifecycle_state,
@@ -79,8 +81,10 @@ generation and verification, and the rotation logic each transition triggers.
 timestamp ‖ actor)` — append and full-chain verification. Runs as its own
 process. Also custodian of one break-glass share (see C11).
 
-**C11 — `breakglass`.** The 2-of-3 threshold gate: attending clinician, the
-patient's home authority or its federated delegate, and the audit service. The
+**C11 — `breakglass`.** The threshold gate. The emergency key is split 2-of-3
+for the attending clinician (custody), the patient's home authority or its
+federated delegate, and the audit service; share 2 is reserved and not
+deposited in this build, so break-glass needs shares 1 and 3 (ADR-0074). The
 audit service's share is released **only after** its log entry is committed and
 the new chain head is returned. Reconstructs the time-boxed emergency key.
 
@@ -183,8 +187,9 @@ C9 lifecycle          <- C1, C4, C8        (transitions rotate real keys)
    revocation path    <- C9, C8            (revoke = re-wrap DEK)
 
 C11 breakglass        <- C2, C9, C10, C6   (shares, a state to enter, an
-                                            audit service to gate on, a home
-                                            authority to hold share 2)
+                                            audit service to gate on; share 2
+                                            reserved for a home authority,
+                                            ADR-0074)
 C12 search            <- C1, C8, C11       (tokens derive from emergency key)
    cross-facility     <- C3, C5, C13       (PRE re-wrap to an out-of-network
    handoff                                  clinician at a discovered node)
@@ -246,7 +251,9 @@ contracts (T02) -> crypto_core -> records -> lifecycle -> breakglass -> search -
 
 0. **Identification.** Clinician looks up the patient in the clinician
    portal by name and date of birth against the portal's `PatientDirectory`
-   (ADR-0033). PII lives only in the portal DB — never in the crypto store
+   (ADR-0033). An unconscious patient cannot give these, so the scenario
+   assumes they are read from an ID card the patient carries; unidentified
+   patients are a stated limitation (ADR-0059, `PROJECT.md` §5 item 7). PII lives only in the portal DB — never in the crypto store
    (ADR-0011). Ambiguous matches are shown as a list; the clinician
    selects one, and the resulting `patient_id` is carried into the signed
    assertion below. The lookup itself is a `patient.lookup` audit event
@@ -260,22 +267,44 @@ contracts (T02) -> crypto_core -> records -> lifecycle -> breakglass -> search -
 3. Threshold collection begins (C11):
    - **Share 1** — attending clinician, released against a valid emergency
      assertion and a valid cross-certified identity.
-   - **Share 2** — patient's home authority, or its federated delegate if the
-     home authority is unreachable.
+   - **Share 2** — reserved for the patient's home authority or its federated
+     delegate. **Not deposited in this build (ADR-0074):** a holder of share 2
+     would let shares 1 + 2 open a record with no log entry unless it also
+     validated the assertion and committed to the audit chain first.
+   - **In transit** every share is sealed to its recipient's share key,
+     published at `GET /share-key` and signed by the recipient's
+     root-certified service identity; share 3 is sealed by the audit service
+     straight to the facility's gate, so the custodian forwarding it cannot
+     read it (ADR-0079).
    - **Share 3** — audit service. **The audit service computes and commits
      `h_i = SHA-256(h_{i-1} ‖ event ‖ timestamp ‖ actor)` first, and only then
      returns its share along with the new chain head.** If the log write fails,
      no share is returned and break-glass fails closed.
-4. Any 2 of 3 reconstruct the emergency key. `lifecycle` records the signed
-   Granted → Emergency-open transition (C9).
-5. Cross-facility handoff: the record key is re-wrapped to the out-of-network
-   clinician via proxy re-encryption, without the proxy ever seeing plaintext
-   (C3).
+
+     Each share holder validates the emergency assertion itself before it
+     releases anything: the audit service runs the same five-point check
+     against its own trust anchors and requires the assertion's signed context
+     digest to name this record (ADR-0067).
+4. Shares 1 and 3 reconstruct the emergency key (any 2 of the 3-way split;
+   only these two are held). `lifecycle` records the
+   Granted → Emergency-open transition, signed by the clinician's own key
+   inside the custodian and verified against their certificate before any
+   share is combined (C9, ADR-0068).
+5. Cross-facility handoff: the facility unwraps the DEK and delivers it to
+   the out-of-network clinician's ElGamal key with the `pre` KEM (C3). The
+   facility sees the DEK; there is no decryption-free re-encryption here
+   (ADR-0076).
 6. **Emergency search** becomes available: tokens are derived from the emergency
    key via HKDF, so the capability exists only in this state (C12).
 7. Time-box expires. `lifecycle` performs Emergency-open → Expired → forced
-   rotation back to baseline with no administrator action (C9). Search tokens
-   are dead because the key they derive from is gone.
+   rotation back to baseline with no administrator action (C9). The rotation
+   replaces every key (ADR-0069): a new DEK and re-encrypted record, the same
+   policy tree compiled under a new root secret, a new emergency key whose new
+   shares go to the custodian and the audit service, and the search index
+   re-derived under it from the record's term list (sealed under the DEK at
+   ingest). It is stored before the record returns to baseline. Search tokens
+   are dead because the key they derive from is gone, and the old shares open
+   nothing.
 
 ### Trust boundaries
 
@@ -306,7 +335,7 @@ src/
   records/         C8   record + envelope encryption, re-wrap
   lifecycle/       C9   the state machine
   audit/           C10  hash-chained signed log + share custody
-  breakglass/      C11  2-of-3 threshold gate
+  breakglass/      C11  threshold gate (2-of-3 split, shares 1+3 held)
   search/          C12  encrypted index + emergency-only tokens
   federation/      C13  patient-indexed discovery
   api/             C14  FastAPI apps (facility, authority, audit)
@@ -398,9 +427,11 @@ exists.
 - One `.env` per service, generated by the bootstrap script — never committed.
 - Keys and certs land in `deploy/pki/`, which is `.gitignore`d in its entirety.
 - Ports, timer durations, and the emergency time-box length are configuration,
-  not constants in code. **The time-box must be adjustable**: 15 minutes is
-  realistic for the paper, 60 seconds is what you need for a live demo that does
-  not require the audience to wait.
+  not constants in code. **The time-box must be adjustable**: hours (an
+  emergency encounter; the facility default is 4 h) is realistic for the paper,
+  60–120 seconds is what you need for a live demo that does not require the
+  audience to wait. The emergency assertion that opens it is a separate,
+  one-time token capped at 15 minutes (ADR-0056).
 - No secrets in `docker-compose.yml`. Generated at bootstrap, mounted in.
 
 ### Demo-day requirements
@@ -429,7 +460,8 @@ Capture points:
   inter-service traffic in one place.
 - **Local path:** capture on loopback across the five service ports.
 
-PCAPs are written to `bench/captures/`, which is `.gitignore`d — captures of a
+PCAPs are written to `wire/captures/` (beside the canary manifest each run
+writes; review F40), which is `.gitignore`d — captures of a
 seeded synthetic federation are still large and still regenerable. The analysers
 and their assertions are committed; the raw captures are not.
 
@@ -486,17 +518,32 @@ portal DB, never in the crypto store (ADR-0011).
 
 ### Replay protection
 
-Emergency assertions, share requests, and transition events each carry a
-one-time ID. A consumed-ID store rejects reuse. Without this, a captured
-break-glass request could be replayed for repeated emergency sessions, which
-would defeat the time-boxing that the state machine exists to enforce.
+Emergency assertions, share requests, transition events and every
+service-to-service request each carry a one-time ID. A consumed-ID store
+rejects reuse. Without this, a captured break-glass request could be replayed
+for repeated emergency sessions, which would defeat the time-boxing that the
+state machine exists to enforce.
+
+### Service identity and signed requests
+
+Every federation process (facilities, the audit service, the authorities, the
+custodian, the portal and the bootstrap job) holds a key and a certificate
+signed directly by the federation root: CN = service id, OU =
+`service:<kind>`. Every call between them carries that certificate and a
+signed one-time `RequestEnvelope` binding caller, recipient, method, path,
+body and time; the body itself travels unchanged. The callee checks all of it
+before any route code runs, then allows the call only if the route permits the
+caller's kind (ADR-0066, reversing the service-signing cut of ADR-0015). The
+portal's key identifies the portal process; it is not a subject's key and
+opens nothing, so ADR-0014 stands.
 
 ### Object-level authorization
 Endpoints authorise the caller for the *specific* patient/record before doing
-work, but the cryptographic layer is the real backstop: an unauthorised caller
-cannot decrypt regardless. The residual risk is metadata leakage and patient-ID
-enumeration, so this is verified by a **test** in the security suite (P5-1)
-rather than a separate middleware layer (strictness pass, ADR-0015).
+work: only a key agent may read, and a requester presenting no attribute key
+is refused before the record, its wrapping or its policy is loaded
+(ADR-0066). The cryptographic layer is the real backstop: an unauthorised
+caller cannot decrypt regardless. This is verified by a **test** in the
+security suite (P5-1, claim C9).
 
 
 ### Credential lifecycle
@@ -505,6 +552,13 @@ Clinician and authority credentials carry issuer, subject, serial,
 `valid_from`, `valid_until`, and status. Expired or revoked credentials fail
 validation. A system whose central claim is that revocation is part of a unified
 key lifecycle cannot coherently issue credentials that never expire.
+
+Revoking a credential stops the authority releasing its attribute key again; it
+does not revoke a key already released. Attribute keys are one per value,
+shared by every holder and never rotated, so a holder who kept one still
+satisfies the leaves it names, including after record rotation. Stated as a
+limitation (`PROJECT.md` §5 item 9, ADR-0075); epoch-versioned keys are future
+work.
 
 
 ### Deliberately excluded

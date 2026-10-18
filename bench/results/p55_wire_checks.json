@@ -1,0 +1,185 @@
+[
+  {
+    "claim": "0-preconditions",
+    "passed": true,
+    "strength": "strong",
+    "summary": "plain shows the full scenario; TLS shows only TLS",
+    "evidence": {
+      "plain_endpoints_seen": [
+        "/attribute-keys/author",
+        "/breakglass/release",
+        "/breakglass/shares",
+        "/chain/verify",
+        "/credentials/issue",
+        "/entries",
+        "/health",
+        "/patients/pat-101/records",
+        "/records/ingest",
+        "/records/rec-001/breakglass",
+        "/records/rec-001/emergency-search",
+        "/records/rec-001/lifecycle",
+        "/records/rec-001/read",
+        "/records/rec-001/revoke",
+        "/records/rec-001/shares"
+      ]
+    }
+  },
+  {
+    "claim": "1-no-plaintext",
+    "passed": false,
+    "strength": "strong",
+    "summary": "plain profile exposes 9 secret(s) and denylisted fields in 8 message type(s); TLS capture is clean. Claim holds only if narrowed to TLS (decision D6) -- rerun with --claim1-scope tls once decided",
+    "evidence": {
+      "scope": "all",
+      "tls_hits": {},
+      "plain_hits": {
+        "attr_key:authority-med:role:emergency-physician": [
+          "base64_align0"
+        ],
+        "attr_key:authority-med:role:physician": [
+          "base64_align0"
+        ],
+        "attr_key:authority-net:owner:pat-101": [
+          "base64_align0"
+        ],
+        "attr_key:authority-net:specialty:cardiology": [
+          "base64_align0"
+        ],
+        "dek": [
+          "base64_align0"
+        ],
+        "emergency_key": [
+          "base64_align0"
+        ],
+        "record_plaintext": [
+          "base64_align0"
+        ],
+        "share1": [
+          "hex"
+        ],
+        "share3": [
+          "hex"
+        ]
+      },
+      "plain_denylisted_fields": {
+        "POST /attribute-keys/author [resp]": [
+          "key_b64"
+        ],
+        "POST /breakglass/release [resp]": [
+          "share_hex"
+        ],
+        "POST /breakglass/shares [req]": [
+          "share_hex"
+        ],
+        "POST /records/ingest [req]": [
+          "attribute_keyring",
+          "emergency_key_b64",
+          "plaintext_b64"
+        ],
+        "POST /records/rec-001/read [req]": [
+          "holder_keyring"
+        ],
+        "POST /records/rec-001/read [resp]": [
+          "plaintext_b64"
+        ],
+        "POST /records/rec-001/revoke [req]": [
+          "actor_signing_key_pem",
+          "attribute_keyring",
+          "old_dek_b64"
+        ],
+        "POST /records/rec-001/shares [req]": [
+          "share_hex"
+        ]
+      },
+      "canaries_searched": {
+        "plain": 10,
+        "tls": 10
+      }
+    }
+  },
+  {
+    "claim": "2-commit-before-release",
+    "passed": true,
+    "strength": "strong",
+    "summary": "audit COMMIT acknowledged 0.54 ms before the release response; share 3 first appears inside that response",
+    "evidence": {
+      "release_response_frame": 382,
+      "release_entry_seq": 4,
+      "first_share3_frame": 384,
+      "db_port": 55433,
+      "db_insert_ts": 1792044188.749618,
+      "db_commit_ts": 1792044188.7514696,
+      "commit_lead_ms": 0.5424022674560547
+    }
+  },
+  {
+    "claim": "3-search-leakage",
+    "passed": true,
+    "strength": "measurement",
+    "summary": "1 search(es) measured: access pattern, volume, response sizes, result counts and timing (leakage is a result, not a failure)",
+    "evidence": {
+      "profile": {
+        "query_volume": 1,
+        "answered_queries": 1,
+        "unique_observable_requests": 1,
+        "repeated_requests": {},
+        "access_pattern_by_record": {
+          "rec-001": 1
+        },
+        "queries_visible_in_clear": 1,
+        "distinct_response_sizes": [
+          43
+        ],
+        "response_bytes_by_result_count": {
+          "1": [
+            43
+          ]
+        },
+        "inter_query_seconds": []
+      },
+      "repeated_queries": {},
+      "rows": [
+        {
+          "frame": 465,
+          "timestamp": 1792044188.94246,
+          "path": "/records/rec-001/emergency-search",
+          "query_id": "q1",
+          "request_bytes": 53,
+          "response_status": 200,
+          "response_bytes": 43,
+          "result_count": 1
+        }
+      ]
+    }
+  },
+  {
+    "claim": "4-breakglass-metadata-only",
+    "passed": false,
+    "strength": "strong",
+    "summary": "break-glass secrets readable (4 canaries, scope all)",
+    "evidence": {
+      "scope": "all",
+      "plain_breakglass_uri": "/records/rec-001/breakglass",
+      "metadata_pick_validated_on_plain": true,
+      "tls_unlock_burst": {
+        "frame": 457,
+        "bytes": 3591
+      },
+      "breakglass_content_hits": {
+        "dek": [
+          "base64_align0"
+        ],
+        "emergency_key": [
+          "base64_align0"
+        ],
+        "share1": [
+          "hex"
+        ],
+        "share3": [
+          "hex"
+        ]
+      },
+      "plain_unlock_request_bytes": 3547
+    }
+  }
+]

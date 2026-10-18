@@ -28,6 +28,8 @@ from records.service import unwrap_dek, wrap_dek
 from shamir.exceptions import InvalidShareError
 from shamir.split import combine_shares
 
+from tests.transitions import open_event
+
 RECORD_ID = "rec-emergency-001"
 
 
@@ -90,10 +92,14 @@ class TestOpenEmergencyAccessHappyPath:
             dek_wrapping=unlock_scenario["wrapping"],
             transition_source_state=LifecycleState.GRANTED,
             record_id=RECORD_ID,
-            actor_id="dr-alice",
-            correlation_id="corr-001",
-            reason_code=ReasonCode.CARDIAC_ARREST,
-            lifecycle_signing_key=unlock_scenario["lifecycle_priv"],
+            transition_event=open_event(
+                RECORD_ID,
+                LifecycleState.GRANTED,
+                "dr-alice",
+                ReasonCode.CARDIAC_ARREST,
+                unlock_scenario["lifecycle_priv"],
+            ),
+            actor_public_key=(unlock_scenario["lifecycle_priv"]).public_key(),
             pre_rewrap_key=pre_pub,
         )
         assert result.emergency_key == unlock_scenario["emergency_key"]
@@ -109,10 +115,14 @@ class TestOpenEmergencyAccessHappyPath:
             dek_wrapping=unlock_scenario["wrapping"],
             transition_source_state=LifecycleState.GRANTED,
             record_id=RECORD_ID,
-            actor_id="dr-alice",
-            correlation_id="corr-002",
-            reason_code=ReasonCode.STROKE,
-            lifecycle_signing_key=unlock_scenario["lifecycle_priv"],
+            transition_event=open_event(
+                RECORD_ID,
+                LifecycleState.GRANTED,
+                "dr-alice",
+                ReasonCode.STROKE,
+                unlock_scenario["lifecycle_priv"],
+            ),
+            actor_public_key=(unlock_scenario["lifecycle_priv"]).public_key(),
             pre_rewrap_key=pre_pub,
         )
         recovered_dek = _unwrap_rewrapped_dek(result.rewrapped_dek, pre_priv, RECORD_ID)
@@ -126,10 +136,14 @@ class TestOpenEmergencyAccessHappyPath:
             dek_wrapping=unlock_scenario["wrapping"],
             transition_source_state=LifecycleState.REVOKED,
             record_id=RECORD_ID,
-            actor_id="dr-alice",
-            correlation_id="corr-003",
-            reason_code=ReasonCode.MAJOR_TRAUMA,
-            lifecycle_signing_key=unlock_scenario["lifecycle_priv"],
+            transition_event=open_event(
+                RECORD_ID,
+                LifecycleState.REVOKED,
+                "dr-alice",
+                ReasonCode.MAJOR_TRAUMA,
+                unlock_scenario["lifecycle_priv"],
+            ),
+            actor_public_key=(unlock_scenario["lifecycle_priv"]).public_key(),
             pre_rewrap_key=pre_pub,
         )
         assert result.transition_event.from_state == LifecycleState.REVOKED
@@ -146,10 +160,14 @@ class TestOpenEmergencyAccessEdgeCases:
             dek_wrapping=unlock_scenario["wrapping"],
             transition_source_state=LifecycleState.GRANTED,
             record_id=RECORD_ID,
-            actor_id="dr-alice",
-            correlation_id="corr-edge",
-            reason_code=ReasonCode.CARDIAC_ARREST,
-            lifecycle_signing_key=unlock_scenario["lifecycle_priv"],
+            transition_event=open_event(
+                RECORD_ID,
+                LifecycleState.GRANTED,
+                "dr-alice",
+                ReasonCode.CARDIAC_ARREST,
+                unlock_scenario["lifecycle_priv"],
+            ),
+            actor_public_key=(unlock_scenario["lifecycle_priv"]).public_key(),
             pre_rewrap_key=pre_pub,
         )
 
@@ -207,10 +225,14 @@ class TestTransitionEventShape:
             dek_wrapping=unlock_scenario["wrapping"],
             transition_source_state=LifecycleState.GRANTED,
             record_id=RECORD_ID,
-            actor_id="dr-alice",
-            correlation_id="corr-004",
-            reason_code=ReasonCode.UNCONSCIOUS_PATIENT,
-            lifecycle_signing_key=unlock_scenario["lifecycle_priv"],
+            transition_event=open_event(
+                RECORD_ID,
+                LifecycleState.GRANTED,
+                "dr-alice",
+                ReasonCode.UNCONSCIOUS_PATIENT,
+                unlock_scenario["lifecycle_priv"],
+            ),
+            actor_public_key=(unlock_scenario["lifecycle_priv"]).public_key(),
             pre_rewrap_key=pre_pub,
         )
         assert result.transition_event.to_state == LifecycleState.EMERGENCY_OPEN
@@ -226,3 +248,43 @@ def test_unwrap_dek_sanity_matches_original(unlock_scenario):
         unlock_scenario["wrapping"], unlock_scenario["emergency_key"]
     )
     assert unwrapped == unlock_scenario["dek"]
+
+
+class TestShareIndexRange:
+    """F27: an aliased or zero share index never counts towards the threshold."""
+
+    def _open(self, scenario, shares):
+        _, pre_pub = generate_pre_keypair()
+        return open_emergency_access(
+            shares_presented=shares,
+            dek_wrapping=scenario["wrapping"],
+            transition_source_state=LifecycleState.GRANTED,
+            record_id=RECORD_ID,
+            transition_event=open_event(
+                RECORD_ID,
+                LifecycleState.GRANTED,
+                "dr-alice",
+                ReasonCode.CARDIAC_ARREST,
+                scenario["lifecycle_priv"],
+            ),
+            actor_public_key=(scenario["lifecycle_priv"]).public_key(),
+            pre_rewrap_key=pre_pub,
+        )
+
+    def test_share_index_aliasing_rejected(self, unlock_scenario):
+        """One share presented as x and x + P must not pass as two shares."""
+        from shamir.finite_field import PRIME_MODULUS
+
+        x, share = unlock_scenario["shares"][0]
+        # Setup is valid: two genuine shares open the record.
+        assert self._open(unlock_scenario, unlock_scenario["shares"][:THRESHOLD])
+        with pytest.raises(InvalidShareError, match="outside"):
+            self._open(unlock_scenario, [(x, share), (x + PRIME_MODULUS, share)])
+
+    def test_emergency_key_repr_contains_no_key_bytes(self, unlock_scenario):
+        """F26: the unlock result's repr never prints the key or wrapped DEK."""
+        result = self._open(unlock_scenario, unlock_scenario["shares"][:THRESHOLD])
+        text = repr(result)
+        for secret in (result.emergency_key, result.rewrapped_dek):
+            assert secret.hex() not in text
+            assert repr(secret) not in text

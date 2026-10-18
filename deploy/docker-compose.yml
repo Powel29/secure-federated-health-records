@@ -10,18 +10,31 @@
 # Recreate the entire stack after key-service restarts; keys are ephemeral.
 # The store requires POSTGRES_PASSWORD (deploy/.env, git-ignored). Each service
 # mounts only its own TLS key plus the shared trust bundle (ADR-0047).
+# The `pki` job writes the break-glass trust anchors before the facilities
+# start; facilities refuse to start without them (review F1). It also issues
+# every service its request-signing identity (ADR-0066): each container mounts
+# only ./pki/services/<its id> plus the public ./pki/trust. The audit
+# service verifies its chain at startup and everything that writes to it
+# waits for it to be healthy (review F37).
 #
 # Every service keeps its keys in memory, so the federation is fresh whenever
 # the stack starts (ADR-0039): the store lives in tmpfs and is empty on each
 # start, and `bootstrap` seeds the synthetic dataset into it (SEED_DATA=false
 # skips that). Re-running `up` on a running stack leaves it alone.
+#
+# With TLS_ENABLED=true the store serves TLS only (deploy/store-entrypoint.sh)
+# and every client verifies it (sslmode=verify-full against
+# wire/certs/trust/store.crt), so the facility-store link is encrypted too
+# (ADR-0071).
 
 services:
   store:
     image: postgres:16-alpine
+    entrypoint: ["sh", "/store-entrypoint.sh"]
     environment:
       POSTGRES_DB: ehr
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env, see deploy/README.md}"
+      TLS_ENABLED: "${TLS_ENABLED:-false}"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d ehr"]
       interval: 2s
@@ -31,6 +44,9 @@ services:
       - "127.0.0.1:55433:5432"
     tmpfs:
       - /var/lib/postgresql/data
+    volumes:
+      - ./store-entrypoint.sh:/store-entrypoint.sh:ro
+      - ../wire/certs/store:/tls/store:ro
     networks: [federation]
 
   migrate:
@@ -43,19 +59,47 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres@store:5432/ehr
       PGPASSWORD: "${POSTGRES_PASSWORD}"
-    entrypoint: ["python", "-m", "storage.migrate"]
+      TLS_ENABLED: "${TLS_ENABLED:-false}"
+    entrypoint: ["python", "-m", "deploy.migrate"]
+    volumes:
+      - ../wire/certs/trust:/tls/trust:ro
     networks: [federation]
+
+  # Generates the federation PKI before any facility starts: facilities load
+  # the root and facility CA certificates at startup and never take them from
+  # a request (review F1). Writes ./pki/federation-pki.json (private keys,
+  # git-ignored, read only by bootstrap) and ./pki/trust/ (certificates only,
+  # the one directory facilities mount).
+  pki:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    entrypoint: ["python", "-m", "deploy.compose_pki"]
+    user: root  # writes the host bind mount ./pki
+    network_mode: none
+    volumes:
+      - ./pki:/pki
 
   authority-med:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+    depends_on:
+      pki:
+        condition: service_completed_successfully
     environment:
       HOST: "0.0.0.0"  # bind inside the bridge; host access below is loopback-only (F16)
       SERVICE_ROLE: authority
       PORT: "8010"
       AUTHORITY_ID: authority-med
       OWNED_ATTRIBUTES: role
+      # Signed requests only; authoring keys go to facilities, the custodian
+      # and bootstrap (ADR-0066, replacing the F14 address allowlist).
+      SERVICE_KEY_FILE: /identity/service.key
+      SERVICE_CERT_FILE: /identity/service.crt
+      FEDERATION_ROOT_CERT: /trust/root.crt
+      # A key goes only to a subject proving possession under these CAs (ADR-0082).
+      FACILITY_CA_CERTS_DIR: /trust/facility-cas
       TLS_ENABLED: "${TLS_ENABLED:-false}"
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8010), 2).close()"]
@@ -68,17 +112,29 @@ services:
     volumes:
       - ../wire/certs/authority-med:/tls/authority-med:ro
       - ../wire/certs/trust:/tls/trust:ro
+      - ./pki/services/authority-med:/identity:ro
+      - ./pki/trust:/trust:ro
 
   authority-net:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+    depends_on:
+      pki:
+        condition: service_completed_successfully
     environment:
       HOST: "0.0.0.0"  # bind inside the bridge; host access below is loopback-only (F16)
       SERVICE_ROLE: authority
       PORT: "8011"
       AUTHORITY_ID: authority-net
       OWNED_ATTRIBUTES: "specialty,facility,owner"
+      # Signed requests only; authoring keys go to facilities, the custodian
+      # and bootstrap (ADR-0066, replacing the F14 address allowlist).
+      SERVICE_KEY_FILE: /identity/service.key
+      SERVICE_CERT_FILE: /identity/service.crt
+      FEDERATION_ROOT_CERT: /trust/root.crt
+      # A key goes only to a subject proving possession under these CAs (ADR-0082).
+      FACILITY_CA_CERTS_DIR: /trust/facility-cas
       TLS_ENABLED: "${TLS_ENABLED:-false}"
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8011), 2).close()"]
@@ -91,6 +147,8 @@ services:
     volumes:
       - ../wire/certs/authority-net:/tls/authority-net:ro
       - ../wire/certs/trust:/tls/trust:ro
+      - ./pki/services/authority-net:/identity:ro
+      - ./pki/trust:/trust:ro
 
   audit:
     build:
@@ -101,6 +159,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      pki:
+        condition: service_completed_successfully
     environment:
       HOST: "0.0.0.0"  # bind inside the bridge; host access below is loopback-only (F16)
       SERVICE_ROLE: audit
@@ -108,8 +168,12 @@ services:
       DATABASE_URL: postgresql://postgres@store:5432/ehr
       PGPASSWORD: "${POSTGRES_PASSWORD}"
       AUDIT_ACTOR_ID: audit-service
+      SERVICE_KEY_FILE: /identity/service.key
+      SERVICE_CERT_FILE: /identity/service.crt
+      FEDERATION_ROOT_CERT: /trust/root.crt
+      # Share 3 is released only against an assertion validated here (ADR-0067).
+      FACILITY_CA_CERTS_DIR: /trust/facility-cas
       TLS_ENABLED: "${TLS_ENABLED:-false}"
-      TLS_VERIFY: "${TLS_VERIFY:-true}"
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8020), 2).close()"]
       interval: 2s
@@ -121,6 +185,8 @@ services:
     volumes:
       - ../wire/certs/audit:/tls/audit:ro
       - ../wire/certs/trust:/tls/trust:ro
+      - ./pki/services/audit-service:/identity:ro
+      - ./pki/trust:/trust:ro
 
   facility-a:
     build:
@@ -131,16 +197,25 @@ services:
         condition: service_healthy
       audit:
         condition: service_healthy
+      pki:
+        condition: service_completed_successfully
     environment:
       HOST: "0.0.0.0"  # bind inside the bridge; host access below is loopback-only (F16)
       SERVICE_ROLE: facility
       PORT: "8001"
       FACILITY_ID: facility-a
+      FEDERATION_ROOT_CERT: /trust/root.crt
+      FACILITY_CA_CERTS_DIR: /trust/facility-cas
       DATABASE_URL: postgresql://postgres@store:5432/ehr
       PGPASSWORD: "${POSTGRES_PASSWORD}"
       AUDIT_SERVICE_URL: "${AUDIT_SERVICE_URL:-http://audit:8020}"
+      # The forced rotation at expiry re-authors the policy at the
+      # authorities and hands new shares to the custodian (ADR-0069).
+      AUTHORITY_URLS: "${AUTHORITY_URLS:-authority-med=http://authority-med:8010,authority-net=http://authority-net:8011}"
+      CUSTODIAN_URL: "${CUSTODIAN_URL:-http://custodian:8030}"
+      SERVICE_KEY_FILE: /identity/service.key
+      SERVICE_CERT_FILE: /identity/service.crt
       TLS_ENABLED: "${TLS_ENABLED:-false}"
-      TLS_VERIFY: "${TLS_VERIFY:-true}"
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8001), 2).close()"]
       interval: 2s
@@ -152,6 +227,8 @@ services:
     volumes:
       - ../wire/certs/facility-a:/tls/facility-a:ro
       - ../wire/certs/trust:/tls/trust:ro
+      - ./pki/trust:/trust:ro
+      - ./pki/services/facility-a:/identity:ro
 
   facility-b:
     build:
@@ -162,16 +239,25 @@ services:
         condition: service_healthy
       audit:
         condition: service_healthy
+      pki:
+        condition: service_completed_successfully
     environment:
       HOST: "0.0.0.0"  # bind inside the bridge; host access below is loopback-only (F16)
       SERVICE_ROLE: facility
       PORT: "8002"
       FACILITY_ID: facility-b
+      FEDERATION_ROOT_CERT: /trust/root.crt
+      FACILITY_CA_CERTS_DIR: /trust/facility-cas
       DATABASE_URL: postgresql://postgres@store:5432/ehr
       PGPASSWORD: "${POSTGRES_PASSWORD}"
       AUDIT_SERVICE_URL: "${AUDIT_SERVICE_URL:-http://audit:8020}"
+      # The forced rotation at expiry re-authors the policy at the
+      # authorities and hands new shares to the custodian (ADR-0069).
+      AUTHORITY_URLS: "${AUTHORITY_URLS:-authority-med=http://authority-med:8010,authority-net=http://authority-net:8011}"
+      CUSTODIAN_URL: "${CUSTODIAN_URL:-http://custodian:8030}"
+      SERVICE_KEY_FILE: /identity/service.key
+      SERVICE_CERT_FILE: /identity/service.crt
       TLS_ENABLED: "${TLS_ENABLED:-false}"
-      TLS_VERIFY: "${TLS_VERIFY:-true}"
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8002), 2).close()"]
       interval: 2s
@@ -183,6 +269,8 @@ services:
     volumes:
       - ../wire/certs/facility-b:/tls/facility-b:ro
       - ../wire/certs/trust:/tls/trust:ro
+      - ./pki/trust:/trust:ro
+      - ./pki/services/facility-b:/identity:ro
 
   custodian:
     build:
@@ -204,8 +292,10 @@ services:
       AUDIT_SERVICE_URL: "${AUDIT_SERVICE_URL:-http://audit:8020}"
       AUTHORITY_URLS: "${AUTHORITY_URLS:-authority-med=http://authority-med:8010,authority-net=http://authority-net:8011}"
       FACILITY_URLS: "${FACILITY_URLS:-facility-a=http://facility-a:8001,facility-b=http://facility-b:8002}"
+      SERVICE_KEY_FILE: /identity/service.key
+      SERVICE_CERT_FILE: /identity/service.crt
+      FEDERATION_ROOT_CERT: /trust/root.crt
       TLS_ENABLED: "${TLS_ENABLED:-false}"
-      TLS_VERIFY: "${TLS_VERIFY:-true}"
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8030), 2).close()"]
       interval: 2s
@@ -217,13 +307,18 @@ services:
     volumes:
       - ../wire/certs/custodian:/tls/custodian:ro
       - ../wire/certs/trust:/tls/trust:ro
+      - ./pki/services/custodian:/identity:ro
+      - ./pki/trust:/trust:ro
 
   bootstrap:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
     entrypoint: ["python", "-m", "deploy.compose_bootstrap"]
+    user: root  # writes the host bind mount ./pki
     depends_on:
+      pki:
+        condition: service_completed_successfully
       authority-med:
         condition: service_healthy
       authority-net:
@@ -247,7 +342,6 @@ services:
       CUSTODIAN_URL: "${CUSTODIAN_URL:-http://custodian:8030}"
       TLS_ENABLED: "${TLS_ENABLED:-false}"
       SEED_DATA: "${SEED_DATA:-true}"
-      TLS_VERIFY: "${TLS_VERIFY:-true}"
     volumes:
       - ./pki:/pki
       - ../wire/certs/trust:/tls/trust:ro
@@ -269,9 +363,12 @@ services:
       AUTHORITY_URLS: authority-med=http://authority-med:8010,authority-net=http://authority-net:8011
       FACILITY_URLS: facility-a=http://facility-a:8001,facility-b=http://facility-b:8002
       TLS_ENABLED: "${TLS_ENABLED:-false}"
-      EMERGENCY_DURATION_SECONDS: "${EMERGENCY_DURATION_SECONDS:-120}"
+      EMERGENCY_DURATION_SECONDS: "${EMERGENCY_DURATION_SECONDS:-14400}"
       DJANGO_DEBUG: "0"
       DJANGO_ALLOWED_HOSTS: "127.0.0.1,localhost"
+      # Signs the portal's calls; holds no subject key (ADR-0066, ADR-0014).
+      SERVICE_KEY_FILE: /identity/service.key
+      SERVICE_CERT_FILE: /identity/service.crt
     ports:
       - "127.0.0.1:8000:8000"
     healthcheck:
@@ -281,6 +378,7 @@ services:
       retries: 30
     volumes:
       - ../wire/certs/trust:/tls/trust:ro
+      - ./pki/services/portal:/identity:ro
     networks: [federation]
 
 networks:

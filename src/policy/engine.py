@@ -30,10 +30,11 @@ from dataclasses import dataclass
 from contracts.base import Attribute
 from contracts.enums import PolicyNodeType
 from contracts.policy import PolicyTree
-from contracts.records import DEKWrapping
+from contracts.records import DEKWrapping, Record
 from crypto_core import aes_gcm_decrypt, aes_gcm_encrypt
 from crypto_core.exceptions import InvalidTagError
 from records import unwrap_dek
+from records.service import decrypt_record
 from shamir import combine_shares, split_secret
 
 from policy.exceptions import PolicyCompileError, PolicyDeniedError
@@ -225,6 +226,53 @@ def _compile_node(
     raise PolicyCompileError(f"unknown policy node type {node.node_type!r}")
 
 
+def policy_tree_of(compiled: CompiledPolicy) -> PolicyTree:
+    """The access-policy tree ``compiled`` was compiled from (ADR-0069).
+
+    A compiled layout keeps every node's type and every leaf's attribute and
+    owning authority, so the tree can be read back and compiled again under a
+    fresh root secret. Nothing secret is read: leaf ciphertexts are ignored.
+
+    Raises:
+        PolicyCompileError: The layout contains an unknown node.
+    """
+    return _tree_of(compiled.root)
+
+
+def _tree_of(node: CompiledNode) -> PolicyTree:
+    if isinstance(node, CompiledLeaf):
+        return PolicyTree(
+            node_type=PolicyNodeType.LEAF,
+            attribute=node.attribute,
+            authority_id=node.authority_id,
+        )
+    if isinstance(node, CompiledInternal):
+        return PolicyTree(
+            node_type=node.node_type,
+            children=tuple(_tree_of(child) for child in node.children),
+        )
+    raise PolicyCompileError(f"unknown compiled node {type(node).__name__}")
+
+
+def policy_leaves(tree: PolicyTree) -> list[AttributeKey]:
+    """Every ``(authority_id, name, value)`` leaf of ``tree``, without repeats."""
+    leaves: list[AttributeKey] = []
+
+    def walk(node: PolicyTree) -> None:
+        if node.node_type is PolicyNodeType.LEAF:
+            if node.attribute is None or node.authority_id is None:
+                raise PolicyCompileError("leaf node missing attribute or authority_id")
+            key = _leaf_key(node.attribute, node.authority_id)
+            if key not in leaves:
+                leaves.append(key)
+            return
+        for child in node.children:
+            walk(child)
+
+    walk(tree)
+    return leaves
+
+
 def reconstruct_root_secret(
     compiled: CompiledPolicy,
     holder_keyring: AttributeKeyring,
@@ -346,4 +394,25 @@ def author_policy_with_owner(
     return PolicyTree(
         node_type=PolicyNodeType.OR,
         children=(clinical_policy, owner_leaf),
+    )
+
+
+def decrypt_record_via_policy(
+    compiled: CompiledPolicy,
+    holder_keyring: AttributeKeyring,
+    wrapping: DEKWrapping,
+    record: Record,
+) -> bytes:
+    """Unwrap the DEK under the policy and decrypt the record with it.
+
+    One call for the facility's read path, so ``api/`` never touches the DEK
+    or calls a cipher itself (review F33).
+
+    Raises:
+        PolicyDeniedError: The keyring does not satisfy the policy.
+        UnwrappingError: The reconstructed secret does not open the wrapping.
+        DecryptionError: The DEK does not open the record.
+    """
+    return decrypt_record(
+        record, unwrap_dek_via_policy(compiled, holder_keyring, wrapping)
     )

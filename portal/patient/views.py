@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -21,12 +21,19 @@ from django.contrib import messages
 from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone as dj_tz
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 from portal_core import notify, policies, services, store_reader
 from portal_core.access import role_required
+from portal_core.clinical import latest_local_date
 from portal_core.services import ServiceError
 
-from accounts.models import Role
+from accounts.models import (
+    PatientDirectory,
+    PatientRepresentative,
+    Role,
+    minors_represented_by,
+)
 from ledger.models import (
     BreakglassCase,
     CaseStatus,
@@ -36,6 +43,11 @@ from ledger.models import (
 )
 
 GRANT_TTL_DAYS = 5
+
+# Uploaded content types a browser may render inline (review F42).
+_INLINE_CONTENT_TYPES = frozenset(
+    {"application/pdf", "image/png", "image/jpeg", "text/plain"}
+)
 
 
 def _store(fn: Any, *args: Any, default: Any = None) -> tuple[Any, str | None]:
@@ -47,7 +59,11 @@ def _store(fn: Any, *args: Any, default: Any = None) -> tuple[Any, str | None]:
 
 
 def _refresh_case_status(case: BreakglassCase) -> BreakglassCase:
-    if case.status == CaseStatus.OPEN and case.expires_at and case.expires_at <= dj_tz.now():
+    if (
+        case.status == CaseStatus.OPEN
+        and case.expires_at
+        and case.expires_at <= dj_tz.now()
+    ):
         case.status = CaseStatus.EXPIRED
         case.save(update_fields=["status"])
     return case
@@ -79,8 +95,31 @@ def _base_ctx(request: Any, screen: str) -> dict[str, Any]:
             ("patient:access", "Access control & consent"),
             ("patient:records", "Encrypted health records"),
             ("patient:history", "Access history"),
+            ("patient:profile", "Your profile"),
         ],
     }
+
+
+def _principal(request: Any) -> tuple[str, str | None]:
+    """Whose consent this request decides, and the guardian acting, if any.
+
+    ``for`` names a minor the logged-in subject represents (ADR-0061); any
+    other value is a 404, so a link cannot reach another patient's consents.
+    """
+    own = request.user.profile.subject_id
+    target = (request.POST.get("for") or request.GET.get("for") or "").strip()
+    if not target or target == own:
+        return own, None
+    if target not in {p.subject_id for p in minors_represented_by(own)}:
+        raise Http404("No guardian authority for this patient")
+    return target, own
+
+
+def _access_redirect(subject_id: str, acting: str | None) -> HttpResponse:
+    response = redirect("patient:access")
+    if acting:
+        response["Location"] += f"?for={subject_id}"
+    return response
 
 
 # --- Page 1: overview ---------------------------------------------------------------
@@ -90,11 +129,15 @@ def _base_ctx(request: Any, screen: str) -> dict[str, Any]:
 def home(request: Any) -> HttpResponse:
     ctx = _base_ctx(request, "Overview")
     subject_id = ctx["subject_id"]
-    records, store_error = _store(store_reader.records_for_patient, subject_id, default=[])
+    records, store_error = _store(
+        store_reader.records_for_patient, subject_id, default=[]
+    )
     pending = ConsentRecord.objects.filter(
         patient_id=subject_id, status=ConsentStatus.PENDING
     )
-    live = ConsentRecord.objects.filter(patient_id=subject_id, status=ConsentStatus.GRANTED)
+    live = ConsentRecord.objects.filter(
+        patient_id=subject_id, status=ConsentStatus.GRANTED
+    )
     notifications = PatientNotification.objects.filter(patient_id=subject_id)[:8]
     ctx.update(
         {
@@ -127,7 +170,13 @@ def mark_read(request: Any, pk: int) -> HttpResponse:
     if note.read_at is None:
         note.read_at = dj_tz.now()
         note.save(update_fields=["read_at"])
-    return redirect(request.POST.get("next") or "patient:home")
+    # Only same-host relative targets; anything else goes home (review F42).
+    target = request.POST.get("next")
+    if target and url_has_allowed_host_and_scheme(
+        target, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        return redirect(target)
+    return redirect("patient:home")
 
 
 # --- Page 2: access control & consent ------------------------------------------------
@@ -136,7 +185,12 @@ def mark_read(request: Any, pk: int) -> HttpResponse:
 @role_required(Role.PATIENT)
 def access(request: Any) -> HttpResponse:
     ctx = _base_ctx(request, "Access control & consent")
-    subject_id = ctx["subject_id"]
+    subject_id, acting = _principal(request)
+    ctx["represented"] = minors_represented_by(ctx["subject_id"])
+    ctx["acting_for"] = next(
+        (p for p in ctx["represented"] if acting and p.subject_id == subject_id),
+        None,
+    )
     now = dj_tz.now()
     rows = ConsentRecord.objects.filter(patient_id=subject_id)
     # Lapse unanswered requests whose window closed; nothing signs, nothing grants.
@@ -164,26 +218,31 @@ def access(request: Any) -> HttpResponse:
 @require_POST
 def decide(request: Any, request_id: str) -> HttpResponse:
     """Approve or deny: the custodian signs as the patient; the facility verifies."""
-    subject_id = request.user.profile.subject_id
+    subject_id, acting = _principal(request)
     row = get_object_or_404(ConsentRecord, request_id=request_id, patient_id=subject_id)
     decision = request.POST.get("decision")
     if row.status != ConsentStatus.PENDING or decision not in ("granted", "denied"):
         messages.error(request, "This request is no longer open for a decision.")
-        return redirect("patient:access")
+        return _access_redirect(subject_id, acting)
     try:
         signed = services.custodian_decide_consent(
-            subject_id, request=row.request_json, status=decision, ttl_days=GRANT_TTL_DAYS
+            subject_id,
+            request=row.request_json,
+            status=decision,
+            ttl_days=GRANT_TTL_DAYS,
         )
         services.facility_submit_grant(
             row.requester_facility_id or _first_facility(row),
             grant=signed["grant"],
-            patient_public_key_pem=signed["patient_public_key_pem"],
+            patient_certificate_pem=signed["patient_certificate_pem"],
         )
     except ServiceError as exc:
         messages.error(request, f"Decision not recorded — {exc.service}: {exc.detail}")
-        return redirect("patient:access")
+        return _access_redirect(subject_id, acting)
     grant = signed["grant"]
-    row.status = ConsentStatus.GRANTED if decision == "granted" else ConsentStatus.DENIED
+    row.status = (
+        ConsentStatus.GRANTED if decision == "granted" else ConsentStatus.DENIED
+    )
     row.grant_json = grant
     row.grant_expires_at = _parse_ts(grant["expires_at"])
     row.decided_at = dj_tz.now()
@@ -197,6 +256,7 @@ def decide(request: Any, request_id: str) -> HttpResponse:
             "grantee_id": row.requester_id,
             "status": decision,
             "scope": list(row.scope),
+            "decided_by": acting or subject_id,
         },
         actor_id=notify.ACTOR_PATIENT_PORTAL,
         correlation_id=row.correlation_id,
@@ -206,28 +266,35 @@ def decide(request: Any, request_id: str) -> HttpResponse:
         f"Signed {decision} for {row.requester_id} — grant {grant['grant_id'][:8]}… "
         f"verified and stored by the facility.",
     )
-    return redirect("patient:access")
+    return _access_redirect(subject_id, acting)
 
 
 @role_required(Role.PATIENT)
 @require_POST
 def revoke(request: Any, request_id: str) -> HttpResponse:
-    """Revocation is patient-only and cryptographic: a fresh patient-signed REVOKED grant."""
-    subject_id = request.user.profile.subject_id
+    """Revocation is patient-only and cryptographic: a fresh patient-signed REVOKED grant.
+
+    A minor's guardian or parent acts as the patient here (ADR-0061).
+    """
+    subject_id, acting = _principal(request)
     row = get_object_or_404(ConsentRecord, request_id=request_id, patient_id=subject_id)
     if row.status != ConsentStatus.GRANTED or not row.grant_json:
         messages.error(request, "Only a live grant can be revoked.")
-        return redirect("patient:access")
+        return _access_redirect(subject_id, acting)
     try:
-        signed = services.custodian_revoke_consent(subject_id, prior_grant=row.grant_json)
+        signed = services.custodian_revoke_consent(
+            subject_id, prior_grant=row.grant_json
+        )
         services.facility_submit_grant(
             row.requester_facility_id or _first_facility(row),
             grant=signed["grant"],
-            patient_public_key_pem=signed["patient_public_key_pem"],
+            patient_certificate_pem=signed["patient_certificate_pem"],
         )
     except ServiceError as exc:
-        messages.error(request, f"Revocation not recorded — {exc.service}: {exc.detail}")
-        return redirect("patient:access")
+        messages.error(
+            request, f"Revocation not recorded — {exc.service}: {exc.detail}"
+        )
+        return _access_redirect(subject_id, acting)
     row.status = ConsentStatus.REVOKED
     row.grant_json = signed["grant"]
     row.decided_at = dj_tz.now()
@@ -241,6 +308,7 @@ def revoke(request: Any, request_id: str) -> HttpResponse:
             "grantee_id": row.requester_id,
             "status": "revoked",
             "scope": list(row.scope),
+            "decided_by": acting or subject_id,
         },
         actor_id=notify.ACTOR_PATIENT_PORTAL,
         correlation_id=row.correlation_id,
@@ -251,8 +319,10 @@ def revoke(request: Any, request_id: str) -> HttpResponse:
         scope=list(row.scope),
         correlation_id=row.correlation_id,
     )
-    messages.success(request, f"Revoked {row.requester_id}'s grant; the facility now refuses it.")
-    return redirect("patient:access")
+    messages.success(
+        request, f"Revoked {row.requester_id}'s grant; the facility now refuses it."
+    )
+    return _access_redirect(subject_id, acting)
 
 
 def _first_facility(row: ConsentRecord) -> str:
@@ -297,16 +367,79 @@ def _describe(entry: dict[str, Any]) -> dict[str, Any]:
     detail = ", ".join(
         f"{k}={v}"
         for k, v in data.items()
-        if k in ("record_id", "access_via", "denied_by", "reason", "from_state", "to_state", "status", "kind", "reason_code", "record_count")
+        if k
+        in (
+            "record_id",
+            "access_via",
+            "denied_by",
+            "reason",
+            "from_state",
+            "to_state",
+            "status",
+            "kind",
+            "reason_code",
+            "record_count",
+        )
     )
-    return {**entry, "event_data": data, "kind": kind, "actor": actor, "detail": detail}
+    return {
+        **entry,
+        "event_data": data,
+        "kind": kind,
+        "actor": actor,
+        "detail": detail,
+        "sentence": _sentence(et, data, actor),
+    }
+
+
+def _plain(code: Any) -> str:
+    return str(code or "").replace("_", " ").replace("-", " ")
+
+
+def _sentence(et: str, data: dict[str, Any], actor: Any) -> str:
+    """One plain-language line per chain entry; the raw detail stays beside it."""
+    record = f" {data['record_id']}" if data.get("record_id") else ""
+    if et == "access_granted":
+        return f"{actor} read record{record}"
+    if et == "access_denied":
+        why = f": {data['reason']}" if data.get("reason") else ""
+        return f"{actor} was refused record{record}{why}"
+    if data.get("to_state"):
+        return (
+            f"Record{record} moved from {_plain(data.get('from_state')) or 'start'} "
+            f"to {_plain(data['to_state'])}"
+        )
+    if et in _SENTENCES:
+        return _SENTENCES[et].format(actor=actor, record=record)
+    if et == "consent.decision":
+        return (
+            f"Consent {_plain(data.get('status')) or 'decision'} recorded for {actor}"
+        )
+    if et in store_reader.BREAKGLASS_EVENT_TYPES:
+        return f"Emergency access on record{record}: {_plain(et)}"
+    return _plain(et).capitalize()
+
+
+_SENTENCES = {
+    "patient.notification": "You were notified",
+    "patient.lookup": "A clinician looked you up by name and date of birth",
+    "federation.discovery": "A facility searched the federation for your records",
+    "breakglass_share_released": (
+        "The audit service logged the emergency, then released its key share "
+        "for record{record}"
+    ),
+    "federation.rewrap": (
+        "Record{record}'s key was re-wrapped for the emergency clinician"
+    ),
+}
 
 
 @role_required(Role.PATIENT)
 def history(request: Any) -> HttpResponse:
     ctx = _base_ctx(request, "Access history")
     subject_id = ctx["subject_id"]
-    records, store_error = _store(store_reader.records_for_patient, subject_id, default=[])
+    records, store_error = _store(
+        store_reader.records_for_patient, subject_id, default=[]
+    )
     ids = [r["record_id"] for r in records]
     entries, err2 = _store(store_reader.audit_for_patient, subject_id, ids, default=[])
     rows = [_describe(e) for e in entries]
@@ -325,11 +458,37 @@ def history(request: Any) -> HttpResponse:
 
 
 @role_required(Role.PATIENT)
+def profile(request: Any) -> HttpResponse:
+    """The patient's own details, read only; nothing here changes access."""
+    ctx = _base_ctx(request, "Your profile")
+    ctx.update(
+        {
+            "subject": services_subject_safe(ctx["subject_id"]),
+            "directory": PatientDirectory.objects.filter(
+                subject_id=ctx["subject_id"]
+            ).first(),
+            "representatives": PatientRepresentative.objects.filter(
+                patient__subject_id=ctx["subject_id"], revoked_at__isnull=True
+            ),
+            "represented": minors_represented_by(ctx["subject_id"]),
+            "requests": request.user.requests.all(),
+        }
+    )
+    return render(request, "profile.html", ctx)
+
+
+@role_required(Role.PATIENT)
 def records(request: Any) -> HttpResponse:
     ctx = _base_ctx(request, "Encrypted health records")
-    rows, store_error = _store(store_reader.records_for_patient, ctx["subject_id"], default=[])
+    rows, store_error = _store(
+        store_reader.records_for_patient, ctx["subject_id"], default=[]
+    )
     ctx.update(
-        {"records": rows, "store_error": store_error, "enrolled": services_subject_safe(ctx["subject_id"])}
+        {
+            "records": rows,
+            "store_error": store_error,
+            "enrolled": services_subject_safe(ctx["subject_id"]),
+        }
     )
     return render(request, "patient/records.html", ctx)
 
@@ -360,14 +519,32 @@ def record_view(request: Any, record_id: str) -> HttpResponse:
             correlation_id=correlation_id,
         )
     except ServiceError as exc:
-        ctx.update({"denied": exc.detail, "denied_service": exc.service, "correlation_id": correlation_id})
-        return render(request, "patient/record_view.html", ctx, status=403 if exc.is_denial else 503)
+        ctx.update(
+            {
+                "denied": exc.detail,
+                "denied_service": exc.service,
+                "correlation_id": correlation_id,
+            }
+        )
+        return render(
+            request,
+            "patient/record_view.html",
+            ctx,
+            status=403 if exc.is_denial else 503,
+        )
 
     plaintext = base64.b64decode(result["plaintext_b64"])
     content_type = result.get("content_type") or meta["content_type"]
     if request.POST.get("mode") == "raw" or not _renderable(content_type):
+        # The content type is the uploader's claim. Only a short list of
+        # passive types is shown inline; anything else (HTML, SVG, scripts)
+        # downloads, and the browser may not sniff a different type (F42).
+        disposition = (
+            "inline" if content_type in _INLINE_CONTENT_TYPES else "attachment"
+        )
         response = HttpResponse(plaintext, content_type=content_type)
-        response["Content-Disposition"] = f'inline; filename="{record_id}"'
+        response["Content-Disposition"] = f'{disposition}; filename="{record_id}"'
+        response["X-Content-Type-Options"] = "nosniff"
         response["Cache-Control"] = "no-store"
         return response
     ctx.update(
@@ -422,8 +599,12 @@ def upload(request: Any) -> HttpResponse:
     upload_file = request.FILES.get("file")
     preset = request.POST.get("preset", "")
     facility_id = request.POST.get("facility_id", "").strip()
-    terms = [t.strip() for t in request.POST.get("search_terms", "").split(",") if t.strip()]
-    ctx.update({"preset": preset, "facility_id": facility_id, "search_terms": ", ".join(terms)})
+    terms = [
+        t.strip() for t in request.POST.get("search_terms", "").split(",") if t.strip()
+    ]
+    ctx.update(
+        {"preset": preset, "facility_id": facility_id, "search_terms": ", ".join(terms)}
+    )
 
     policy = policies.policy_for(preset)
     if upload_file is None or policy is None or facility_id not in facilities:
@@ -436,6 +617,17 @@ def upload(request: Any) -> HttpResponse:
     content = upload_file.read()
     content_type = upload_file.content_type or "application/octet-stream"
     try:
+        clinical_date = (
+            date.fromisoformat(request.POST.get("clinical_date", ""))
+            if request.POST.get("clinical_date")
+            else None
+        )
+        if clinical_date and clinical_date > latest_local_date():
+            raise ValueError("Clinical date cannot be in the future")
+    except ValueError as exc:
+        ctx["error"] = str(exc)
+        return render(request, "patient/upload.html", ctx, status=400)
+    try:
         result = services.custodian_ingest(
             subject_id,
             facility_id=facility_id,
@@ -443,10 +635,20 @@ def upload(request: Any) -> HttpResponse:
             content_type=content_type,
             clinical_policy=policy,
             search_terms=terms,
+            clinical={
+                "title": request.POST.get("title", "").strip() or upload_file.name,
+                "clinical_date": clinical_date.isoformat() if clinical_date else None,
+                "record_type": request.POST.get("record_type", "patient_document"),
+                "episode_id": request.POST.get("episode_id", "").strip(),
+                "sensitivity": request.POST.get("sensitivity", "general"),
+                "care_team_consent": True,
+            },
         )
     except ServiceError as exc:
         ctx["error"] = f"Not sealed — {exc.service}: {exc.detail}"
-        return render(request, "patient/upload.html", ctx, status=403 if exc.is_denial else 503)
+        return render(
+            request, "patient/upload.html", ctx, status=403 if exc.is_denial else 503
+        )
     finally:
         del content
 

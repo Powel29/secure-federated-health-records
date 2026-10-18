@@ -8,12 +8,18 @@ payloads.
 
 from __future__ import annotations
 
+from breakglass.share_sealing import SealedShare
+from contracts.clinical import ClinicalMetadata
 from contracts.consent import ConsentGrant, ConsentRequest
-from contracts.enums import LifecycleState, ReasonCode
+from contracts.enums import LifecycleState
 from contracts.lifecycle import TransitionEvent
 from contracts.messaging import EmergencyAssertion
 from contracts.policy import PolicyTree
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+
+# Longest break-glass window a caller may request (F6). The facility still
+# caps it at its configured duration; this bound only rejects absurd values.
+MAX_EMERGENCY_DURATION_SECONDS = 3 * 24 * 60 * 60
 
 
 class HealthResponse(BaseModel):
@@ -39,9 +45,12 @@ class ReadRecordRequest(BaseModel):
         default=None,
         description="Optional patient-signed ConsentGrant for consent gate",
     )
-    patient_public_key_pem: str | None = Field(
+    patient_certificate_pem: str | None = Field(
         default=None,
-        description="PEM-encoded EC public key of patient to verify grant",
+        description=(
+            "Patient certificate (PEM) from a configured facility CA; the grant "
+            "is verified against its key, never a caller-supplied one (ADR-0064)"
+        ),
     )
     correlation_id: str | None = Field(
         default=None,
@@ -63,37 +72,13 @@ class ReadRecordResponse(BaseModel):
 # --- Consent Endpoints --------------------------------------------------------
 
 
-class CreateConsentRequestPayload(BaseModel):
-    """Request body to issue a new ConsentRequest."""
-
-    patient_id: str
-    requester_id: str
-    scope: list[str]
-    purpose: str
-    ttl_days: int = Field(default=7, gt=0, le=365)
-    requester_signing_key_pem: str = Field(
-        ...,
-        description="PEM-encoded ECDSA private key of the requester",
-    )
-
-
 class SubmitConsentGrantPayload(BaseModel):
     """Request body submitting a patient-signed ConsentGrant."""
 
     grant: ConsentGrant
-    patient_public_key_pem: str = Field(
+    patient_certificate_pem: str = Field(
         ...,
-        description="PEM-encoded ECDSA public key of the patient",
-    )
-
-
-class RevokeConsentGrantPayload(BaseModel):
-    """Request body revoking an existing ConsentGrant."""
-
-    prior_grant: ConsentGrant
-    patient_signing_key_pem: str = Field(
-        ...,
-        description="PEM-encoded ECDSA private key of the patient",
+        description="Patient certificate (PEM) from a configured facility CA",
     )
 
 
@@ -110,35 +95,30 @@ class ConsentResponse(BaseModel):
 
 
 class RevokeRecordRequest(BaseModel):
-    """Request payload to cryptographically rotate a record's DEK."""
+    """A patient's revocation of a record, signed by the patient (ADR-0080).
 
-    actor_id: str = Field(
+    The ``GRANTED -> REVOKED`` transition is signed with the patient's key in
+    the custodian and verified here against the patient's certificate. The
+    facility recovers the old DEK itself and re-keys the record (ADR-0069),
+    so neither a private key nor a DEK crosses the wire; a caller still
+    sending one gets a 422.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    transition_event: TransitionEvent = Field(
         ...,
-        description="Party performing revocation (patient or home authority)",
+        description="GRANTED -> REVOKED, signed by the record's patient",
     )
-    actor_signing_key_pem: str = Field(
+    actor_certificate_pem: str = Field(
         ...,
-        description="PEM-encoded ECDSA private key of actor",
-    )
-    old_dek_b64: str = Field(
-        ...,
-        description="Base64-encoded pre-revocation DEK",
+        description="Patient certificate (PEM) from a configured facility CA",
     )
     new_clinical_policy: PolicyTree = Field(
         ...,
         description="New clinical policy branch (owner leaf added automatically)",
     )
-    owner_authority_id: str = Field(
-        ...,
-        description="Authority owning the patient's owner namespace",
-    )
-    attribute_keyring: dict[str, str] = Field(
-        ...,
-        description="Keyring mapping 'auth_id:name:val' to base64 key bytes",
-    )
     correlation_id: str | None = None
-    reason_code: ReasonCode | None = None
-    new_policy_id: str | None = None
 
 
 class RevokeRecordResponse(BaseModel):
@@ -148,6 +128,10 @@ class RevokeRecordResponse(BaseModel):
     new_generation: int
     new_policy_id: str
     transition_event: TransitionEvent
+    # False when the new emergency shares did not reach their holders: the
+    # revocation holds, but break-glass on the record fails closed until it
+    # is re-keyed (ADR-0080).
+    breakglass_provisioned: bool = True
     message: str = "Record access revoked and DEK rotated successfully"
 
 
@@ -155,7 +139,16 @@ class RevokeRecordResponse(BaseModel):
 
 
 class BreakglassUnlockRequest(BaseModel):
-    """Request payload for 2-of-3 threshold break-glass emergency unlock."""
+    """Request payload for 2-of-3 threshold break-glass emergency unlock.
+
+    Trust anchors are facility configuration, never request data (F1). Extra
+    fields are forbidden so a caller still sending its own root or CA gets a
+    422 instead of having the field silently ignored.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    sensitive_justification: str = Field(default="", max_length=2000)
+    justification: str = Field(default="", max_length=2000)
 
     assertion: EmergencyAssertion = Field(
         ...,
@@ -165,36 +158,39 @@ class BreakglassUnlockRequest(BaseModel):
         ...,
         description="PEM-encoded X.509 certificate of attending clinician",
     )
-    shares: list[tuple[int, str]] = Field(
+    sealed_shares: list[SealedShare] = Field(
         ...,
-        description="List of (x_coordinate, hex_encoded_share) threshold shares",
+        description=(
+            "Threshold shares, each sealed to this facility's share key "
+            "(ADR-0079); no share bytes cross the wire"
+        ),
     )
     pre_rewrap_key: int = Field(
         ...,
         description="Clinician's ElGamal PRE public key",
     )
-    lifecycle_signing_key_pem: str = Field(
-        ...,
-        description="PEM-encoded ECDSA private key for signing TransitionEvent",
-    )
-    facility_ca_certificate_pem: str | None = Field(
-        default=None,
-        description="Facility CA certificate for chain validation",
-    )
-    trusted_root_certificate_pem: str | None = Field(
-        default=None,
-        description="Root anchor certificate for chain validation",
-    )
-    correlation_id: str | None = None
-    baseline_wrapping_key_b64: str | None = Field(
+    transition_event: TransitionEvent | None = Field(
         default=None,
         description=(
-            "Base64-encoded baseline wrapping key " "(starts expiry session if present)"
+            "The record's -> EMERGENCY_OPEN transition, signed with the "
+            "clinician's own key inside the custodian (ADR-0068). Required to "
+            "open; ignored when joining an open session. No private key is "
+            "ever sent."
         ),
     )
+    correlation_id: str | None = None
     emergency_duration_seconds: float | None = Field(
         default=None,
-        description="Optional session duration override in seconds",
+        gt=0,
+        le=MAX_EMERGENCY_DURATION_SECONDS,
+        description=(
+            "Optional shorter session in seconds; never longer than the "
+            "facility's configured duration (F6)"
+        ),
+    )
+    join_only: bool = Field(
+        default=False,
+        description="Refuse (409) unless the record is already emergency_open",
     )
 
 
@@ -206,9 +202,27 @@ class BreakglassUnlockResponse(BaseModel):
         ...,
         description="Base64-encoded PRE-rewrapped DEK for emergency clinician",
     )
-    transition_event: TransitionEvent
+    transition_event: TransitionEvent | None = Field(
+        default=None,
+        description="The signed transition into EMERGENCY_OPEN; None when joined",
+    )
+    joined: bool = Field(
+        default=False,
+        description="True when this joined an already open session (ADR-0057)",
+    )
     correlation_id: str | None = None
+    expires_at: AwareDatetime = Field(
+        ...,
+        description="When the session ends; the facility may shorten the request (F6)",
+    )
     message: str = "Emergency access granted and DEK re-wrapped"
+
+
+class LifecycleStateResponse(BaseModel):
+    """A record's stored lifecycle state (the custodian signs transitions from it)."""
+
+    record_id: str
+    state: LifecycleState
 
 
 # --- Search & Discovery Endpoints ---------------------------------------------
@@ -245,6 +259,11 @@ class EmergencySearchRequest(BaseModel):
         ...,
         description="Plaintext term to search in active emergency session",
     )
+    requester_id: str = Field(
+        ...,
+        description="Clinician performing the search; recorded in the audit log (F8)",
+    )
+    correlation_id: str | None = None
 
 
 # --- Record Ingest / Upload Endpoint (P3-14) ----------------------------------
@@ -268,6 +287,7 @@ class IngestRecordRequest(BaseModel):
     emergency_key_b64: str | None = None
     content_type: str = "application/json"
     record_id: str | None = None
+    clinical: ClinicalMetadata = Field(default_factory=ClinicalMetadata)
 
 
 class IngestRecordResponse(BaseModel):

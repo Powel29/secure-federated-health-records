@@ -21,8 +21,10 @@
 | F16 services bind to loopback; Compose ports on `127.0.0.1` only | `proposal/phase5-fixes` `1c51636` | Ojas |
 | F39 capture only on loopback / Docker bridge | `phase5-task5` `d127f0b` | Ojas |
 
-**Pending decisions:** D1, D2, D3, D4, D5, D6, D7, D8, CS, plus two new
-pending items:
+**Decisions:** all of D1–D8, CS, F14-i and F40 are now decided (see the A1
+table; ADRs 0058, 0064, 0066–0069, 0072–0074). D9–D11 are decided too
+(ADR-0077, ADR-0075, ADR-0076). Every one of these ADRs is still **Proposed**
+and needs ratification. The two items below were pending at the time:
 
 - **F14 interim:** which addresses count as trusted authoring callers. An
   address allowlist breaks host-run scripts under Compose, so this is part of
@@ -39,7 +41,7 @@ Everything else in Part B waits on one of these.
 | E1 | The full negative security suite in `tests/security/` passes | ❌ 5/11 claims hold (C8 added 2026-10-08 on `proposal/phase5-fixes`); 6 strict-xfail against review findings |
 | E2 | The benchmark harness produces every metric in PROJECT.md D4 | ⚠️ All 7 metrics are coded; the committed numbers are stale |
 | E3 | Edge cases (clock skew, partial shares, replayed transition events) handled and tested | ⚠️ Partial shares done; replayed transition events done (durable + locked); clock skew pending decision CS |
-| E4 | PyShark analysers run on both capture profiles and all four §4A claims pass | ❌ Analyser built, never run on real captures; claim 1 blocked on D6 |
+| E4 | PyShark analysers run on both capture profiles and all four §4A claims pass | ⚠️ Claim 1 scoped to TLS (ADR-0073); needs fresh captures (`python -m wire.capture`) |
 
 ---
 
@@ -52,17 +54,17 @@ are the review's unless noted.
 
 | ID | Decision | Recommended | Blocks | Note | Status |
 |---|---|---|---|---|---|
-| **D1** | Who checks the Emergency Assertion before share 3 is released | (a) the audit service validates it itself | E1 C3 | | ⏳ Pending |
-| **D2** | Share 2 is discarded, so break-glass is effectively 2-of-2 | (a) deposit with the home authority, or (b) amend the paper to "2-of-2 + reserved" | E1 C3 wording | (b) is honest and cheap | ⏳ Pending |
-| **D3** | What expiry/revocation "forced rotation" rotates | (b) emergency path only: new emergency key, new shares, re-key search | E1 C4, C1 Postgres path | | ⏳ Pending |
-| **D4** | Trusted source of patient public keys | (a) the home facility CA issues patient certs | F10 (C1 on Postgres), F13 | | ⏳ Pending |
-| **D5** | Service-to-service authentication | (b) loopback/internal network now, then (a) signed `RequestEnvelope` | E1 **C9 needs D5-a** (D5-b gives no caller identity), C10 proper fix | If only D5-b fits, the team must decide whether to narrow C9; that is a claim change and needs an ADR | ⏳ Pending |
-| **D6** | §4A property 1 vs. the current wire design | (a) client-side crypto (L, three owners), or (b) narrow property 1 to TLS and say so in PROJECT §4A and the paper | **E4 claim 1** | Fixes the analyser's `--claim1-scope` default | ⏳ Pending |
-| **D7** | Expiry after a REVOKED → break-glass record | (a) add `EXPIRED → REVOKED`, session remembers `prior_state` | E1 C6 | | ⏳ Pending |
-| **D8** | Who signs the break-glass `TransitionEvent` | (a) the custodian signs with the clinician key; the facility verifies | E1 **C7 needs D8-a** | | ⏳ Pending |
-| **CS** | Clock-skew check on assertions (`issued_at > now + MAX_CLOCK_SKEW`) | Implement with a ~2-minute tolerance | **E3** | Powel's call (`breakglass` owner); the alternative is "out of scope", written down with a reason | ⏳ Pending |
-| **F14-i** | Trusted authoring callers for `/attribute-keys/author` (interim) | Ojas decides the deployment trust boundary, then the allowlist ships with F16 | E1 C10 | An address allowlist breaks host-run `run_scenario` / `seed_data` under Compose (they appear from the bridge gateway) | ⏳ Pending |
-| **F40** | Capture path | Move to `bench/captures/` or amend ARCHITECTURE §7 to `wire/captures/` | E4 hygiene | | ⏳ Pending |
+| **D1** | Who checks the Emergency Assertion before share 3 is released | (a) the audit service validates it itself | E1 C3 | | ✅ Decided: (a), ADR-0067 |
+| **D2** | Share 2 is discarded, so break-glass is effectively 2-of-2 | (a) deposit with the home authority, or (b) amend the paper to "2-of-2 + reserved" | E1 C3 wording | (b) is honest and cheap | ✅ Decided: (b), ADR-0074 |
+| **D3** | What expiry/revocation "forced rotation" rotates | (b) emergency path only: new emergency key, new shares, re-key search | E1 C4, C1 Postgres path | | ✅ Decided: (a) full rotation, ADR-0069 |
+| **D4** | Trusted source of patient public keys | (a) the home facility CA issues patient certs | F10 (C1 on Postgres), F13 | | ✅ Decided: (a), ADR-0064 |
+| **D5** | Service-to-service authentication | (b) loopback/internal network now, then (a) signed `RequestEnvelope` | E1 **C9 needs D5-a** (D5-b gives no caller identity), C10 proper fix | If only D5-b fits, the team must decide whether to narrow C9; that is a claim change and needs an ADR | ✅ Decided: (b) then (a), ADR-0066 |
+| **D6** | §4A property 1 vs. the current wire design | (a) client-side crypto (L, three owners), or (b) narrow property 1 to TLS and say so in PROJECT §4A and the paper | **E4 claim 1** | Fixes the analyser's `--claim1-scope` default | ✅ Decided: (b) after removing private keys from requests and sealing shares, ADR-0072, ADR-0073, ADR-0079 |
+| **D7** | Expiry after a REVOKED → break-glass record | (a) add `EXPIRED → REVOKED`, session remembers `prior_state` | E1 C6 | | ✅ Decided: (a), ADR-0058 |
+| **D8** | Who signs the break-glass `TransitionEvent` | (a) the custodian signs with the clinician key; the facility verifies | E1 **C7 needs D8-a** | | ✅ Decided: (a), ADR-0068 |
+| **CS** | Clock-skew check on assertions (`issued_at > now + MAX_CLOCK_SKEW`) | Implement with a ~2-minute tolerance | **E3** | Powel's call (`breakglass` owner); the alternative is "out of scope", written down with a reason | ✅ Implemented: 30 s skew (`breakglass.assertion.ASSERTION_CLOCK_SKEW`) |
+| **F14-i** | Trusted authoring callers for `/attribute-keys/author` (interim) | Ojas decides the deployment trust boundary, then the allowlist ships with F16 | E1 C10 | An address allowlist breaks host-run `run_scenario` / `seed_data` under Compose (they appear from the bridge gateway) | ✅ ADR-0052, superseded by ADR-0066 |
+| **F40** | Capture path | Move to `bench/captures/` or amend ARCHITECTURE §7 to `wire/captures/` | E4 hygiene | | ✅ §7 names `wire/captures/` |
 
 ### A2. The evidence machine (one, ideally not the author's)
 
@@ -77,7 +79,7 @@ clean-clone gate check runs.
 | **Wireshark** (dumpcap + tshark) on PATH | pyshark wraps tshark | `tshark -v`, `dumpcap -D` |
 | **Npcap with loopback support** (Windows) | without it dumpcap captures nothing on `127.0.0.1` | trivial loopback capture shows packets |
 | Federation on fixed ports | `deploy/run_local.py` (8001/8002/8010/8011/8020/8030) | `deploy.run_scenario` prints all 9 steps |
-| TLS profile | certs from `wire.tls`; `CAPTURE_TLS=true TLS_VERIFY=false` | `run_scenario --scheme https` succeeds |
+| TLS profile | certs from `wire.tls` (clients verify against the generated bundle; no `TLS_VERIFY=false`, ADR-0047, review N15) | `run_scenario --scheme https` succeeds |
 
 ### A3. Reviews, merges and ownership
 
@@ -104,12 +106,12 @@ under its mutation, C2/C5 included.
 
 | Claim | Fix | Owner(s) | Needs | Size | Test that flips |
 |---|---|---|---|---|---|
-| C3 ⏳ | F2: the audit service validates the assertion, binds share to patient, one-time `request_id`; F4: no share overwrite | Ojas, Avaneeth | D1 (+ D2 wording) | M | `test_c3_audit_service_releases_no_share_without_a_valid_assertion` |
-| C4 ⏳ | F9: expiry replaces the emergency wrapping and shares; search re-keyed | Powel, Avaneeth, Nandini, Ojas | D3 | L | `test_c4_pre_expiry_shares_do_not_restore_search`; also update `tests/api/test_breakglass.py::…reopens_after_the_timebox_expired`, which asserts today's behaviour |
+| C3 ✅ | F2: the audit service validates the assertion, binds share to patient, one-time `request_id`; F4: no share overwrite | Ojas, Avaneeth | D1 (+ D2 wording) | M | `test_c3_audit_service_releases_no_share_without_a_valid_assertion` |
+| C4 ✅ | F9: expiry replaces the emergency wrapping and shares; search re-keyed | Powel, Avaneeth, Nandini, Ojas | D3 | L | `test_c4_pre_expiry_shares_do_not_restore_search`; also update `tests/api/test_breakglass.py::…reopens_after_the_timebox_expired`, which asserts today's behaviour |
 | C6 ⏳ | F11 step 1: `_apply_and_persist` through `LifecycleStateMachine` for revoke, break-glass and expiry; F12 compare-and-set (**primitive + lock done**; wiring is part of F11) | Avaneeth, Powel | D7 | M | `test_c6_api_refuses_revocation_of_an_emergency_open_record` |
-| C7 ⏳ | F11 step 2 / D8-a: pre-signed event from the custodian; remove `lifecycle_signing_key_pem` from the API | Avaneeth, Powel, Ojas | D8 | M | `test_c7_breakglass_event_verifies_against_the_clinicians_certificate` |
+| C7 ✅ | F11 step 2 / D8-a: pre-signed event from the custodian; remove `lifecycle_signing_key_pem` from the API | Avaneeth, Powel, Ojas | D8 | M | `test_c7_breakglass_event_verifies_against_the_clinicians_certificate` |
 | C8 ✅ | F22: `consumed_ids` table + repository-backed stores for assertions, requests and transition events. **Done on `proposal/phase5-fixes`; marker removed; C8 holds.** Still to add: a Postgres variant of the restart test | Powel, Avaneeth | — | M | `test_c8_replayed_assertion_rejected_after_facility_restart` |
-| C9 ⏳ | F34: caller ↔ patient check before any repo call; denial logged | Avaneeth | **D5-a** | M | `test_c9_bola_…_denied_before_crypto_or_db` |
+| C9 ✅ | F34: caller ↔ patient check before any repo call; denial logged | Avaneeth | **D5-a** | M | `test_c9_bola_…_denied_before_crypto_or_db` |
 | C10 ⏳ | F14: interim allowlist of authoring callers (ships with F16 — F16 is **done**), then a signed envelope under D5-a. Interim is now pending a trust-boundary decision (F14-i) | Ojas | D5, F14-i | S→M | `test_c10_attribute_key_not_released_without_a_valid_credential` |
 | C1 | F10: revoke works on Postgres, authz from a verified identity, goes through the state machine, audited. **Add a Postgres variant** of `test_c1_…` (today only the in-memory path is tested) | Avaneeth, Powel | D4, D3 | L | new `test_c1_…_postgres` |
 | C2, C5 | No fix expected. **Observe them running**: run the suite and `python -m tests.security.mutations C2 C5` with Postgres, then replace the "skipped" rows in `p5-1-evidence.md` | Ojas (or whoever has the evidence machine) | A2 | S | — |
@@ -149,7 +151,7 @@ negative test, at module and system level, all passing.
 | Case | State | Work | Owner | Size |
 |---|---|---|---|---|
 | Partial shares | ✅ Done: missing, empty, truncated and garbage shares, `tests/breakglass/test_gate.py` | — | — | — |
-| Clock skew | ⏳ Pending decision CS (WORKFLOW P5-4 note) | Decide CS. If implemented: add `MAX_CLOCK_SKEW` and an `AssertionNotYetValidError` check in `validate_emergency_assertion`, a module negative test, and a system test through `/records/{id}/breakglass` expecting 400 and a logged denial. Update ARCHITECTURE §8's validation list and write the ADR. Also consider capping assertion lifetime (review F6) | Powel | S |
+| Clock skew | ✅ Implemented: `issued_at` at most 30 s ahead (`ASSERTION_CLOCK_SKEW`, ADR-0049) | Decide CS. If implemented: add `MAX_CLOCK_SKEW` and an `AssertionNotYetValidError` check in `validate_emergency_assertion`, a module negative test, and a system test through `/records/{id}/breakglass` expecting 400 and a logged denial. Update ARCHITECTURE §8's validation list and write the ADR. Also consider capping assertion lifetime (review F6) | Powel | S |
 | Replayed transition events | ✅ Done on `proposal/phase5-fixes`: `ConsumedEventIds` is locked (F12) and takes a durable backend (F22); the deployed facility's expiry state machine uses the store. Tests: a concurrent-consume test (exactly one succeeds) and a restart-on-same-backend test. No API accepts a client-supplied transition event, so module level is where replay applies | — | — | — |
 
 ### E4: analysers pass on both capture profiles

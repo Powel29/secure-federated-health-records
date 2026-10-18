@@ -25,31 +25,53 @@ from urllib.parse import urlparse
 
 import httpx
 import pytest
-from api.authority_service import create_authority_app
+from api.authority_service import SubjectTrust, create_authority_app
 from api.custodian_service import (
     CustodianEndpoints,
+    CustodianVault,
     create_custodian_app,
 )
-from api.hospital import create_hospital_app
+from api.hospital import FacilityTrust, create_hospital_app
 from api.repository import InMemoryStorageRepository
+from api.service_auth import CERTIFICATE_HEADER, ENVELOPE_HEADER
+from audit.chain import build_entry, create_genesis_entry
 from breakglass.emergency_key import generate_emergency_key, split_emergency_key
+from breakglass.share_sealing import (
+    SealedShare,
+    ShareKeyStatement,
+    ShareSealingKey,
+    make_key_statement,
+    open_sealed_share,
+    seal_share,
+    verify_key_statement,
+)
+from contracts import TransitionEvent
+from contracts.clinical import ClinicalMetadata
 from contracts.enums import LifecycleState, PolicyNodeType
 from contracts.policy import Attribute, PolicyTree
 from crypto_core import (
     certificate_to_pem,
     generate_ec_keypair,
     private_key_to_pem,
+    public_key_to_pem,
 )
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from identity.certificates import (
     issue_clinician_certificate,
     issue_facility_ca_certificate,
+    issue_patient_certificate,
 )
 from identity.root_anchor import generate_root_anchor
 from lifecycle.expiry import EmergencyExpiryManager
+from lifecycle.state_machine import verify_transition_event
 from pre.elgamal import generate_keypair as generate_pre_keypair
 from records.ingest import ingest_record
+from records.labels import sign_clinical_labels
+
+from tests.api.conftest import RecordingAuditSink, RecordingRotationPorts
+from tests.sealing import seal_for
+from tests.service_pki import ServicePKI
 
 AUTH_MED = "http://authority-med"
 AUTH_NET = "http://authority-net"
@@ -65,28 +87,70 @@ PLAINTEXT = b'{"diagnosis": "Acute MI", "allergies": ["Penicillin"]}'
 
 
 def _audit_stub(
-    shares: dict[str, tuple[int, bytes]], *, commit_ok: bool = True
+    shares: dict[str, tuple[int, bytes]],
+    federation: dict[str, Any],
+    *,
+    commit_ok: bool = True,
+    deposit_ok: bool = True,
 ) -> FastAPI:
     """Stand-in for ``api.audit_service`` without Postgres.
 
-    Honours the one property the custodian relies on: the share is released
-    only when the commit succeeded (``commit_ok``), otherwise 503 and nothing.
+    Honours the properties the custodian relies on: the share is released
+    only when the commit succeeded (``commit_ok``), otherwise 503 and nothing;
+    a share is never overwritten (409, review F4); ``deposit_ok=False`` makes
+    every deposit fail with 503. Shares travel sealed both ways, with the real
+    sealing code (ADR-0079).
     """
     app = FastAPI()
-    state: dict[str, Any] = {"seq": 0, "entries": []}
+    identity = federation["services"].identity("audit-service")
+    sealing_key = ShareSealingKey.generate()
+    statement = make_key_statement(
+        sealing_key,
+        service_id=identity.service_id,
+        kind=identity.kind,
+        signing_key=identity.signing_key,
+        certificate_pem=identity.certificate_pem,
+    )
+
+    @app.get("/share-key")
+    def share_key() -> dict[str, Any]:
+        return statement.model_dump(mode="json")
+
+    signing_key, public_key = generate_ec_keypair()
+    head = create_genesis_entry(signing_key=signing_key)
+    state: dict[str, Any] = {"seq": 0, "entries": [], "head": head}
+
+    def _signed(payload: dict[str, Any]) -> dict[str, Any]:
+        # Entries are signed like the real service's, so the custodian's
+        # release check (review F31) has something genuine to verify.
+        entry = build_entry(
+            head=state["head"],
+            event_type=payload.get("event_type", "breakglass_share_release"),
+            event_data=payload.get("event_data", {}),
+            actor_id=payload["actor_id"],
+            correlation_id=payload["correlation_id"],
+            signing_key=signing_key,
+        )
+        state["head"] = entry
+        state["seq"] = entry.seq
+        state["entries"].append({**payload, "seq": entry.seq})
+        return entry.model_dump(mode="json")
 
     @app.post("/entries")
     def entries(payload: dict[str, Any]) -> dict[str, Any]:
-        state["seq"] += 1
-        entry = {"seq": state["seq"], **payload}
-        state["entries"].append(entry)
-        return {"entry": entry}
+        return {"entry": _signed(payload)}
 
     @app.post("/breakglass/shares")
     def deposit(payload: dict[str, Any]) -> dict[str, Any]:
-        shares[payload["share_key"]] = (
-            payload["x"],
-            bytes.fromhex(payload["share_hex"]),
+        if not deposit_ok:
+            raise HTTPException(status_code=503, detail="audit service unavailable")
+        if payload["share_key"] in shares:
+            raise HTTPException(status_code=409, detail="share already held")
+        shares[payload["share_key"]] = open_sealed_share(
+            SealedShare.model_validate(payload["sealed_share"]),
+            record_id=payload["share_key"],
+            service_id=identity.service_id,
+            key=sealing_key,
         )
         return {"status": "registered", "share_key": payload["share_key"]}
 
@@ -98,28 +162,54 @@ def _audit_stub(
             raise HTTPException(
                 status_code=503, detail="log commit failed; share was not released"
             )
-        state["seq"] += 1
-        entry = {"seq": state["seq"], **payload}
-        state["entries"].append(entry)
-        x, share = shares[payload["share_key"]]
-        return {"x": x, "share_hex": share.hex(), "entry": entry}
+        recipient = verify_key_statement(
+            ShareKeyStatement.model_validate(payload["recipient"]),
+            trusted_root=federation["root_cert"],
+            kind="facility",
+        )
+        entry = _signed(payload)
+        sealed = seal_share(
+            shares[payload["share_key"]],
+            record_id=payload["share_key"],
+            recipient=recipient,
+        )
+        return {"sealed_share": sealed.model_dump(mode="json"), "entry": entry}
 
     app.state.log = state
+    app.state.public_key_pem = public_key_to_pem(public_key).decode("ascii")
     return app
 
 
-def _router(apps: dict[str, FastAPI]) -> httpx.Client:
-    """An httpx client whose transport dispatches by hostname to in-process apps."""
+def _forwarded(request: httpx.Request) -> dict[str, str]:
+    """The headers an in-process service needs: body type plus the signed
+    request envelope and service certificate (ADR-0066)."""
+    headers = {"content-type": "application/json"}
+    for name in (ENVELOPE_HEADER, CERTIFICATE_HEADER):
+        if name in request.headers:
+            headers[name] = request.headers[name]
+    return headers
+
+
+def _router(
+    apps: dict[str, FastAPI], seen: list[httpx.Request] | None = None
+) -> httpx.Client:
+    """An httpx client whose transport dispatches by hostname to in-process apps.
+
+    ``seen`` collects every request sent, for tests that inspect the wire.
+    """
+    # Requests arrive signed by the custodian; the headers are forwarded as is.
     clients = {host: TestClient(app) for host, app in apps.items()}
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if seen is not None:
+            seen.append(request)
         host = urlparse(str(request.url)).hostname or ""
         client = clients[host]
         resp = client.request(
             request.method,
-            request.url.path,
+            request.url.raw_path.decode("ascii"),
             content=request.content,
-            headers={"content-type": "application/json"},
+            headers=_forwarded(request),
         )
         return httpx.Response(resp.status_code, content=resp.content)
 
@@ -135,12 +225,28 @@ def federation():
     fb_priv, fb_pub = generate_ec_keypair()
     fb_cert = issue_facility_ca_certificate(root, "facility-b", fb_pub)
 
-    app_med = create_authority_app("authority-med", frozenset({"role"}))
-    app_net = create_authority_app(
-        "authority-net", frozenset({"specialty", "facility", "owner"})
+    # Every service takes signed requests only (ADR-0066); seeding signs as
+    # bootstrap, the custodian as itself.
+    services = ServicePKI(root)
+    # Subjects prove possession under their facility CAs (ADR-0082).
+    subject_trust = SubjectTrust(
+        root=root.certificate,
+        facility_cas={"facility-a": fa_cert, "facility-b": fb_cert},
     )
-    med = TestClient(app_med)
-    net = TestClient(app_net)
+    app_med = create_authority_app(
+        "authority-med",
+        frozenset({"role"}),
+        service_root=root.certificate,
+        subject_trust=subject_trust,
+    )
+    app_net = create_authority_app(
+        "authority-net",
+        frozenset({"specialty", "facility", "owner"}),
+        service_root=root.certificate,
+        subject_trust=subject_trust,
+    )
+    med = services.client(app_med, "authority-med")
+    net = services.client(app_net, "authority-net")
 
     def issue(client: TestClient, subject: str, name: str, value: str, **kw: Any):
         r = client.post(
@@ -191,6 +297,13 @@ def federation():
         ),
     )
 
+    # The patient, certified by their home facility (ADR-0064), signs the
+    # record's labels as the custodian does at upload.
+    pat_priv, pat_pub = generate_ec_keypair()
+    pat_cert_pem = certificate_to_pem(
+        issue_patient_certificate(fa_priv, fa_cert, PATIENT, pat_pub)
+    ).decode("ascii")
+
     em_key = generate_emergency_key()
     share1, share2, share3 = split_emergency_key(em_key)
     ingest = ingest_record(
@@ -203,6 +316,13 @@ def federation():
         search_terms=["cardiac"],
         emergency_key=em_key,
         record_id=RECORD,
+        clinical=sign_clinical_labels(
+            ClinicalMetadata(),
+            record_id=RECORD,
+            patient_id=PATIENT,
+            signing_key=pat_priv,
+            certificate_pem=pat_cert_pem,
+        ),
     )
     repo = InMemoryStorageRepository()
     repo.insert_record(ingest.record)
@@ -211,11 +331,37 @@ def federation():
     repo.insert_dek_wrapping(ingest.emergency_dek_wrapping)
     repo.store_compiled_policy(ingest.record.policy_id, ingest.compiled_policy)
     repo.upsert_lifecycle_state(record_id=RECORD, state=LifecycleState.GRANTED)
+    repo.put_sealed_search_terms(RECORD, ingest.sealed_search_terms)
+    rotation = RecordingRotationPorts(keyring)
 
     life_priv, _ = generate_ec_keypair()
     expiry = EmergencyExpiryManager(signing_key=life_priv, default_duration_seconds=60)
-    app_fa = create_hospital_app("facility-a", repository=repo)
-    app_fb = create_hospital_app("facility-b", repository=repo, expiry_manager=expiry)
+    trust = FacilityTrust(
+        root=root.certificate,
+        facility_cas={"facility-a": fa_cert, "facility-b": fb_cert},
+    )
+    audit_sink = RecordingAuditSink()
+    expiry_a = EmergencyExpiryManager(
+        signing_key=life_priv, default_duration_seconds=60
+    )
+    app_fa = create_hospital_app(
+        "facility-a",
+        identity=services.identity("facility-a"),
+        repository=repo,
+        trust=trust,
+        audit_sink=audit_sink,
+        expiry_manager=expiry_a,
+        rotation_ports=rotation.ports,
+    )
+    app_fb = create_hospital_app(
+        "facility-b",
+        identity=services.identity("facility-b"),
+        repository=repo,
+        expiry_manager=expiry,
+        trust=trust,
+        audit_sink=audit_sink,
+        rotation_ports=rotation.ports,
+    )
 
     # Clinician identities: certs from their facility CA, PRE keypairs.
     cardio_priv, cardio_pub = generate_ec_keypair()
@@ -223,7 +369,6 @@ def federation():
     er_priv, er_pub = generate_ec_keypair()
     er_cert = issue_clinician_certificate(fb_priv, fb_cert, DOC_ER, er_pub)
     er_pre_priv, er_pre_pub = generate_pre_keypair()
-    pat_priv, _ = generate_ec_keypair()
 
     return {
         "apps": {
@@ -234,6 +379,11 @@ def federation():
         },
         "repo": repo,
         "record": ingest.record,
+        "services": services,
+        "root_cert": root.certificate,
+        "rotation": rotation,
+        "expiry_a": expiry_a,
+        "er_pub": er_pub,
         "shares": {"share1": share1, "share2": share2, "share3": share3},
         "creds": creds,
         "root_pem": certificate_to_pem(root.certificate).decode("ascii"),
@@ -259,6 +409,7 @@ def federation():
             PATIENT: {
                 "kind": "patient",
                 "signing_key_pem": private_key_to_pem(pat_priv).decode("ascii"),
+                "certificate_pem": pat_cert_pem,
                 "credentials": creds[PATIENT],
             },
         },
@@ -266,12 +417,20 @@ def federation():
 
 
 def _custodian(
-    federation: dict[str, Any], *, audit_commit_ok: bool = True
+    federation: dict[str, Any],
+    *,
+    audit_commit_ok: bool = True,
+    audit_deposit_ok: bool = True,
+    seen: list[httpx.Request] | None = None,
 ) -> TestClient:
+    audit_shares = {RECORD: federation["shares"]["share3"]}
     audit = _audit_stub(
-        {RECORD: federation["shares"]["share3"]}, commit_ok=audit_commit_ok
+        audit_shares,
+        federation,
+        commit_ok=audit_commit_ok,
+        deposit_ok=audit_deposit_ok,
     )
-    http = _router({**federation["apps"], "audit": audit})
+    http = _router({**federation["apps"], "audit": audit}, seen)
     app = create_custodian_app(
         endpoints=CustodianEndpoints(
             authorities={"authority-med": AUTH_MED, "authority-net": AUTH_NET},
@@ -279,15 +438,20 @@ def _custodian(
             audit=AUDIT,
         ),
         http_client=http,
+        identity=federation["services"].identity("custodian"),
+        service_root=federation["root_cert"],
+        state_loader=federation["repo"].get_lifecycle_state,
         record_loader=federation["repo"].get_record,
         root_certificate_pem=federation["root_pem"],
+        audit_public_key_pem=audit.state.public_key_pem,
         facility_ca_certificate_pems={
             "facility-a": federation["fa_pem"],
             "facility-b": federation["fb_pem"],
         },
     )
-    client = TestClient(app)
+    client = federation["services"].client(app, "custodian")
     client.app_audit = audit  # type: ignore[attr-defined]
+    client.app_audit_shares = audit_shares  # type: ignore[attr-defined]
     return client
 
 
@@ -297,7 +461,8 @@ def _deposit_all(client: TestClient, federation: dict[str, Any]) -> None:
         assert r.status_code == 201, r.text
     x, share = federation["shares"]["share1"]
     r = client.post(
-        f"/records/{RECORD}/shares", json={"x": x, "share_hex": share.hex()}
+        f"/records/{RECORD}/shares",
+        json={"sealed_share": seal_for(client, RECORD, (x, share))},
     )
     assert r.status_code == 201, r.text
 
@@ -380,7 +545,7 @@ def test_authority_outage_is_distinct_from_a_policy_denial(federation):
     def _release(payload: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail="authority-med under maintenance")
 
-    audit = _audit_stub({RECORD: federation["shares"]["share3"]})
+    audit = _audit_stub({RECORD: federation["shares"]["share3"]}, federation)
     http = _router({**federation["apps"], "authority-med": down, "audit": audit})
     app = create_custodian_app(
         endpoints=CustodianEndpoints(
@@ -389,10 +554,14 @@ def test_authority_outage_is_distinct_from_a_policy_denial(federation):
             audit=AUDIT,
         ),
         http_client=http,
+        identity=federation["services"].identity("custodian"),
+        service_root=federation["root_cert"],
+        state_loader=federation["repo"].get_lifecycle_state,
         record_loader=federation["repo"].get_record,
         root_certificate_pem=federation["root_pem"],
+        audit_public_key_pem=audit.state.public_key_pem,
     )
-    client = TestClient(app)
+    client = federation["services"].client(app, "custodian")
     _deposit_all(client, federation)
 
     # DOC_CARDIO needs role:physician from the (now down) authority-med.
@@ -435,12 +604,17 @@ def test_consent_round_trip_signs_request_grant_and_revocation(federation):
     )
     assert r.status_code == 200, r.text
     grant = r.json()["grant"]
-    pub = r.json()["patient_public_key_pem"]
+    cert_pem = r.json()["patient_certificate_pem"]
     assert grant["status"] == "granted"
 
     # The facility verifies the patient signature and stores the grant.
-    fa = TestClient(federation["apps"]["facility-a"])
-    r = fa.post("/consent/grants", json={"grant": grant, "patient_public_key_pem": pub})
+    fa = federation["services"].client(
+        federation["apps"]["facility-a"], "facility-a", caller="portal"
+    )
+    r = fa.post(
+        "/consent/grants",
+        json={"grant": grant, "patient_certificate_pem": cert_pem},
+    )
     assert r.status_code == 200, r.text
 
     # Reading under the grant works for a clinician who also satisfies policy.
@@ -486,6 +660,58 @@ def test_consent_does_not_bypass_policy(federation):
     assert "Policy denied" in r.json()["detail"]
 
 
+# --- Revocation by key rotation (P3-7, review D6) -----------------------------
+
+SURGEON_ONLY = {
+    "node_type": "leaf",
+    "attribute": {"name": "role", "value": "surgeon"},
+    "authority_id": "authority-med",
+}
+
+
+def test_patient_revokes_through_the_custodian(federation):
+    """The custodian signs the patient's revocation; the facility rotates.
+
+    The excluded cardiologist reads nothing afterwards and the patient still
+    reads through the owner leaf. The request upstream carried a signed event
+    and a certificate, never the patient's key or the DEK (the facility
+    schema has no such field: ``test_no_facility_request_takes_a_private_key_or_dek``).
+    """
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    # The authority authors role:surgeon for the new tree; the test's
+    # rotation ports stand in for it.
+    federation["rotation"].keyring[
+        ("authority-med", "role", "surgeon")
+    ] = b"k_role_surgeon_32bytes_sample!!!"
+    read = {"record_id": RECORD, "facility_id": "facility-a"}
+    assert client.post(f"/subjects/{DOC_CARDIO}/read", json=read).status_code == 200
+
+    r = client.post(
+        f"/subjects/{PATIENT}/revoke",
+        json={**read, "new_clinical_policy": SURGEON_ONLY},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["transition_event"]["actor_id"] == PATIENT
+
+    assert client.post(f"/subjects/{DOC_CARDIO}/read", json=read).status_code == 403
+    assert client.post(f"/subjects/{PATIENT}/read", json=read).status_code == 200
+
+
+def test_clinician_cannot_revoke_through_the_custodian(federation):
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    r = client.post(
+        f"/subjects/{DOC_CARDIO}/revoke",
+        json={
+            "record_id": RECORD,
+            "facility_id": "facility-a",
+            "new_clinical_policy": SURGEON_ONLY,
+        },
+    )
+    assert r.status_code == 403
+
+
 # --- Break-glass (ARCHITECTURE §5 steps 1-5) -----------------------------------
 
 
@@ -504,8 +730,12 @@ def test_breakglass_unlocks_with_clinician_and_audit_shares(federation):
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["facility_id"] == "facility-b"
+    assert body["facility_id"] == "facility-a"  # Home node owns the shared timer.
     assert body["transition_event"]["to_state"] == "emergency_open"
+    # C7 (ADR-0068): the event is the clinician's, verifiable by their key.
+    event = TransitionEvent.model_validate(body["transition_event"])
+    assert event.actor_id == DOC_ER
+    verify_transition_event(event, federation["er_pub"])
     assert [s["holder"] for s in body["shares_presented"]] == [
         "clinician",
         "audit-service",
@@ -522,6 +752,27 @@ def test_breakglass_unlocks_with_clinician_and_audit_shares(federation):
     assert entry["event_type"] == "breakglass_share_released"
     assert entry["event_data"]["assertion_id"] == body["assertion_id"]
     assert "share" not in json.dumps(entry["event_data"]).lower()
+
+
+def test_second_viewer_naming_another_facility_joins_at_the_record_node(federation):
+    """ADR-0061: a clinician elsewhere is routed to the node holding the session."""
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    body = {
+        "patient_id": PATIENT,
+        "record_id": RECORD,
+        "reason_code": "sepsis",
+        "emergency_duration_seconds": 30,
+    }
+    first = client.post(f"/subjects/{DOC_ER}/breakglass", json=body)
+    assert first.status_code == 200, first.text
+    second = client.post(
+        f"/subjects/{DOC_ER}/breakglass", json={**body, "facility_id": "facility-b"}
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["facility_id"] == "facility-a"
+    assert second.json()["joined"] is True
+    assert second.json()["expires_at"] == first.json()["expires_at"]
 
 
 def test_breakglass_fails_closed_when_audit_cannot_commit(federation):
@@ -563,28 +814,30 @@ def test_patient_cannot_declare_breakglass(federation):
 def test_breakglass_never_puts_the_clinician_key_on_the_wire(federation):
     """ADR-0043 invariant: a subject's own signing key never leaves the custodian.
 
-    The clinician's ECDSA key signs the EmergencyAssertion *inside* the
-    custodian and only the signed assertion goes upstream; the lifecycle
-    transition is signed with a throwaway key, not the clinician's. So the
-    clinician's private key must appear in no request body the custodian sends
-    to any facility, authority or the audit service. This is the outbound
+    The clinician's ECDSA key signs the EmergencyAssertion and the
+    EMERGENCY_OPEN transition *inside* the custodian (ADR-0068) and only the
+    signed artefacts go upstream. So the clinician's private key must appear
+    in no request body -- and no header -- the custodian sends to any
+    facility, authority or the audit service. This is the outbound
     counterpart of ``test_subject_summary_describes_keys_without_returning_them``
     and the regression guard for the finding that the break-glass path used to
     forward ``material.signing_key`` as ``lifecycle_signing_key_pem``.
     """
     captured: list[bytes] = []
-    audit = _audit_stub({RECORD: federation["shares"]["share3"]})
+    audit = _audit_stub({RECORD: federation["shares"]["share3"]}, federation)
     apps = {**federation["apps"], "audit": audit}
+    # Each in-process service sees the custodian as an allowlisted caller.
     clients = {host: TestClient(app) for host, app in apps.items()}
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured.append(request.content)
+        captured.append(str(request.headers).encode("utf-8"))
         host = urlparse(str(request.url)).hostname or ""
         resp = clients[host].request(
             request.method,
-            request.url.path,
+            request.url.raw_path.decode("ascii"),
             content=request.content,
-            headers={"content-type": "application/json"},
+            headers=_forwarded(request),
         )
         return httpx.Response(resp.status_code, content=resp.content)
 
@@ -596,14 +849,18 @@ def test_breakglass_never_puts_the_clinician_key_on_the_wire(federation):
             audit=AUDIT,
         ),
         http_client=http,
+        identity=federation["services"].identity("custodian"),
+        service_root=federation["root_cert"],
+        state_loader=federation["repo"].get_lifecycle_state,
         record_loader=federation["repo"].get_record,
         root_certificate_pem=federation["root_pem"],
+        audit_public_key_pem=audit.state.public_key_pem,
         facility_ca_certificate_pems={
             "facility-a": federation["fa_pem"],
             "facility-b": federation["fb_pem"],
         },
     )
-    client = TestClient(app)
+    client = federation["services"].client(app, "custodian")
     _deposit_all(client, federation)  # deposits go INTO the custodian, not captured
 
     r = client.post(
@@ -620,10 +877,23 @@ def test_breakglass_never_puts_the_clinician_key_on_the_wire(federation):
         ln for ln in er_pem.splitlines() if "PRIVATE KEY" not in ln and len(ln) > 20
     ]
     assert key_lines
+    # No share either (ADR-0079): share 1 leaves sealed to the facility's gate
+    # and share 3 arrives sealed to it, so the custodian never forwards
+    # share bytes -- in hex or base64.
+    share_encodings = [
+        enc
+        for _x, value in (
+            federation["shares"]["share1"],
+            federation["shares"]["share3"],
+        )
+        for enc in (value.hex(), base64.b64encode(value).decode("ascii"))
+    ]
     for body in captured:
         text = body.decode("utf-8", "replace")
         for line in key_lines:
             assert line not in text, "clinician signing key leaked to an upstream call"
+        for enc in share_encodings:
+            assert enc not in text, "a threshold share crossed the wire unsealed"
 
 
 # --- Patient upload (P3-14 ingest through the key agent) -----------------------
@@ -678,13 +948,14 @@ def test_patient_upload_is_sealed_with_owner_leaf_and_readable_by_owner(federati
         base64.b64decode(r.json()["plaintext_b64"]) == b"Echocardiogram report: EF 35%"
     )
     assert r.json()["content_type"] == "text/plain"
-    # ... a cardiologist through the clinical branch ...
+    # ... specialty alone is not a treating relationship for a new upload ...
     r = client.post(
         f"/subjects/{DOC_CARDIO}/read",
         json={"record_id": rid, "facility_id": "facility-a"},
     )
-    assert r.status_code == 200, r.text
-    # ... and an ER physician is refused by policy.
+    assert r.status_code == 403, r.text
+    assert "care-episode grant" in r.json()["detail"]
+    # ... and an ER physician without consent is also refused.
     r = client.post(
         f"/subjects/{DOC_ER}/read", json={"record_id": rid, "facility_id": "facility-b"}
     )
@@ -700,11 +971,69 @@ def test_uploaded_record_can_be_opened_by_break_glass(federation):
     rid = r.json()["record_id"]
     r = client.post(
         f"/subjects/{DOC_ER}/breakglass",
-        json={"patient_id": PATIENT, "record_id": rid, "reason_code": "stroke"},
+        json={
+            "patient_id": PATIENT,
+            "record_id": rid,
+            "reason_code": "stroke",
+            "justification": "Urgent stroke treatment needs medication history.",
+        },
     )
     assert r.status_code == 200, r.text
     assert base64.b64decode(r.json()["plaintext_b64"]) == b"Uploaded by the patient"
     assert federation["repo"].get_lifecycle_state(rid) is LifecycleState.EMERGENCY_OPEN
+
+
+def test_ingest_with_existing_record_id_leaves_shares_intact(federation):
+    """Review F4: re-using a record_id is refused and the original still opens.
+
+    Before the fix the custodian deposited new shares before the facility
+    refused the duplicate, replacing the original record's shares for good.
+    """
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    first = _upload(client, b"Original report", record_id="rec-dup-001")
+    assert first.status_code == 201, first.text
+
+    again = _upload(client, b"Overwrite attempt", record_id="rec-dup-001")
+    assert again.status_code == 409, again.text
+
+    r = client.post(
+        f"/subjects/{DOC_ER}/breakglass",
+        json={
+            "patient_id": PATIENT,
+            "record_id": "rec-dup-001",
+            "reason_code": "stroke",
+            "justification": "Urgent stroke treatment needs medication history.",
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert base64.b64decode(r.json()["plaintext_b64"]) == b"Original report"
+
+
+def test_failed_share_deposit_stores_no_record(federation):
+    """Review F4: shares are deposited before ingest, so an audit outage leaves
+    no record behind that break-glass could never open; a retry succeeds."""
+    client = _custodian(federation, audit_deposit_ok=False)
+    _deposit_all(client, federation)
+    before = set(federation["repo"].records)
+
+    r = _upload(client, b"Report during an audit outage")
+    assert r.status_code == 503, r.text
+    assert set(federation["repo"].records) == before  # nothing ingested
+
+    # Setup was valid: the same upload works once the audit service is back.
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    r = _upload(client, b"Report during an audit outage")
+    assert r.status_code == 201, r.text
+
+
+def test_share_deposit_never_overwrites(federation):
+    """Review F4: a second share for the same record is refused (409)."""
+    client = _custodian(federation)
+    body = {"sealed_share": seal_for(client, "rec-x", (1, b"\x00" * 33))}
+    assert client.post("/records/rec-x/shares", json=body).status_code == 201
+    assert client.post("/records/rec-x/shares", json=body).status_code == 409
 
 
 def test_upload_refused_without_owner_credential(federation):
@@ -744,3 +1073,232 @@ def test_empty_or_malformed_upload_is_rejected_before_any_service_call(federatio
         },
     )
     assert r.status_code == 400
+
+
+def test_breakglass_refuses_a_release_entry_the_audit_service_did_not_sign(
+    federation,
+):
+    """Review F31: a share whose release entry is not the audit service's
+    signature over this flow is not presented to the facility."""
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    # Swap the key the custodian trusts: the stub's real signatures no longer
+    # verify, exactly as if an impostor answered for the audit service.
+    impostor_pub = generate_ec_keypair()[1]
+    client.app.state.vault.audit_public_key_pem = public_key_to_pem(
+        impostor_pub
+    ).decode("ascii")
+
+    r = client.post(
+        f"/subjects/{DOC_ER}/breakglass",
+        json={"patient_id": PATIENT, "record_id": RECORD, "reason_code": "stroke"},
+    )
+    assert r.status_code == 502
+    assert "did not verify" in r.json()["detail"]
+    assert "plaintext_b64" not in r.text
+    assert federation["repo"].get_lifecycle_state(RECORD) is LifecycleState.GRANTED
+
+
+def test_breakglass_refuses_an_audit_seq_that_goes_backwards(federation):
+    """Review F31: a lower seq than one already seen means a truncated chain."""
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    client.app.state.vault.last_audit_seq = 10_000
+
+    r = client.post(
+        f"/subjects/{DOC_ER}/breakglass",
+        json={"patient_id": PATIENT, "record_id": RECORD, "reason_code": "stroke"},
+    )
+    assert r.status_code == 502
+    assert "truncated or replayed" in r.json()["detail"]
+
+
+def test_concurrent_releases_finishing_out_of_order_are_accepted():
+    """Review F31: two break-glasses requested together may see their release
+    entries (seq 50 and 51) in either order; only a seq at or below what was
+    seen before the request is refused."""
+    vault = CustodianVault()
+    before_a = vault.audit_seq_before_release()
+    before_b = vault.audit_seq_before_release()
+    vault.advance_audit_seq(51, before_b)
+    vault.advance_audit_seq(50, before_a)  # answered later, committed earlier
+
+    with pytest.raises(ValueError, match="truncated or replayed"):
+        vault.advance_audit_seq(50, vault.audit_seq_before_release())
+
+
+# --- Signed service calls (ADR-0066) ---------------------------------------------
+
+
+def test_custodian_takes_only_signed_calls_from_allowed_kinds(federation):
+    """Bootstrap-only deposits refuse a portal; an unsigned call is a 401."""
+    client = _custodian(federation)
+    material = federation["material"][DOC_CARDIO]
+    # Positive control: bootstrap deposits.
+    assert (
+        client.post(f"/subjects/{DOC_CARDIO}/material", json=material).status_code
+        == 201
+    )
+    portal = federation["services"].client(client.app, "custodian", caller="portal")
+    refused = portal.post(f"/subjects/{DOC_ER}/material", json=material)
+    assert refused.status_code == 403
+    unsigned = TestClient(client.app).get(f"/subjects/{DOC_CARDIO}")
+    assert unsigned.status_code == 401
+    assert "public_key_pem" not in unsigned.text
+
+
+# --- Share 1 replacement after a rotation (ADR-0069) ----------------------------
+
+
+def _replace(client, generation: int, share_hex: str = "abcdef01"):
+    sealed = seal_for(client, RECORD, (1, bytes.fromhex(share_hex)))
+    return client.put(
+        f"/records/{RECORD}/shares",
+        json={"sealed_share": sealed, "generation": generation},
+    )
+
+
+def test_a_facility_replaces_share_1_during_the_records_expiry(federation):
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    facility = federation["services"].client(
+        client.app, "custodian", caller="facility-a"
+    )
+    federation["repo"].upsert_lifecycle_state(RECORD, LifecycleState.EXPIRED)
+    assert _replace(facility, 1).status_code == 200
+    assert _replace(facility, 1).status_code == 200  # a retry is a no-op
+    assert client.app.state.vault.get_share(RECORD) == (1, bytes.fromhex("abcdef01"))
+
+
+def test_share_1_is_not_replaced_outside_the_records_expiry(federation):
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    facility = federation["services"].client(
+        client.app, "custodian", caller="facility-a"
+    )
+    original = client.app.state.vault.get_share(RECORD)
+    assert _replace(facility, 1).status_code == 409  # record is GRANTED
+    federation["repo"].upsert_lifecycle_state(RECORD, LifecycleState.EXPIRED)
+    assert _replace(client, 1).status_code == 403  # bootstrap is not a facility
+    assert client.app.state.vault.get_share(RECORD) == original
+    # A later generation may skip ahead (ADR-0081); the held one is final.
+    assert _replace(facility, 2).status_code == 200
+    assert _replace(facility, 2, share_hex="abcdef02").status_code == 409
+    assert _replace(facility, 1, share_hex="abcdef02").status_code == 409
+    assert client.app.state.vault.get_share(RECORD) == (1, bytes.fromhex("abcdef01"))
+
+
+def test_share_1_replacement_needs_store_access(federation):
+    """Without a view of the store it cannot tell an expiry rotation: refuse."""
+    audit = _audit_stub({RECORD: federation["shares"]["share3"]}, federation)
+    app = create_custodian_app(
+        endpoints=CustodianEndpoints(audit=AUDIT),
+        http_client=_router({**federation["apps"], "audit": audit}),
+        identity=federation["services"].identity("custodian"),
+        service_root=federation["root_cert"],
+    )
+    facility = federation["services"].client(app, "custodian", caller="facility-a")
+    assert _replace(facility, 1).status_code == 503
+
+
+def test_breakglass_after_rotation_uses_the_new_share_1(federation):
+    """End to end through the custodian: expiry rotates, the custodian takes the
+    new share 1, and the next break-glass opens with it (ADR-0069)."""
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    body = {"patient_id": PATIENT, "record_id": RECORD, "reason_code": "stroke"}
+    assert client.post(f"/subjects/{DOC_ER}/breakglass", json=body).status_code == 200
+
+    federation["expiry_a"].expire_session(RECORD, force=True)
+    deposit = federation["rotation"].deposits[-1]
+    assert deposit["generation"] == 1
+    # Hand the rotation's shares to the holders, as the facility's ports do.
+    facility = federation["services"].client(
+        client.app, "custodian", caller="facility-a"
+    )
+    federation["repo"].upsert_lifecycle_state(RECORD, LifecycleState.EXPIRED)
+    x, share = deposit["clinician_share"]
+    assert (
+        facility.put(
+            f"/records/{RECORD}/shares",
+            json={
+                "sealed_share": seal_for(client, RECORD, (x, share)),
+                "generation": 1,
+            },
+        ).status_code
+        == 200
+    )
+    federation["repo"].upsert_lifecycle_state(RECORD, LifecycleState.GRANTED)
+    client.app_audit_shares[RECORD] = deposit["audit_share"]  # type: ignore[attr-defined]
+
+    again = client.post(f"/subjects/{DOC_ER}/breakglass", json=body)
+    assert again.status_code == 200, again.text
+    assert base64.b64decode(again.json()["plaintext_b64"]) == PLAINTEXT
+
+
+# --- ADR-0080: a patient's revocation through the custodian -------------------
+
+PHYSICIAN_ONLY = {
+    "node_type": "leaf",
+    "attribute": {"name": "role", "value": "physician"},
+    "authority_id": "authority-med",
+}
+
+
+def test_patient_revokes_through_the_custodian_with_no_key_on_the_wire(federation):
+    """Review F10/F13: the custodian signs the revocation with the patient's
+    key and sends the signed event; no private key, DEK or attribute key goes
+    to the facility, and the record is re-keyed and REVOKED."""
+    seen: list[httpx.Request] = []
+    client = _custodian(federation, seen=seen)
+    _deposit_all(client, federation)
+    seen.clear()
+
+    r = client.post(
+        f"/subjects/{PATIENT}/revoke",
+        json={"record_id": RECORD, "new_clinical_policy": PHYSICIAN_ONLY},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["lifecycle_state"] == "revoked"
+    assert federation["repo"].get_lifecycle_state(RECORD) is LifecycleState.REVOKED
+    assert federation["rotation"].deposits[-1]["generation"] == 1
+    (revoke,) = [q for q in seen if q.url.path.endswith("/revoke")]
+    body = revoke.content.decode()
+    assert "PRIVATE KEY" not in body
+    for field in ("old_dek_b64", "actor_signing_key_pem", "attribute_keyring"):
+        assert field not in body
+
+
+def test_only_the_records_patient_revokes_it(federation):
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    other = dict(federation["material"][PATIENT])
+    other["credentials"] = []
+    assert client.post("/subjects/pat-999/material", json=other).status_code == 201
+    r = client.post(
+        "/subjects/pat-999/revoke",
+        json={"record_id": RECORD, "new_clinical_policy": PHYSICIAN_ONLY},
+    )
+    assert r.status_code == 403
+    assert federation["repo"].get_lifecycle_state(RECORD) is LifecycleState.GRANTED
+
+
+def test_key_release_carries_the_subjects_possession_proof(federation):
+    """ADR-0082: every key release the custodian asks for is signed by the
+    credential's subject, and names that subject's certificate."""
+    seen: list[httpx.Request] = []
+    client = _custodian(federation, seen=seen)
+    _deposit_all(client, federation)
+    r = client.post(
+        f"/subjects/{DOC_CARDIO}/read",
+        json={"record_id": RECORD, "facility_id": "facility-a"},
+    )
+    assert r.status_code == 200, r.text
+    releases = [q for q in seen if q.url.path == "/attribute-keys/release"]
+    assert len(releases) == 2
+    for request in releases:
+        body = json.loads(request.content)
+        assert body["possession"]["caller_id"] == DOC_CARDIO
+        assert body["possession"]["operation"] == "attribute_key.release"
+        assert body["subject_certificate_pem"].startswith("-----BEGIN CERTIFICATE")

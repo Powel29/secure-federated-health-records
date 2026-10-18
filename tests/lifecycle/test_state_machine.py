@@ -60,7 +60,7 @@ def _new_event(
 
 
 def test_legal_transition_set_matches_architecture() -> None:
-    """The six legal transitions are the ARCHITECTURE §5 set, nothing more."""
+    """The seven legal transitions are the ARCHITECTURE §5 set, nothing more."""
     expected = {
         (LifecycleState.GRANTED, LifecycleState.REVOKED),
         (LifecycleState.GRANTED, LifecycleState.EMERGENCY_OPEN),
@@ -68,6 +68,7 @@ def test_legal_transition_set_matches_architecture() -> None:
         (LifecycleState.REVOKED, LifecycleState.EMERGENCY_OPEN),
         (LifecycleState.EMERGENCY_OPEN, LifecycleState.EXPIRED),
         (LifecycleState.EXPIRED, LifecycleState.GRANTED),
+        (LifecycleState.EXPIRED, LifecycleState.REVOKED),
     }
     assert LEGAL_TRANSITIONS == expected
 

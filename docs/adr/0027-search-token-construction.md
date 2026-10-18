@@ -109,3 +109,10 @@ P2-5.
   bare literal duplicated across future modules is how HKDF domain collisions
   happen; keeping it as `_KDF_INFO_PREFIX` in one place matches the
   `pre/elgamal.py` pattern.
+
+## Amendment — 2026-10-13 (clinical review)
+
+Terms are trimmed and case-folded before derivation, on indexing and on
+query, so a clinician typing "Penicillin" finds a record indexed under
+"penicillin". The KDF, salt and info prefix are unchanged; terms already
+indexed in lower case keep their tokens.

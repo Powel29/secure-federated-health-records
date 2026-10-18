@@ -1,52 +1,50 @@
 {% extends "base.html" %}
 {% block title %}{{ record.record_id|default:"Record" }} · {{ product_name }}{% endblock %}
 {% block content %}
-<div><a class="btn btn-ghost btn-sm" href="{% url 'patient:records' %}">← Back to records</a></div>
+<div><a class="btn btn-ghost btn-sm" href="{% url 'patient:records' %}">{% include "_icon.html" with name="back" %}Back to records</a></div>
 
 {% if store_error %}
-  <div class="card card-danger"><h3 class="card-title">Store unreachable</h3><div class="small">{{ store_error }}</div></div>
+  <section class="card card-frame"><h2 class="card-title">Store unreachable</h2><p class="mb-0">The record's metadata could not be read, so nothing can be opened. Reason: {{ store_error }}</p></section>
 {% else %}
-<div class="card">
+<section class="card" aria-labelledby="rv-h">
   <div class="subhead">
-    <div>
-      <div class="kicker">Sealed record</div>
-      <h3 class="card-title mono">{{ record.record_id }}</h3>
-    </div>
+    <h2 class="card-title mono" id="rv-h">{{ record.record_id }}</h2>
     <div class="flex">
-      <span class="tag tag-neutral">{{ record.content_type }}</span>
-      {% if record.lifecycle_state %}<span class="tag {% if record.lifecycle_state == 'emergency_open' %}tag-accent{% else %}tag-outline{% endif %}">{{ record.lifecycle_state }}</span>{% endif %}
+      <span class="tag tag-quiet">{{ record.content_type }}</span>
+      {% if record.lifecycle_state == "emergency_open" %}<span class="tag tag-emergency">Emergency open</span>{% elif record.lifecycle_state == "revoked" %}<span class="tag tag-revoked">Revoked</span>{% elif record.lifecycle_state %}<span class="tag tag-quiet">Key state: {{ record.lifecycle_state|humanize_code }}</span>{% endif %}
     </div>
   </div>
-  <div class="grid-stats">
-    <div><div class="kicker">Facility</div><div class="value">{{ record.facility_name|default:record.facility_id }} <span class="mono tiny">{{ record.facility_id }}</span></div></div>
-    <div><div class="kicker">Created</div><div class="value mono">{{ record.created_at|date:"Y-m-d H:i" }} UTC</div></div>
-    <div><div class="kicker">Ciphertext</div><div class="value mono">{{ record.ciphertext_bytes }} B · AES-256-GCM</div></div>
-    <div><div class="kicker">Key path</div><div class="value">OR(clinical policy, owner:{{ subject_id }})</div></div>
-  </div>
+  <dl class="facts">
+    <div><dt>Facility</dt><dd>{{ record.facility_name|default:record.facility_id }} <span class="mono tiny">{{ record.facility_id }}</span></dd></div>
+    <div><dt>Created</dt><dd class="mono">{{ record.created_at|date:"Y-m-d H:i" }} UTC</dd></div>
+    <div><dt>Ciphertext</dt><dd class="mono">{{ record.ciphertext_bytes }} B · AES-256-GCM</dd></div>
+    <div><dt>Who can unlock it</dt><dd>OR(clinical policy, <span class="mono">owner:{{ subject_id }}</span>)</dd></div>
+  </dl>
 
   {% if denied %}
-    <div class="card card-danger mt-3">
-      <h3 class="card-title">This record can't be opened — access is not granted by keys.</h3>
-      <div class="small">{{ denied_service|default:"service" }}: {{ denied }}</div>
-      <div class="tiny text-muted mono">correlation {{ correlation_id }}</div>
-      <div class="tiny text-muted">Your login identified you, but the facility's policy engine did not reconstruct the key. Nothing was decrypted. This is the fail-closed path ADR-0016 requires.</div>
-    </div>
+    <div class="notice notice-error" role="alert">{% include "_icon.html" with name="x" %}<div>
+      <strong>This record can't be opened — access is not granted by keys.</strong>
+      <div class="small mt-2">{{ denied_service|default:"service" }}: {{ denied }}</div>
+      <div class="small mt-2">Your login identified you, but the facility's policy engine did not reconstruct the key. Nothing was decrypted. <span class="mono">correlation {{ correlation_id }}</span></div>
+    </div></div>
   {% elif plaintext %}
-    <div class="flex between mt-3">
-      <span class="tag tag-accent">decrypted for this request only</span>
-      <span class="tiny text-muted mono">via {{ access_via }} · {{ attributes_presented|join:", " }} · correlation {{ correlation_id }}</span>
+    <div class="flex between">
+      <span class="tag tag-ok">{% include "_icon.html" with name="check" %}Decrypted for this request only</span>
+      <span class="tiny text-muted mono">via {{ access_via }} · {{ attributes_presented|join:", " }} · <span class="cid">{{ correlation_id }}</span></span>
     </div>
     <pre class="plaintext">{{ plaintext }}</pre>
-    <div class="tiny text-muted">Streamed to your browser once; not persisted by the portal, not cached (<span class="mono">Cache-Control: no-store</span>). The read itself was logged before release.</div>
+    <p class="basis">Streamed to your browser once; the portal does not store or cache it (<span class="mono">Cache-Control: no-store</span>). The read was logged before release.</p>
   {% else %}
-    <form method="post" class="flex mt-3">
+    <form method="post" class="stack">
       {% csrf_token %}
-      <button class="btn btn-primary" name="mode" value="render">Decrypt via owner attribute</button>
-      <button class="btn btn-secondary" name="mode" value="raw">Stream raw file inline</button>
-      <span class="tiny text-muted">Your key agent presents <span class="mono">owner:{{ subject_id }}</span>; the facility reconstructs the DEK only if the policy tree accepts it.</span>
+      <div class="flex">
+        <button class="btn btn-primary" name="mode" value="render">{% include "_icon.html" with name="key" %}Open with my owner key</button>
+        <button class="btn btn-secondary" name="mode" value="raw">Open the original file</button>
+      </div>
+      <p class="tiny text-muted mb-0">Your key agent presents <span class="mono">owner:{{ subject_id }}</span>; the facility rebuilds the record key only if the policy tree accepts it.</p>
     </form>
-    {% if not enrolled %}<div class="notice notice-info small mt-2">No key agent material is held for <span class="mono">{{ subject_id }}</span>. The request will be refused — expected: a login alone decrypts nothing.</div>{% endif %}
+    {% if not enrolled %}<div class="notice notice-info small" role="status">{% include "_icon.html" with name="info" %}<div>No key agent material is held for <span class="mono">{{ subject_id }}</span>, so this request will be refused. That is expected: a login alone decrypts nothing.</div></div>{% endif %}
   {% endif %}
-</div>
+</section>
 {% endif %}
 {% endblock %}

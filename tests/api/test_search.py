@@ -15,7 +15,7 @@ import httpx
 import pytest
 from api.audit_client import AuditServiceError
 from api.hospital import create_hospital_app
-from fastapi.testclient import TestClient
+from contracts.enums import LifecycleState
 from search.service import derive_search_token
 
 
@@ -47,11 +47,16 @@ class TestHospitalSearchEndpoints:
 
         app = create_hospital_app(
             facility_id="facility-a",
+            rotation_ports=test_setup["rotation"].ports,
+            service_root=test_setup["pki"]["root"].certificate,
             repository=repo,
             expiry_manager=expiry_manager,
             audit_service_url="http://audit-down:9999",
+            identity=test_setup["pki"]["services"].identity("facility-a"),
         )
-        client = TestClient(app, raise_server_exceptions=False)
+        client = test_setup["pki"]["services"].client(
+            app, "facility-a", raise_server_exceptions=False
+        )
 
         def _dead(*args, **kwargs):
             raise httpx.ConnectError("connection refused")
@@ -97,21 +102,26 @@ class TestHospitalSearchEndpoints:
             actor_id="dr-alice",
             correlation_id="corr-search-001",
             emergency_key=test_setup["em_key"],
-            baseline_wrapping_key=b"k_base_32bytes_sample_key_001!",
-            baseline_wrapping=test_setup["wrapping"],
             emergency_wrapping=test_setup["em_wrapping"],
             current_record=test_setup["record"],
+            return_state=LifecycleState.GRANTED,
             duration_seconds=300.0,
         )
 
         response = client.post(
             "/records/rec-001/emergency-search",
-            json={"search_term": "cardiac"},
+            json={"search_term": "cardiac", "requester_id": "dr-alice"},
         )
 
         assert response.status_code == 200
         data = response.json()
         assert "rec-001" in data["record_ids"]
+        # F8: the search is audited with the requesting clinician.
+        granted = test_setup["audit_sink"].of_type("access_granted")
+        assert [
+            (g["event_data"]["requester_id"], g["event_data"]["access_via"])
+            for g in granted
+        ] == [("dr-alice", "emergency_search")]
 
     def test_emergency_search_refused_after_expiry(self, test_setup):
         """Emergency search fails closed with 403 once session expires (P3-8)."""
@@ -124,17 +134,27 @@ class TestHospitalSearchEndpoints:
             actor_id="dr-alice",
             correlation_id="corr-search-002",
             emergency_key=test_setup["em_key"],
-            baseline_wrapping_key=b"k_base_32bytes_sample_key_001!",
-            baseline_wrapping=test_setup["wrapping"],
             emergency_wrapping=test_setup["em_wrapping"],
             current_record=test_setup["record"],
+            return_state=LifecycleState.GRANTED,
             duration_seconds=-1.0,
         )
 
         response = client.post(
             "/records/rec-001/emergency-search",
-            json={"search_term": "cardiac"},
+            json={"search_term": "cardiac", "requester_id": "dr-alice"},
         )
 
         assert response.status_code == 403
         assert "Emergency search unavailable" in response.json()["detail"]
+        # F8: the refusal is audited too.
+        denied = test_setup["audit_sink"].of_type("access_denied")
+        assert [d["event_data"]["denied_by"] for d in denied] == ["emergency_search"]
+
+    def test_emergency_search_without_requester_rejected(self, test_setup):
+        """F8: a search with no requester identity is refused before it runs."""
+        response = test_setup["client"].post(
+            "/records/rec-001/emergency-search", json={"search_term": "cardiac"}
+        )
+        assert response.status_code == 422
+        assert test_setup["audit_sink"].events == []

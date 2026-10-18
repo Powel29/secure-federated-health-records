@@ -1,0 +1,6 @@
+{% firstof case.record_id record_id "record" as file_name %}{% if plaintext %}<pre class="plaintext">{{ plaintext }}</pre>
+{% elif record_kind == "pdf" %}<iframe class="record-embed" src="{{ record_uri }}" title="Decrypted PDF record"></iframe>
+<p class="tiny text-muted"><a href="{{ record_uri }}" download="{{ file_name }}.pdf">Download the PDF</a> if it does not display.</p>
+{% elif record_kind == "image" %}<img class="record-embed-image" src="{{ record_uri }}" alt="Decrypted image record">
+{% else %}<p>This record is a <span class="mono">{{ record_type }}</span> file ({{ record_bytes|filesizeformat }}) that cannot be shown in the page. <a href="{{ record_uri }}" download="{{ file_name }}">Download it</a>.</p>
+{% endif %}

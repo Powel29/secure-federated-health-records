@@ -24,10 +24,12 @@ mixing C8/C7 responsibilities with C4/C10 (ARCHITECTURE.md §2).
 from __future__ import annotations
 
 import datetime
+import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from contracts.clinical import ClinicalMetadata, latest_local_date
 from contracts.enums import LifecycleState
 from contracts.policy import PolicyTree
 from contracts.records import DEKWrapping, Record
@@ -37,6 +39,7 @@ from records.service import encrypt_record, wrap_dek
 
 if TYPE_CHECKING:
     from policy.engine import AttributeKeyring, CompiledPolicy
+    from search.service import SealedSearchTerms
 
 # Re-export the type alias at module level for callers that only need the name.
 AttributeKeyring = Mapping[tuple[str, str, str], bytes]
@@ -55,10 +58,15 @@ class IngestResult:
     dek_wrapping: DEKWrapping
     compiled_policy: CompiledPolicy
     policy_tree: PolicyTree  # the authored tree (with owner leaf)
-    root_secret: bytes  # the wrapping key (caller must NOT persist this)
+    # The wrapping key (caller must NOT persist this) and the search tokens
+    # stay out of repr() so a log line or traceback never prints them (F26).
+    root_secret: bytes = field(repr=False)
     lifecycle_state: LifecycleState
-    search_tokens: dict[str, bytes]  # {plaintext_term: coded_token}
+    search_tokens: dict[str, bytes] = field(repr=False)  # {term: coded_token}
     emergency_dek_wrapping: DEKWrapping | None = None
+    # The term list sealed under the DEK, so expiry can re-index under a new
+    # emergency key (ADR-0069). ``None`` when no terms were indexed.
+    sealed_search_terms: SealedSearchTerms | None = None
 
 
 def ingest_record(
@@ -75,6 +83,7 @@ def ingest_record(
     record_id: str | None = None,
     policy_id: str | None = None,
     created_at: datetime.datetime | None = None,
+    clinical: ClinicalMetadata | None = None,
 ) -> IngestResult:
     """Ingest a health record: encrypt, compile policy, wrap DEK, index.
 
@@ -125,10 +134,32 @@ def ingest_record(
     # it at module level from inside the records package creates a circular
     # import chain.  Deferring to call time breaks the cycle cleanly.
     from policy.engine import author_policy_with_owner, compile_policy
-    from search.service import derive_search_token
+    from search.service import derive_search_token, seal_search_terms
 
     if created_at is None:
         created_at = datetime.datetime.now(datetime.timezone.utc)
+
+    # Validate the supported structured report dates, not future follow-up plans.
+    # Arbitrary PDFs/images remain opaque and require uploader-supplied metadata.
+    if content_type == "application/json":
+        try:
+            document = json.loads(plaintext)
+        except (ValueError, UnicodeDecodeError):
+            document = None
+        if isinstance(document, dict):
+            encounter = document.get("encounter")
+            dates = [document.get("clinical_date"), document.get("performed_at")]
+            if isinstance(encounter, dict):
+                dates.append(encounter.get("performed_at"))
+            for value in dates:
+                if value is None:
+                    continue
+                try:
+                    event_date = datetime.date.fromisoformat(str(value)[:10])
+                except ValueError:
+                    continue  # not an ISO date: opaque content, like a PDF
+                if event_date > latest_local_date():
+                    raise ValueError("A clinical event date cannot be in the future")
 
     # Generate a policy_id if not provided.
     if policy_id is None:
@@ -146,6 +177,7 @@ def ingest_record(
         aad=aad,
         record_id=record_id,
         created_at=created_at,
+        clinical=clinical,
     )
 
     # --- Step 2: Author the policy tree with owner leaf (ADR-0016) ---
@@ -175,9 +207,11 @@ def ingest_record(
 
     # --- Step 5: Derive search tokens for each term ---
     search_tokens: dict[str, bytes] = {}
+    sealed_terms = None
     if search_terms and emergency_key:
         for term in search_terms:
             search_tokens[term] = derive_search_token(emergency_key, term)
+        sealed_terms = seal_search_terms(list(search_terms), dek, record.record_id)
 
     # Wrap DEK for emergency recovery if emergency_key is provided
     em_wrapping: DEKWrapping | None = None
@@ -201,4 +235,5 @@ def ingest_record(
         lifecycle_state=LifecycleState.GRANTED,
         search_tokens=search_tokens,
         emergency_dek_wrapping=em_wrapping,
+        sealed_search_terms=sealed_terms,
     )

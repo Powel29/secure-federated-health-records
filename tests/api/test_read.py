@@ -18,10 +18,6 @@ import datetime
 from api.hospital import create_hospital_app
 from consent.service import create_consent_grant, create_consent_request
 from contracts.enums import ConsentStatus
-from crypto_core import (
-    public_key_to_pem,
-)
-from fastapi.testclient import TestClient
 
 
 class TestHospitalReadEndpoint:
@@ -89,7 +85,7 @@ class TestHospitalReadEndpoint:
             ],
         }
 
-        pat_pub_pem = public_key_to_pem(pki["pat_pub"]).decode("ascii")
+        pat_cert_pem = pki["pat_cert_pem"]
 
         response = client.post(
             "/records/rec-001/read",
@@ -97,7 +93,7 @@ class TestHospitalReadEndpoint:
                 "requester_id": "dr-alice",
                 "holder_keyring": clinical_keyring,
                 "grant": grant.model_dump(mode="json"),
-                "patient_public_key_pem": pat_pub_pem,
+                "patient_certificate_pem": pat_cert_pem,
                 "correlation_id": "corr-read-consent-001",
             },
         )
@@ -134,7 +130,7 @@ class TestHospitalReadEndpoint:
             patient_signing_key=pki["pat_priv"],
             scope=("rec-001",),
         )
-        pat_pub_pem = public_key_to_pem(pki["pat_pub"]).decode("ascii")
+        pat_cert_pem = pki["pat_cert_pem"]
 
         response = client.post(
             "/records/rec-001/read",
@@ -142,7 +138,7 @@ class TestHospitalReadEndpoint:
                 "requester_id": "dr-alice",
                 "holder_keyring": incomplete_keyring,
                 "grant": grant.model_dump(mode="json"),
-                "patient_public_key_pem": pat_pub_pem,
+                "patient_certificate_pem": pat_cert_pem,
             },
         )
 
@@ -175,7 +171,7 @@ class TestHospitalReadEndpoint:
             decided_at=past,
             ttl=datetime.timedelta(days=2),
         )
-        pat_pub_pem = public_key_to_pem(pki["pat_pub"]).decode("ascii")
+        pat_cert_pem = pki["pat_cert_pem"]
 
         response = client.post(
             "/records/rec-001/read",
@@ -183,7 +179,7 @@ class TestHospitalReadEndpoint:
                 "requester_id": "dr-alice",
                 "holder_keyring": attrs["b64_keyring"],
                 "grant": grant.model_dump(mode="json"),
-                "patient_public_key_pem": pat_pub_pem,
+                "patient_certificate_pem": pat_cert_pem,
             },
         )
 
@@ -209,7 +205,7 @@ class TestHospitalReadEndpoint:
             grantee_id="dr-alice",
             patient_signing_key=pki["pat_priv"],
         )
-        pat_pub_pem = public_key_to_pem(pki["pat_pub"]).decode("ascii")
+        pat_cert_pem = pki["pat_cert_pem"]
 
         response = client.post(
             "/records/rec-001/read",
@@ -217,7 +213,7 @@ class TestHospitalReadEndpoint:
                 "requester_id": "dr-alice",
                 "holder_keyring": attrs["b64_keyring"],
                 "grant": grant.model_dump(mode="json"),
-                "patient_public_key_pem": pat_pub_pem,
+                "patient_certificate_pem": pat_cert_pem,
             },
         )
 
@@ -243,7 +239,7 @@ class TestHospitalReadEndpoint:
             grantee_id="dr-alice",
             patient_signing_key=pki["pat_priv"],
         )
-        pat_pub_pem = public_key_to_pem(pki["pat_pub"]).decode("ascii")
+        pat_cert_pem = pki["pat_cert_pem"]
 
         response = client.post(
             "/records/rec-001/read",
@@ -251,7 +247,7 @@ class TestHospitalReadEndpoint:
                 "requester_id": "dr-alice",
                 "holder_keyring": attrs["b64_keyring"],
                 "grant": grant.model_dump(mode="json"),
-                "patient_public_key_pem": pat_pub_pem,
+                "patient_certificate_pem": pat_cert_pem,
             },
         )
 
@@ -269,11 +265,16 @@ class TestHospitalReadEndpoint:
         # Same seeded repo, but this app points at an unreachable audit service.
         app = create_hospital_app(
             facility_id="facility-a",
+            rotation_ports=test_setup["rotation"].ports,
+            service_root=test_setup["pki"]["root"].certificate,
             repository=test_setup["repo"],
             expiry_manager=test_setup["expiry_manager"],
             audit_service_url="http://127.0.0.1:1",
+            identity=test_setup["pki"]["services"].identity("facility-a"),
         )
-        client = TestClient(app, raise_server_exceptions=False)
+        client = test_setup["pki"]["services"].client(
+            app, "facility-a", raise_server_exceptions=False
+        )
         attrs = test_setup["attrs"]
 
         owner_keyring = {
@@ -293,6 +294,43 @@ class TestHospitalReadEndpoint:
 
         assert response.status_code == 503
         assert "audit service unavailable" in response.json()["detail"]
+
+    def test_read_without_audit_sink_returns_503_not_plaintext(self, test_setup):
+        """Review F19: a facility with no audit destination releases nothing.
+
+        Before the fix, ``_log_event`` silently did nothing when neither an
+        audit URL nor an in-process logger was configured, so the read below
+        returned plaintext with no log entry.
+        """
+        attrs = test_setup["attrs"]
+        owner_keyring = {
+            "authority-net:owner:patient-001": attrs["b64_keyring"][
+                "authority-net:owner:patient-001"
+            ]
+        }
+        body = {"requester_id": "patient-001", "holder_keyring": owner_keyring}
+
+        # Setup is valid: with the fixture's audit sink the same read succeeds.
+        assert (
+            test_setup["client"].post("/records/rec-001/read", json=body).status_code
+            == 200
+        )
+
+        app = create_hospital_app(
+            facility_id="facility-a",
+            rotation_ports=test_setup["rotation"].ports,
+            service_root=test_setup["pki"]["root"].certificate,
+            repository=test_setup["repo"],
+            expiry_manager=test_setup["expiry_manager"],
+        )
+        response = (
+            test_setup["pki"]["services"]
+            .client(app, "facility-a")
+            .post("/records/rec-001/read", json=body)
+        )
+
+        assert response.status_code == 503
+        assert "plaintext_b64" not in response.text
 
     def test_read_nonexistent_record_returns_404(self, test_setup):
         """Request for unknown record returns 404."""
