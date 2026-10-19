@@ -109,5 +109,3 @@ docker compose -f deploy/docker-compose.yml up --build -d
 | Port already in use | Another program on 8000 to 8030 or 55433 | Stop it, or run `down` for an older stack |
 | Login fails | Stack was started with `SEED_DATA=false` | Run step 2 again without it |
 | Stack in a strange state | Partial or stale run | `down`, then `up --build -d` (resets all synthetic data) |
-
-This path does not use the `p08pg` container. Compose brings its own Postgres.

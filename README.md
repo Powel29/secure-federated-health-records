@@ -9,7 +9,7 @@ Start with [CLAUDE.md](CLAUDE.md), which routes to the four project documents:
 (who does what, when).
 
 This README is the **complete install-to-running guide**: prerequisites, the
-Python environment, PostgreSQL, the test suite, the federation, the web portals,
+Python environment, the Docker store, the test suite, the federation, the web portals,
 and the Wireshark traffic-capture verification. Deep detail for the federation
 and the portals lives in [deploy/README.md](deploy/README.md) and
 [portal/README.md](portal/README.md); this page is enough to go start to finish.
@@ -23,7 +23,7 @@ Install these once. `pip` cannot install the last two.
 | Tool | Version | Needed for | Verify |
 |---|---|---|---|
 | **Python** | 3.11 (what CI and the image use) | everything | `python --version` |
-| **Docker Desktop** | any recent | PostgreSQL, the Compose deployment path | `docker --version` |
+| **Docker Desktop** | any recent | the Compose deployment: store, federation, portals | `docker --version` |
 | **Wireshark / tshark** | any recent | traffic-analysis module (P4-6/P5-5) | `tshark --version` |
 
 - **Python** — [python.org/downloads](https://www.python.org/downloads/). On
@@ -44,8 +44,9 @@ Install these once. `pip` cannot install the last two.
   `$env:PATH="C:\Program Files\Wireshark;$env:PATH"`.
 
 Only the traffic-capture step needs Wireshark; everything else runs without it.
-The local federation path (Path A) and the unit tests run without Docker (the
-Postgres-backed tests skip cleanly when no database is reachable).
+The unit tests run without Docker (the Postgres-backed tests skip cleanly when
+no database is reachable); the federation and the portals run only through
+Docker Compose.
 
 ---
 
@@ -88,69 +89,63 @@ pip install -r requirements-dev.txt
 
 ---
 
-## 2. PostgreSQL (the shared store)
+## 2. The shared store (Docker Compose)
 
-The shared encrypted store (C4) is PostgreSQL (ADR-0014 / ADR-0020). Bring up a
-throwaway instance with Docker. Port **55432** is used deliberately so it does
-not clash with a local Postgres already on 5432:
-
-```bash
-docker run -d --name p08pg -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_DB=ehr_test -p 55432:5432 postgres:16-alpine
-```
-
-This store speaks plaintext, which is right for the default (plain) profile.
-The TLS profile (`TLS_ENABLED=true`) refuses it and needs a TLS store instead:
-see `deploy/README.md`, "The store link is TLS too" (ADR-0071).
-
-Apply the store schema (migrations, P0-8):
-
-```bash
-DATABASE_URL="postgresql://postgres@localhost:55432/ehr_test" python -m storage.migrate
-```
-
-PowerShell uses a prefix instead of the inline form:
+The shared encrypted store (C4) is PostgreSQL (ADR-0014 / ADR-0020). There is
+one way to run it: the `store` service of the Docker Compose deployment in
+`deploy/docker-compose.yml`. It listens on host port **55433** (loopback only)
+and needs a password. Create `deploy/.env` once; it is git-ignored and Compose
+refuses to start without it:
 
 ```powershell
-$env:DATABASE_URL="postgresql://postgres@localhost:55432/ehr_test"; python -m storage.migrate
+python -c "import secrets, pathlib; pathlib.Path('deploy/.env').write_text('POSTGRES_PASSWORD=' + secrets.token_urlsafe(16) + '\n')"
 ```
 
-Stop / restart / remove the container later with `docker stop p08pg`,
-`docker start p08pg`, `docker rm -f p08pg`.
+The store lives in tmpfs, so it starts empty whenever its container starts.
+Schema migrations run as part of the stack (the `migrate` service), so there is
+nothing to apply by hand.
 
-> **Windows tip:** prefer `127.0.0.1` over `localhost` in a DSN — the IPv6
-> fallback (`::1`) can add ~10s per connection.
+> **Windows tip:** prefer `127.0.0.1` over `localhost` in a DSN. The IPv6
+> fallback (`::1`) can add ~10 s per connection.
 
 ---
 
 ## 3. Run the tests
 
-**Quick — no database** (same scope as the CI `lint` / `format` jobs plus the
+**Quick, no database** (same scope as the CI `lint` / `format` jobs plus the
 Postgres-skipping suite):
 
 ```bash
 pytest
-ruff check src/ tests/
-black --check src/ tests/
+ruff check src/ tests/ deploy/ wire/ bench/ demo/
+black --check src/ tests/ deploy/ wire/ bench/ demo/
 ```
 
 The storage / audit / deploy / demo suites need PostgreSQL and **skip cleanly
 without it**, so a fresh clone still runs green.
 
-**Full — with PostgreSQL** (what the CI `test` job runs; nothing skips). With the
-container from step 2 up:
+**Full, with PostgreSQL** (what the CI `test` job runs; nothing skips). The
+tests **drop and recreate the `public` schema** of whatever database
+`DATABASE_URL` names, so never point them at the demo's `ehr` database. Give
+them a database of their own inside the same Compose store:
 
-```bash
-DATABASE_URL="postgresql://postgres@localhost:55432/ehr_test" pytest tests/ -ra -q
+```powershell
+docker compose -f deploy/docker-compose.yml up -d store
+docker compose -f deploy/docker-compose.yml exec store psql -U postgres -c "CREATE DATABASE ehr_test"
+$pw = (Get-Content deploy/.env).Split("=",2)[1]
+$env:DATABASE_URL = "postgresql://postgres:$pw@127.0.0.1:55433/ehr_test"
+pytest tests/ -ra -q
 ```
 
-This runs the real read/write round-trips, the standalone-federation demo
+(`CREATE DATABASE` fails harmlessly with "already exists" on a second run.) This
+runs the real read/write round-trips, the standalone-federation demo
 integration, and the cross-facility break-glass end-to-end test over real
 sockets. Expected: the whole suite passes (on 2026-10-19: **950 passed** with
 Postgres; `tests/wire/test_live_capture.py` also runs once `wire/captures/`
 holds fresh captures, and the two missing-`dumpcap` tests skip when Wireshark
 is installed).
 
-The Django portals have their own suite (SQLite, no services) — see
+The Django portals have their own suite (SQLite, no services), see
 [portal/README.md](portal/README.md):
 
 ```bash
@@ -161,163 +156,108 @@ cd portal && python manage.py test --settings=config.test_settings
 
 ## 4. Run the federation (services only)
 
-Two ways to bring up all **six** processes — two facilities (`facility-a`,
-`facility-b`), two attribute authorities (`authority-med`, `authority-net`), the
-`audit` service, and the portals' key agent `custodian` (ADR-0043) — against the
-shared store, with the ARCHITECTURE.md §7 bootstrap sequence. Full detail and
-port map in [deploy/README.md](deploy/README.md).
+The deployment is `deploy/docker-compose.yml`. It brings up all **six**
+processes (two facilities `facility-a` / `facility-b`, two attribute
+authorities `authority-med` / `authority-net`, the `audit` service, and the
+portals' key agent `custodian`, ADR-0043) plus the store, the migrations and the
+bootstrap sequence of ARCHITECTURE.md §7. Full detail and the port map are in
+[deploy/README.md](deploy/README.md).
 
-**Path A — local processes (no Docker beyond Postgres):**
+Create the store password once (step 2), then:
 
-```bash
-DATABASE_URL="postgresql://postgres@localhost:55432/ehr_test" python -m deploy.run_local
-```
-
-Prints each bootstrap step, then the service URLs (custodian on `:8030` last).
-The audit chain is verified from genesis before anything is declared up; if that
-check fails, nothing is considered running. Ctrl+C stops everything.
-
-**Path B — Docker Compose:**
-
-Create the store password once. It goes in `deploy/.env`, which is git-ignored;
-Compose refuses to start without it:
-
-```bash
-python -c "import secrets, pathlib; pathlib.Path('deploy/.env').write_text('POSTGRES_PASSWORD=' + secrets.token_urlsafe(16) + '\n')"
-```
-
-Then start the stack:
-
-```bash
+```powershell
 docker compose -f deploy/docker-compose.yml up --build -d
+docker compose -f deploy/docker-compose.yml logs -f bootstrap
 ```
 
-Compose brings up its own `store` (Postgres, host port `55433`), runs
-migrations and bootstrap (seven steps, chain verified from genesis), serves the
-six roles at `8001/8002/8010/8011/8020/8030`, and starts the three portals at
-**http://127.0.0.1:8000/** with the same logins as step 5a. All published ports
-bind to loopback. Watch it come up with
-`docker compose -f deploy/docker-compose.yml logs -f bootstrap`; it is ready when
-that prints `federation is up.` and the `bootstrap` container has exited 0.
+Compose runs migrations and bootstrap (seven steps, audit chain verified from
+genesis), serves the six roles at `8001/8002/8010/8011/8020/8030`, and starts
+the three portals at **http://127.0.0.1:8000/**. All published ports bind to
+loopback. It is ready when the log prints `federation is up.` and the
+`bootstrap` container has exited 0. Check with
+`docker compose -f deploy/docker-compose.yml ps -a`.
+
 After a key-service restart or a failed bootstrap, recreate the disposable demo
 with `down` followed by `up --build -d`; this resets its synthetic records. Set
 `SEED_DATA=false` only when a driver seeds its own records (for example
-`python -m deploy.run_scenario`, which fails with a 500 on `rec-001` if bootstrap
-already seeded it). See [deploy/README.md](deploy/README.md) for verified TLS and
-recovery details.
+`python -m deploy.run_scenario`, which fails with a 500 on `rec-001` if
+bootstrap already seeded it). See [deploy/README.md](deploy/README.md) for
+verified TLS and recovery details.
 
 To stop it: `docker compose -f deploy/docker-compose.yml down`.
 
 ---
 
-## 5. Run the web portals (the website)
+## 5. Run the web portals (the website), from scratch
 
-Three role-based Django portals — **patient** (`/patient/`), **clinician**
-(`/clinician/`), **admin & audit** (`/oversight/`) — on the *Custos* design.
+Three role-based Django portals: **patient** (`/patient/`), **clinician**
+(`/clinician/`), **admin & audit** (`/oversight/`), on the *Custos* design.
 They identify users and show data; they **never** decide access, decrypt, or
 hold a key (ADR-0014 / ADR-0021). Anything needing a key goes to the Key
 Custodian by `subject_id` after login (ADR-0043).
 
-### Quick start: the two ways to get the portals up
-
-Both serve **http://127.0.0.1:8000/**. Log in as `david` (patient), `house`
-(clinician) or `auditor` (admin), password `demo1234` (table in 5a).
-
-**Option 1: one command, no Compose** (fastest for a live demo). Start the
-throwaway Postgres once (step 2), activate the venv, point at the database, run:
+They are part of the Compose stack, so there is nothing else to install: Docker
+Desktop and a clone of the repository are enough. From the repository root, in
+PowerShell, with Docker Desktop **running** (`docker info` succeeds):
 
 ```powershell
-docker start p08pg                       # or the docker run in step 2 the first time
-.venv\Scripts\Activate.ps1
-$env:DATABASE_URL="postgresql://postgres@127.0.0.1:55432/ehr_test"
-python -m deploy.run_portal_demo --duration 60
-```
+# 1. Store password, first time only (skip if deploy/.env exists)
+python -c "import secrets, pathlib; pathlib.Path('deploy/.env').write_text('POSTGRES_PASSWORD=' + secrets.token_urlsafe(16) + '\n')"
 
-Bash / macOS / Linux:
-
-```bash
-source .venv/bin/activate
-DATABASE_URL="postgresql://postgres@127.0.0.1:55432/ehr_test" python -m deploy.run_portal_demo --duration 60
-```
-
-Wait for `[6/6] starting the portals at http://127.0.0.1:8000/`. Ctrl+C stops it.
-
-**Option 2: Docker Compose** (everything in containers, including Postgres).
-Create `deploy/.env` once (step 4, Path B), then:
-
-```bash
+# 2. Start from a clean slate so the synthetic data is fresh and fully seeded
+docker compose -f deploy/docker-compose.yml down
 docker compose -f deploy/docker-compose.yml up --build -d
-docker compose -f deploy/docker-compose.yml logs -f bootstrap   # wait for "federation is up."
+
+# 3. Wait for "federation is up.", then Ctrl+C to leave the log view
+docker compose -f deploy/docker-compose.yml logs -f bootstrap
+
+# 4. Check health: services healthy, bootstrap and migrate exited (0)
+docker compose -f deploy/docker-compose.yml ps -a
 ```
 
-Stop with `docker compose -f deploy/docker-compose.yml down`. Re-create it
-(`down`, then `up --build -d`) right before a demo so the synthetic records are
-fresh. Do not run `deploy.run_scenario` against it before a demo: that driver
-leaves records in the emergency-open state.
+Bash / macOS / Linux: the same `docker compose` lines work unchanged; create
+`deploy/.env` with the same `python -c` command.
 
-### 5a. One command (recommended)
+Then open **http://127.0.0.1:8000/**. Password `demo1234` for every login
+(synthetic, dev-only):
 
-Brings up the six federation services as separate processes on the fixed
-ports (review F38; `--in-process` keeps the old threads), seeds the synthetic dataset,
-deposits each persona's key material with the custodian, creates the `portal`
-schema and the read-only `portal_ro` store role, migrates Django, seeds the
-logins + patient directory, and serves the portals at **http://127.0.0.1:8000/**:
+| user | role | portal | subject |
+|---|---|---|---|
+| `alice`, `david`, `emma` | patient | `/patient/` | `pat-101`, `pat-102`, `pat-103` |
+| `house`, `chase`, `cameron` | clinician | `/clinician/` | `doc-201`, `doc-301`, `doc-202` |
+| `auditor` | admin & audit | `/oversight/` | `admin-1` |
 
-```bash
-DATABASE_URL="postgresql://postgres@127.0.0.1:55432/ehr_test" python -m deploy.run_portal_demo
-```
-
-The schema is reset every run, so any reachable database works. Options:
-`--duration 60` shortens the break-glass time-box for a live demo; `--port 8000`
-sets the Django port; `--no-server` seeds and exits (CI smoke).
-
-**Logins** (password `demo1234` for all — synthetic, dev-only):
-
-| user | role | subject |
-|---|---|---|
-| `alice`, `david`, `emma` | patient | `pat-101`, `pat-102`, `pat-103` |
-| `house`, `chase`, `cameron` | clinician | `doc-201`, `doc-301`, `doc-202` |
-| `auditor` | admin & audit | `admin-1` |
-
-The examiner walk-through (identify → discovery → break-glass → countdown →
-dead-token search; patient self-read + upload; admin trace) is in
+Stop it with `docker compose -f deploy/docker-compose.yml down`. Re-create it
+(`down`, then `up --build -d`) right before a demo so the records are fresh. Do
+not run `deploy.run_scenario` against it before a demo: that driver leaves
+records in the emergency-open state. A short step-by-step version with a
+troubleshooting table is in [docs/run-portal-docker.md](docs/run-portal-docker.md).
+The examiner walk-through (identify, discovery, break-glass, countdown,
+dead-token search; patient self-read and upload; admin trace) is in
 [portal/README.md](portal/README.md).
 
-### 5b. Against a separately deployed federation
+### Portal settings
 
-If you started the services yourself (step 4), point the portal at them with
-environment variables, then migrate and run Django:
-
-```bash
-python portal/manage.py migrate
-python portal/manage.py runserver
-```
-
-The portal reads these (defaults shown; every URL comes from config, never from
-a request — CONVENTIONS.md §2 rule 8):
+The portal reads these from the environment (defaults shown; every URL comes
+from config, never from a request, CONVENTIONS.md §2 rule 8). Compose sets them
+for you; this is the reference if you change them in `deploy/docker-compose.yml`.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CUSTODIAN_URL` | `http://127.0.0.1:8030` | key agent — signs / reads / break-glass on the subject's behalf |
+| `CUSTODIAN_URL` | `http://127.0.0.1:8030` | key agent: signs / reads / break-glass on the subject's behalf |
 | `AUDIT_SERVICE_URL` | `http://127.0.0.1:8020` | append portal events, read chain state |
 | `FACILITY_URLS` | `facility-a=http://127.0.0.1:8001,facility-b=http://127.0.0.1:8002` | facility nodes (grant submit, discovery, search) |
 | `AUTHORITY_URLS` | `authority-med=http://127.0.0.1:8010,authority-net=http://127.0.0.1:8011` | attribute authorities |
 | `SERVICE_TIMEOUT_SECONDS` | `8` | upstream HTTP timeout |
-| `EMERGENCY_DURATION_SECONDS` | `14400` | four-hour break-glass window; set 60–120 explicitly for a timer demo (ADR-0060) |
-| `PORTAL_DB_HOST` / `PORT` / `NAME` / `USER` / `PASSWORD` | `localhost` / `55432` / `ehr_test` / `postgres` / *(empty)* | Django's own tables (the `portal` schema) |
+| `EMERGENCY_DURATION_SECONDS` | `14400` | four-hour break-glass window; set 60-120 explicitly for a timer demo (ADR-0060) |
 | `STORE_DB_USER` / `STORE_DB_PASSWORD` | `portal_ro` / *(empty)* | **read-only** window onto the store tables |
 | `DJANGO_SECRET_KEY` | random per start | set a fixed value in any real deployment |
-| `DJANGO_DEBUG` | `0` | `deploy.run_portal_demo` sets `1` for the loopback demo; `DJANGO_ALLOWED_HOSTS` defaults to `127.0.0.1,localhost` |
+| `DJANGO_DEBUG` | `0` | Compose runs with debug off; `DJANGO_ALLOWED_HOSTS` defaults to `127.0.0.1,localhost` |
 | `PORTAL_PRODUCT_NAME` | `CUSTOS` | name shown in the UI |
 
 The `store` alias connects as `portal_ro`, which has `SELECT` only on the store
-tables (`portal/sql/roles.sql`) — the ADR-0014 boundary enforced as a Postgres
-permission. Create that role and the `portal` schema once if you are not using
-the one-command demo:
-
-```bash
-docker exec -i p08pg psql -U postgres -d ehr_test < portal/sql/roles.sql
-```
+tables (`portal/sql/roles.sql`): the ADR-0014 boundary enforced as a Postgres
+permission. Compose creates that role for you.
 
 ---
 
@@ -335,7 +275,7 @@ the git-ignored `wire/certs/`):
 python -m wire.tls
 ```
 
-Start the federation (step 4, Path A) in one terminal. In another, capture each
+Start the federation (step 4, with `SEED_DATA=false` so the scenario seeds its own records) in one terminal. In another, capture each
 mode — `wire.capture` drives the break-glass scenario under `dumpcap` and writes
 the pcap:
 
@@ -343,8 +283,8 @@ the pcap:
 python -m wire.capture --mode plain --out wire/captures/plain.pcap
 ```
 
-For the TLS profile, run the federation with TLS enabled (Path A with `TLS_ENABLED=true`, or
-Compose with `TLS_ENABLED=true docker compose -f deploy/docker-compose.yml up --build -d`
+For the TLS profile, run the federation with TLS enabled (Compose with
+`TLS_ENABLED=true docker compose -f deploy/docker-compose.yml up --build -d`
 after `python -m wire.tls`), then:
 
 ```bash

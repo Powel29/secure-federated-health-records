@@ -2,24 +2,6 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "portal-demo",
-      "runtimeExecutable": ".venv/Scripts/python.exe",
-      "runtimeArgs": ["-m", "deploy.run_portal_demo", "--port", "8000"],
-      "env": {
-        "DATABASE_URL": "postgresql://postgres@localhost:55432/ehr_test"
-      },
-      "port": 8000
-    },
-    {
-      "name": "portal-demo-60s",
-      "runtimeExecutable": ".venv/Scripts/python.exe",
-      "runtimeArgs": ["-m", "deploy.run_portal_demo", "--port", "8000", "--duration", "60"],
-      "env": {
-        "DATABASE_URL": "postgresql://postgres@localhost:55432/ehr_test"
-      },
-      "port": 8000
-    },
-    {
       "name": "portal-compose",
       "runtimeExecutable": ".venv/Scripts/python.exe",
       "runtimeArgs": ["-m", "deploy.seed_portal", "--port", "8000"],
