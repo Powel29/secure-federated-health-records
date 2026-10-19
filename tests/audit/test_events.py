@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 from audit import (
     ACCESS_VIA_OWNER,
     DENIED_BY_POLICY,
@@ -17,7 +15,6 @@ from audit import (
     log_federation_discovery,
     log_federation_rewrap,
 )
-from crypto_core import sha256_digest
 from storage import repositories as repo
 
 
@@ -99,7 +96,9 @@ def test_log_access_granted_carries_no_key_material(conn, audit_keypair):
     assert set(entry.event_data.keys()) == {"record_id", "requester_id", "access_via"}
 
 
-def test_log_federation_discovery_hashes_patient_id_not_raw(conn, audit_keypair):
+def test_log_federation_discovery_names_the_patient_by_id(conn, audit_keypair):
+    """ADR-0085: the patient is named by its pseudonymous id, as in every other
+    event; a hash of it would hide nothing."""
     priv, _pub = audit_keypair
     _seed_genesis(conn, priv)
 
@@ -114,16 +113,12 @@ def test_log_federation_discovery_hashes_patient_id_not_raw(conn, audit_keypair)
     )
 
     assert entry.event_type == EVENT_FEDERATION_DISCOVERY
-    assert (
-        entry.event_data["patient_id_hash"]
-        == sha256_digest(b"patient-secret-101").hex()
-    )
-    assert entry.event_data["record_count"] == 2
-    assert entry.event_data["record_ids"] == ["rec-1", "rec-2"]
-
-    # The raw patient id never appears anywhere in the persisted entry.
-    persisted = json.dumps(entry.event_data)
-    assert "patient-secret-101" not in persisted
+    assert entry.event_data == {
+        "patient_id": "patient-secret-101",
+        "requester_id": "facility-b",
+        "record_count": 2,
+        "record_ids": ["rec-1", "rec-2"],
+    }
 
 
 def test_log_federation_discovery_logs_empty_results_too(conn, audit_keypair):

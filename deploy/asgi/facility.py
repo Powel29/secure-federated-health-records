@@ -8,6 +8,9 @@ Environment:
         audit sink would release records with nothing logged. The
         emergency-expiry timer's transition events are logged through it too
         (ADR-0035).
+    AUDIT_HIGH_WATER_FILE: Path on this facility's own disk where the highest
+        audit seq it has seen is kept, so a restart still refuses a truncated
+        chain (review F31). Required. Delete it only together with the store.
     FEDERATION_ROOT_CERT: Path to the federation root certificate (PEM).
     FACILITY_CA_CERTS_DIR: Directory of cross-certified facility CA
         certificates, one ``<facility_id>.crt`` (PEM) per facility.
@@ -37,7 +40,11 @@ import os
 from pathlib import Path
 
 import psycopg
-from api.audit_client import _tls_verify, make_lifecycle_audit_logger
+from api.audit_client import (
+    _tls_verify,
+    make_lifecycle_audit_logger,
+    use_high_water_file,
+)
 from api.hospital import AUDIT_SERVICE_ID, FacilityTrust, create_hospital_app
 from api.repository import PostgresStorageRepository
 from api.rotation import http_rotation_ports
@@ -92,6 +99,13 @@ def app() -> FastAPI:
             "AUDIT_SERVICE_URL must be set: a facility does not release records "
             "it cannot log (review F19)"
         )
+    high_water_file = os.environ.get("AUDIT_HIGH_WATER_FILE")
+    if not high_water_file:
+        raise RuntimeError(
+            "AUDIT_HIGH_WATER_FILE must be set: without it a restarted facility "
+            "cannot tell a truncated audit chain from a fresh one (review F31)"
+        )
+    use_high_water_file(Path(high_water_file))
     duration = float(
         os.environ.get(
             "EMERGENCY_DURATION_SECONDS", str(_DEFAULT_EMERGENCY_DURATION_SECONDS)

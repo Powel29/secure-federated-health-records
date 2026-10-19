@@ -238,7 +238,11 @@ contracts (T02) -> crypto_core -> records -> lifecycle -> breakglass -> search -
 
 ### Revocation (Granted → Revoked)
 
-1. Patient or home authority signs a revocation request.
+1. The patient signs a revocation request, verified against their patient
+   certificate (ADR-0064). In this build the facility accepts only the
+   patient's signature: a revocation by the home authority would need each
+   authority's verification key in facility configuration and is future
+   work (ADR-0080, ADR-0084).
 2. `lifecycle` validates the transition is legal, emits a **signed transition
    event** (C9).
 3. Record's DEK is rotated: new DEK, record re-encrypted, wrappings rebuilt
@@ -514,7 +518,11 @@ portal (ADR-0033, step 0 of the break-glass sequence above). Identification
 is not authorization: picking a candidate from the search results releases
 no key, and the five validation checks and threshold gate below are the
 things that actually decide access. PII (name, DOB) lives only in the
-portal DB, never in the crypto store (ADR-0011).
+portal DB, never in the crypto store (ADR-0011), and that includes the audit
+chain: a lookup entry records the candidates and the selection, nothing about
+what was typed, not even a hash (ADR-0085). The chain is pseudonymous, not
+anonymous: it names patients by `patient_id`, which links to a person only
+through the portal DB, so `patient_id` must never be derived from PII.
 
 ### Replay protection
 

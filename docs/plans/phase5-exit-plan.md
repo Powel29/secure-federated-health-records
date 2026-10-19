@@ -8,7 +8,21 @@
 > demonstrated **from a clean clone on a machine that is not the author's**,
 > not when it feels done.
 
-## Status (updated 2026-10-08)
+## Status (updated 2026-10-19)
+
+**All four exit criteria are met on the author machine** (E1–E4 below, each
+re-run on 2026-10-19 on `proposal/review-worth-doing-f31-f10`, on top of
+`main` at `0b95f2b`). **The gate is not passed yet.** What is left:
+
+1. **Merge** the branch to `main` (it carries the regenerated evidence and the
+   F31 fix, ADR-0083; Avaneeth reviews `api/` and `deploy/`).
+2. **Stage 4:** run the commands in "Stage 4 checklist" below from a clean
+   clone on a machine that is not the author's.
+3. **Owner reviews** still listed in A3, and **ratification** of the Proposed
+   ADRs (`docs/review/2026-10-19-adr-ratification-checklist.md`).
+
+### Earlier status (2026-10-08)
+
 
 **Done** (on branches, awaiting owner review; nothing merged or pushed):
 
@@ -38,10 +52,10 @@ Everything else in Part B waits on one of these.
 
 | # | Exit criterion | Today |
 |---|---|---|
-| E1 | The full negative security suite in `tests/security/` passes | ❌ 5/11 claims hold (C8 added 2026-10-08 on `proposal/phase5-fixes`); 6 strict-xfail against review findings |
-| E2 | The benchmark harness produces every metric in PROJECT.md D4 | ⚠️ All 7 metrics are coded; the committed numbers are stale |
-| E3 | Edge cases (clock skew, partial shares, replayed transition events) handled and tested | ⚠️ Partial shares done; replayed transition events done (durable + locked); clock skew pending decision CS |
-| E4 | PyShark analysers run on both capture profiles and all four §4A claims pass | ⚠️ Claim 1 scoped to TLS (ADR-0073); needs fresh captures (`python -m wire.capture`) |
+| E1 | The full negative security suite in `tests/security/` passes | ✅ 11/11 claims hold, no xfails; `tests.security.mutations` exits 0 with Postgres (18 mutations; C11 has a positive control instead). `tests/security` + `tests/breakglass` + `tests/lifecycle` + `tests/wire`: 455 passed, 2 expected skips. Evidence: `docs/review/p5-1-evidence.md` (regenerated 2026-10-19) |
+| E2 | The benchmark harness produces every metric in PROJECT.md D4 | ✅ Re-run 2026-10-19 on current code (30 iterations, 5 warm-up, Postgres): all 7 metrics in `bench/results/`, with `environment.json`. Still to show from a clean clone on a non-author machine (Stage 4) |
+| E3 | Edge cases (clock skew, partial shares, replayed transition events) handled and tested | ✅ Clock skew: `issued_at` at most 30 s ahead and lifetime capped (ADR-0049, ADR-0056), `test_future_dated_assertion_rejected`; partial shares: `tests/breakglass/test_gate.py::TestOpenEmergencyAccessEdgeCases`; replayed transition events: locked and durable (`test_concurrent_consumers_of_one_id_exactly_one_succeeds`, `test_state_machine_consumed_ids_rejects_replay`) |
+| E4 | PyShark analysers run on both capture profiles and all four §4A claims pass | ✅ Fresh plain and TLS captures 2026-10-19 (Path A, TLS store per ADR-0071): `python -m wire.analyze_traffic` exits 0, claims 0–4 pass under the TLS scope (ADR-0073). With `--claim1-scope all`, claims 1 and 4 fail on the plain profile as PROJECT §5 item 11 states. P5-3 leakage re-measured (`p53_search_leakage*.json`, `.md`). Still to show from a clean clone (Stage 4) |
 
 ---
 
@@ -80,6 +94,13 @@ clean-clone gate check runs.
 | **Npcap with loopback support** (Windows) | without it dumpcap captures nothing on `127.0.0.1` | trivial loopback capture shows packets |
 | Federation on fixed ports | `deploy/run_local.py` (8001/8002/8010/8011/8020/8030) | `deploy.run_scenario` prints all 9 steps |
 | TLS profile | certs from `wire.tls` (clients verify against the generated bundle; no `TLS_VERIFY=false`, ADR-0047, review N15) | `run_scenario --scheme https` succeeds |
+| TLS store | Postgres through `deploy/store-entrypoint.sh` (ADR-0071), same loopback port as the plain store | the TLS federation starts against it |
+| **Windows only:** `PYTHONUTF8=1` | the scenario prints non-ASCII marks; piped to a file or to `wire.capture`, Python's cp1252 default crashes it at step 5 | scenario prints all 9 steps when piped |
+
+Learned on the 2026-10-19 run: Wireshark's folder is not on PATH after
+installation (prepend `C:\Program Files\Wireshark`), and the pinned
+requirements have no wheels for Python 3.14, so use a 3.11 venv
+(`uv venv --python 3.11 .venv`).
 
 ### A3. Reviews, merges and ownership
 
@@ -108,13 +129,13 @@ under its mutation, C2/C5 included.
 |---|---|---|---|---|---|
 | C3 ✅ | F2: the audit service validates the assertion, binds share to patient, one-time `request_id`; F4: no share overwrite | Ojas, Avaneeth | D1 (+ D2 wording) | M | `test_c3_audit_service_releases_no_share_without_a_valid_assertion` |
 | C4 ✅ | F9: expiry replaces the emergency wrapping and shares; search re-keyed | Powel, Avaneeth, Nandini, Ojas | D3 | L | `test_c4_pre_expiry_shares_do_not_restore_search`; also update `tests/api/test_breakglass.py::…reopens_after_the_timebox_expired`, which asserts today's behaviour |
-| C6 ⏳ | F11 step 1: `_apply_and_persist` through `LifecycleStateMachine` for revoke, break-glass and expiry; F12 compare-and-set (**primitive + lock done**; wiring is part of F11) | Avaneeth, Powel | D7 | M | `test_c6_api_refuses_revocation_of_an_emergency_open_record` |
+| C6 ✅ | F11 step 1: `_apply_and_persist` through `LifecycleStateMachine` for revoke, break-glass and expiry; F12 compare-and-set (**primitive + lock done**; wiring is part of F11) | Avaneeth, Powel | D7 | M | `test_c6_api_refuses_revocation_of_an_emergency_open_record` |
 | C7 ✅ | F11 step 2 / D8-a: pre-signed event from the custodian; remove `lifecycle_signing_key_pem` from the API | Avaneeth, Powel, Ojas | D8 | M | `test_c7_breakglass_event_verifies_against_the_clinicians_certificate` |
 | C8 ✅ | F22: `consumed_ids` table + repository-backed stores for assertions, requests and transition events. **Done on `proposal/phase5-fixes`; marker removed; C8 holds.** Still to add: a Postgres variant of the restart test | Powel, Avaneeth | — | M | `test_c8_replayed_assertion_rejected_after_facility_restart` |
 | C9 ✅ | F34: caller ↔ patient check before any repo call; denial logged | Avaneeth | **D5-a** | M | `test_c9_bola_…_denied_before_crypto_or_db` |
-| C10 ⏳ | F14: interim allowlist of authoring callers (ships with F16 — F16 is **done**), then a signed envelope under D5-a. Interim is now pending a trust-boundary decision (F14-i) | Ojas | D5, F14-i | S→M | `test_c10_attribute_key_not_released_without_a_valid_credential` |
-| C1 | F10: revoke works on Postgres, authz from a verified identity, goes through the state machine, audited. **Add a Postgres variant** of `test_c1_…` (today only the in-memory path is tested) | Avaneeth, Powel | D4, D3 | L | new `test_c1_…_postgres` |
-| C2, C5 | No fix expected. **Observe them running**: run the suite and `python -m tests.security.mutations C2 C5` with Postgres, then replace the "skipped" rows in `p5-1-evidence.md` | Ojas (or whoever has the evidence machine) | A2 | S | — |
+| C10 ✅ | F14: interim allowlist of authoring callers (ships with F16 — F16 is **done**), then a signed envelope under D5-a. Interim is now pending a trust-boundary decision (F14-i) | Ojas | D5, F14-i | S→M | `test_c10_attribute_key_not_released_without_a_valid_credential` |
+| C1 ✅ (in-memory) | F10 (✅ ADR-0080): revoke works on Postgres, authz from a verified identity, goes through the state machine, audited. **Add a Postgres variant** of `test_c1_…` (today only the in-memory path is tested) | Avaneeth, Powel | D4, D3 | L | new `test_c1_…_postgres` |
+| C2, C5 ✅ | No fix expected (observed on Postgres 2026-10-19). **Observe them running**: run the suite and `python -m tests.security.mutations C2 C5` with Postgres, then replace the "skipped" rows in `p5-1-evidence.md` | Ojas (or whoever has the evidence machine) | A2 | S | — |
 
 Rule while fixing: when a fix lands, delete the `xfail` marker in the same PR.
 Strict mode turns CI red until you do. Never weaken an assertion to make one
@@ -211,6 +232,29 @@ Stage 4  Clean clone on a non-author machine: rerun Stage 3 commands; gate revie
 **Critical path:** decisions D5 and D6, then F11 (it unblocks C6, C7 and the
 private-key removal E4 needs), then F9 (C4). Everything in Stage 3 waits on
 Stage 2, because the benchmarks and captures must measure the fixed system.
+
+## Stage 4 checklist (clean clone, non-author machine)
+
+From a fresh clone, with a throwaway Postgres on `127.0.0.1:55432` and the
+A2 setup. Each line must succeed; record the machine in the PR.
+
+```bash
+pip install -r requirements-dev.txt
+DATABASE_URL=postgresql://postgres@127.0.0.1:55432/ehr_test python -m storage.migrate
+CI=true DATABASE_URL=postgresql://postgres@127.0.0.1:55432/ehr_test pytest tests/ -ra -q
+DATABASE_URL=postgresql://postgres@127.0.0.1:55432/ehr_test python -m tests.security.claims --table
+DATABASE_URL=postgresql://postgres@127.0.0.1:55432/ehr_test python -m tests.security.mutations
+DATABASE_URL=postgresql://postgres@127.0.0.1:55432/ehr python -m bench.run_benchmarks
+```
+
+Then the captures: `SEED_DATA=false python -m deploy.run_local` in one
+terminal and `python -m wire.capture --mode plain` in another; restart the
+federation for each capture. For TLS, `python -m wire.tls`, swap in the TLS
+store (`deploy/README.md`), start `run_local` with `TLS_ENABLED=true`, and run
+`CAPTURE_TLS=true TLS_ENABLED=true python -m wire.capture --mode tls`. Repeat
+both with `--search-workload`. Finish with `python -m wire.analyze_traffic`
+(must exit 0) and the two `wire.analyze_search_leakage` runs from
+`bench/results/p53_search_leakage.md`.
 
 ## Fallback if time runs short
 

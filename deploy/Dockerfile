@@ -33,6 +33,8 @@ ENV TLS_CERT_DIR=/tls
 # Run as an unprivileged user (review N14). The one-shot jobs that write the
 # host bind mount ./pki override this in docker-compose.yml.
 RUN useradd --system --no-create-home app
+# A facility's audit high-water mark (review F31) is written here.
+RUN mkdir -p /var/lib/ehr && chown app /var/lib/ehr
 USER app
 
 ENTRYPOINT ["python", "-m", "deploy.entrypoint"]

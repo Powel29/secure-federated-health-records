@@ -15,7 +15,6 @@ or plaintext (CONVENTIONS.md §2 rule 3).
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from typing import Any
 
@@ -170,10 +169,3 @@ def notify_consent_request(
         correlation_id=correlation_id,
         actor_id=requester_id,
     )
-
-
-def query_hash(*parts: str) -> str:
-    """Hash of a lookup query so the chain records *that* a search happened, not *what* was typed."""
-    return hashlib.sha256(
-        "\x1f".join(p.strip().lower() for p in parts).encode()
-    ).hexdigest()

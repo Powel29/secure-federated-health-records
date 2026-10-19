@@ -22,12 +22,15 @@ Install these once. `pip` cannot install the last two.
 
 | Tool | Version | Needed for | Verify |
 |---|---|---|---|
-| **Python** | 3.11+ | everything | `python --version` |
+| **Python** | 3.11 (what CI and the image use) | everything | `python --version` |
 | **Docker Desktop** | any recent | PostgreSQL, the Compose deployment path | `docker --version` |
 | **Wireshark / tshark** | any recent | traffic-analysis module (P4-6/P5-5) | `tshark --version` |
 
 - **Python** — [python.org/downloads](https://www.python.org/downloads/). On
-  Windows tick *"Add python.exe to PATH"* during install.
+  Windows tick *"Add python.exe to PATH"* during install. The pinned
+  requirements have no wheels for Python 3.14 yet; if that is your system
+  Python, create the venv with 3.11 instead (`uv venv --python 3.11 .venv`
+  with [uv](https://docs.astral.sh/uv/), or `py -3.11 -m venv .venv`).
 - **Docker Desktop** — [docker.com](https://www.docker.com/products/docker-desktop/).
   It must be **running** before any `docker` command below. `docker info` should
   succeed.
@@ -36,7 +39,9 @@ Install these once. `pip` cannot install the last two.
   Npcap's setup screen, tick **"Support loopback traffic capture"** — the
   federation talks over loopback, so without it there is nothing to capture.
   `import pyshark` succeeding does **not** mean capture works; only
-  `tshark --version` resolving on `PATH` does.
+  `tshark --version` resolving on `PATH` does. On Windows the installer does
+  not add Wireshark to `PATH`; prepend it per terminal with
+  `$env:PATH="C:\Program Files\Wireshark;$env:PATH"`.
 
 Only the traffic-capture step needs Wireshark; everything else runs without it.
 The local federation path (Path A) and the unit tests run without Docker (the
@@ -57,6 +62,15 @@ Activate it — **Windows PowerShell**:
 ```powershell
 .venv\Scripts\Activate.ps1
 ```
+
+If PowerShell refuses with "running scripts is disabled on this system",
+either allow scripts for this window only
+(`Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`) or skip
+activation and call `.venv\Scripts\python.exe` directly.
+
+**Windows:** also set `$env:PYTHONUTF8="1"` in each terminal. The scenario and
+demo print non-ASCII marks, and when their output is piped (to a file, or by
+`wire.capture`) Python's default cp1252 encoding crashes them.
 
 **macOS / Linux**:
 
@@ -131,7 +145,10 @@ DATABASE_URL="postgresql://postgres@localhost:55432/ehr_test" pytest tests/ -ra 
 
 This runs the real read/write round-trips, the standalone-federation demo
 integration, and the cross-facility break-glass end-to-end test over real
-sockets. Expected: the whole suite passes (currently **643 passed, 1 skipped, 6 xfailed**; the skip is the live capture test when `tshark` is absent, and the 6 expected-fails are the known security findings tracked in `tests/security/test_p51_system_claims.py`).
+sockets. Expected: the whole suite passes (on 2026-10-19: **950 passed** with
+Postgres; `tests/wire/test_live_capture.py` also runs once `wire/captures/`
+holds fresh captures, and the two missing-`dumpcap` tests skip when Wireshark
+is installed).
 
 The Django portals have their own suite (SQLite, no services) — see
 [portal/README.md](portal/README.md):
@@ -240,7 +257,8 @@ leaves records in the emergency-open state.
 
 ### 5a. One command (recommended)
 
-Brings up the six federation processes in-process, seeds the synthetic dataset,
+Brings up the six federation services as separate processes on the fixed
+ports (review F38; `--in-process` keeps the old threads), seeds the synthetic dataset,
 deposits each persona's key material with the custodian, creates the `portal`
 schema and the read-only `portal_ro` store role, migrates Django, seeds the
 logins + patient directory, and serves the portals at **http://127.0.0.1:8000/**:

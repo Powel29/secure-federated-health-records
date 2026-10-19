@@ -97,9 +97,44 @@ class IdentifyTests(TestCase):
         data = lookups[0]["event_data"]
         self.assertEqual(data["candidate_count"], 2)
         self.assertIsNone(data["selected_patient_id"])
-        # PII never enters the chain: only a hash of the query.
+        # PII never enters the chain (ADR-0085).
         self.assertNotIn("Vance", str(lookups[0]))
         self.assertNotIn("1982", str(lookups[0]))
+
+    def test_lookup_entry_records_nothing_about_what_was_typed(self) -> None:
+        """ARCHITECTURE §8 / ADR-0085: no name or date of birth reaches the
+        chain in any form. Two lookups that surface the same candidates must
+        log identical entries, so no field may depend on the query -- a hash
+        of it included, since names and dates are easy to brute-force."""
+        same_hits = [
+            {"family_name": "Vance", "date_of_birth": "1982-04-15"},
+            {"family_name": "vance"},
+        ]
+        same_misses = [
+            {"family_name": "Nobody", "date_of_birth": "1970-01-01"},
+            {"family_name": "Smith", "given_name": "Jo", "date_of_birth": "1999-12-31"},
+        ]
+        audit = AuditLog()
+        with patched(
+            audit_append=audit,
+            custodian_subject=mock.Mock(return_value=SUBJECT_CLINICIAN),
+        ):
+            for query in same_hits + same_misses:
+                self.client.post("/clinician/identify/", query)
+        lookups = [e["event_data"] for e in audit.of_type("patient.lookup")]
+
+        # Positive control: every lookup was logged with the expected outcome.
+        self.assertEqual([d["candidate_count"] for d in lookups], [2, 2, 0, 0])
+        self.assertEqual(lookups[0]["candidate_ids"], ["pat-101", "pat-777"])
+
+        self.assertEqual(lookups[0], lookups[1])
+        self.assertEqual(lookups[2], lookups[3])
+        logged = str(audit.entries).lower()
+        for typed in (
+            "vance", "alice", "alicia", "nobody", "smith", "1982-04-15",
+            "15/04/1982", "04/15/1982", "19820415", "1970-01-01", "1999-12-31",
+        ):  # fmt: skip
+            self.assertNotIn(typed, logged)
 
     def test_miss_is_logged_too(self) -> None:
         audit = AuditLog()

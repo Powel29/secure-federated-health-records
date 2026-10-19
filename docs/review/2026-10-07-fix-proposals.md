@@ -190,6 +190,28 @@ encoding), D10 (credential revocation vs. shared keys), N14 SANs, F31 high-
 water mark persistence, static revoked-serial lists (no CRL), clinical labels
 readable in the store, portal `TIME_ZONE`, self-registration (ADR-0021).
 
+## Status on `proposal/review-worth-doing-f31-f10` (2026-10-19)
+
+| ID | Status | What was done | What remains |
+|---|---|---|---|
+| F31 (rest) | **FIXED** (ADR-0083) | The facility's high-water mark is persisted to `AUDIT_HIGH_WATER_FILE` on its own disk (required at startup), loaded on restart, written before an entry is accepted; `tests/security/test_audit_high_water.py` | Anchors `seq` only, not the head hash |
+| F10 (home authority) | **SCOPED** (ADR-0084) | ARCHITECTURE §5 and PROJECT §5 item 1 now say only the patient revokes in this build | Home-authority revocation is future work |
+| ADR ratification | **PREPARED** | `docs/review/2026-10-19-adr-ratification-checklist.md` lists the Proposed ADRs (41 with ADR-0085) with their sign-off chains | The team ratifies at a sync; N16 owner reviews at the same time |
+| E2 / E4, N10 (rest) | **DONE** | Benchmarks re-run (all 7 D4 metrics, `environment.json`). Fresh plain, TLS and search-workload captures on loopback; `wire.analyze_traffic` exits 0 (claims 0–4 under the TLS scope); `p55_wire_checks.json`, `p55_search_leakage.csv`, `p53_search_leakage*.json` regenerated and `p53_search_leakage.md` updated; `tests/wire` passes on the new captures | Clean-clone rerun on a non-author machine (exit-plan Stage 4) |
+
+### Whole-project check (2026-10-19)
+
+All suites green (949 passed with Postgres, 85 portal tests, 11/11 claims, mutation check exits 0); lint clean on `src/` and `tests/`; no key material, `.env`, pcap or canary file ever committed; no broken doc links; the Compose stack builds and bootstraps. Findings:
+
+| # | Finding | Status | What was done | What remains |
+|---|---|---|---|---|
+| 1 | `patient.lookup` logged an unsalted SHA-256 of name and date of birth (reversible PII in the store); `federation.discovery` hashed an enumerable `patient_id` that other events store raw | **FIXED** (ADR-0085) | `query_hash` removed; discovery logs `patient_id`; new portal negative test (red with the hash restored); ARCHITECTURE §8 and PROJECT §5 item 12 state the chain is pseudonymous | Owner reviews; ADR-0038 amendment needs all four |
+| 2 | Pinned dependencies with later security releases: Django 5.0.6 (5.0 series out of support), cryptography 42.0.5, Starlette 0.36.3 via FastAPI 0.110 | **OPEN** | — | Run `pip-audit`, bump with an ADR, then re-run the evidence (timings change) |
+| 3 | No Postgres-backed C1 system test (revocation on Postgres is exercised only by the capture scenario) | **OPEN** | — | Add `test_c1_…_postgres` (exit plan E1) |
+| 4 | CI lints only `src/` and `tests/`; `deploy/`, `wire/`, `bench/` are clean but unchecked, `demo/` has one long line, `portal/` has 175 style errors (excluded on purpose) | **OPEN** | — | Add `deploy wire bench demo` to the CI ruff/black steps |
+| 5 | Resetting only the store leaves a facility's audit high-water mark above the new chain, so its appends fail closed | **DOCUMENTED** (`deploy/README.md`) | Recovery described | — |
+
+
 ## Fixes that need no decisions (at `a40a5a7`)
 
 *All implemented in `443ca0f` except the remainders of N10, N14 and N16; see the status table above.*
