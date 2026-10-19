@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 760" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#37474f"/>
+    </marker>
+    <marker id="ae" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c62828"/>
+    </marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2e7d32"/>
+    </marker>
+  </defs>
+  <rect width="1000" height="760" fill="#ffffff"/>
+  <text x="500" y="34" text-anchor="middle" font-size="22" font-weight="700" fill="#1a1a1a">Emergency Assertion: checks before any share is requested</text>
+  <text x="500" y="55" text-anchor="middle" font-size="13" fill="#546e7a">Any failed check refuses the request: nothing is released and no state changes. The one-time id is consumed last.</text>
+
+  <!-- start -->
+  <rect x="60" y="80" width="300" height="44" rx="22" fill="#e3f2fd" stroke="#1565c0" stroke-width="2.5"/>
+  <text x="210" y="108" text-anchor="middle" font-size="14.5" font-weight="700" fill="#0d47a1">Signed assertion arrives at the facility</text>
+
+  <!-- checks column -->
+  <g stroke-width="2.2" fill="#fafafa" stroke="#37474f">
+    <rect x="60" y="150" width="300" height="52" rx="8"/>
+    <rect x="60" y="226" width="300" height="52" rx="8"/>
+    <rect x="60" y="302" width="300" height="52" rx="8"/>
+    <rect x="60" y="378" width="300" height="52" rx="8"/>
+    <rect x="60" y="454" width="300" height="52" rx="8"/>
+    <rect x="60" y="530" width="300" height="52" rx="8"/>
+    <rect x="60" y="606" width="300" height="60" rx="8" stroke="#ef6c00" fill="#fff4e0"/>
+  </g>
+  <g font-size="13.5" fill="#1a1a1a">
+    <text x="74" y="172" font-weight="700">1  Signature verifies</text>
+    <text x="74" y="190" font-size="12" fill="#546e7a">against a currently valid clinician certificate</text>
+    <text x="74" y="248" font-weight="700">2  Certificate chains to the root</text>
+    <text x="74" y="266" font-size="12" fill="#546e7a">cross-certified federation anchor</text>
+    <text x="74" y="324" font-weight="700">3  clinician_id = certificate subject</text>
+    <text x="74" y="342" font-size="12" fill="#546e7a">no borrowed identity</text>
+    <text x="74" y="400" font-weight="700">4  facility_id = this node</text>
+    <text x="74" y="418" font-size="12" fill="#546e7a">assertion was addressed here</text>
+    <text x="74" y="476" font-weight="700">5  Not expired</text>
+    <text x="74" y="494" font-size="12" fill="#546e7a">short-lived by design</text>
+    <text x="74" y="552" font-weight="700">6  Not already used</text>
+    <text x="74" y="570" font-size="12" fill="#546e7a">replay check against the consumed ids</text>
+    <text x="74" y="628" font-weight="700">7  Record belongs to the patient named</text>
+    <text x="74" y="646" font-size="12" fill="#546e7a">added after the stress test found the gap</text>
+  </g>
+  <g stroke="#2e7d32" stroke-width="2.4" fill="none">
+    <path d="M210,124 V148" marker-end="url(#ag)"/>
+    <path d="M210,202 V224" marker-end="url(#ag)"/>
+    <path d="M210,278 V300" marker-end="url(#ag)"/>
+    <path d="M210,354 V376" marker-end="url(#ag)"/>
+    <path d="M210,430 V452" marker-end="url(#ag)"/>
+    <path d="M210,506 V528" marker-end="url(#ag)"/>
+    <path d="M210,582 V604" marker-end="url(#ag)"/>
+  </g>
+
+  <!-- refusal column -->
+  <g stroke="#c62828" stroke-width="2" fill="none">
+    <path d="M360,176 H500" marker-end="url(#ae)"/>
+    <path d="M360,252 H500" marker-end="url(#ae)"/>
+    <path d="M360,328 H500" marker-end="url(#ae)"/>
+    <path d="M360,404 H500" marker-end="url(#ae)"/>
+    <path d="M360,480 H500" marker-end="url(#ae)"/>
+    <path d="M360,556 H500" marker-end="url(#ae)"/>
+    <path d="M360,636 H500" marker-end="url(#ae)"/>
+  </g>
+  <g stroke-width="2" fill="#fdecea" stroke="#c62828">
+    <rect x="500" y="158" width="250" height="36" rx="8"/>
+    <rect x="500" y="234" width="250" height="36" rx="8"/>
+    <rect x="500" y="310" width="250" height="36" rx="8"/>
+    <rect x="500" y="386" width="250" height="36" rx="8"/>
+    <rect x="500" y="462" width="250" height="36" rx="8"/>
+    <rect x="500" y="538" width="250" height="36" rx="8"/>
+    <rect x="500" y="612" width="470" height="48"/>
+  </g>
+  <g font-size="12.5" fill="#1a1a1a">
+    <text x="512" y="181">refuse: invalid signature</text>
+    <text x="512" y="257">refuse: untrusted chain</text>
+    <text x="512" y="333">refuse: identity mismatch</text>
+    <text x="512" y="409">refuse: wrong facility</text>
+    <text x="512" y="485">refuse: expired assertion</text>
+    <text x="512" y="561">refuse: replayed assertion</text>
+    <text x="512" y="632" font-weight="700" fill="#c62828">HTTP 403, denial written to the audit chain,</text>
+    <text x="512" y="650" font-weight="700" fill="#c62828">no state change, no share released</text>
+  </g>
+
+  <!-- success -->
+  <path d="M360,700 H500" stroke="#2e7d32" stroke-width="2.6" fill="none" marker-end="url(#ag)"/>
+  <path d="M210,666 V700" stroke="#2e7d32" stroke-width="2.4" fill="none"/>
+  <rect x="500" y="676" width="470" height="62" rx="10" fill="#e6f4ea" stroke="#2e7d32" stroke-width="2.5"/>
+  <text x="514" y="700" font-size="14" font-weight="700" fill="#1b5e20">All seven pass: consume the one-time id, then parse the shares</text>
+  <text x="514" y="720" font-size="12.5" fill="#1a1a1a">and rebuild the emergency key. Consuming last means a refused request cannot burn an id.</text>
+</svg>

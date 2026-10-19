@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 560" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#37474f"/>
+    </marker>
+    <marker id="ae" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c62828"/>
+    </marker>
+  </defs>
+  <rect width="1000" height="560" fill="#ffffff"/>
+  <text x="500" y="34" text-anchor="middle" font-size="22" font-weight="700" fill="#1a1a1a">Audit hash chain: one edit breaks every later link</text>
+  <text x="500" y="55" text-anchor="middle" font-size="13" fill="#546e7a">Each entry commits to the one before it and is signed; the caller never supplies seq or prev_hash</text>
+
+  <!-- entries -->
+  <g stroke-width="2.5">
+    <rect x="30" y="100" width="200" height="150" rx="10" fill="#eceff1" stroke="#546e7a"/>
+    <rect x="270" y="100" width="200" height="150" rx="10" fill="#e6f4ea" stroke="#2e7d32"/>
+    <rect x="510" y="100" width="200" height="150" rx="10" fill="#e6f4ea" stroke="#2e7d32"/>
+    <rect x="750" y="100" width="200" height="150" rx="10" fill="#e6f4ea" stroke="#2e7d32"/>
+  </g>
+  <g fill="#1a1a1a" font-size="13">
+    <text x="45" y="126" font-size="15" font-weight="700">seq 0 &#183; genesis</text>
+    <text x="45" y="150">prev_hash: 32 zero bytes</text>
+    <text x="45" y="170">entry_hash: H0</text>
+    <text x="45" y="190">event: chain start</text>
+    <text x="45" y="210">signature: audit key</text>
+
+    <text x="285" y="126" font-size="15" font-weight="700">seq 1</text>
+    <text x="285" y="150">prev_hash: H0</text>
+    <text x="285" y="170">entry_hash: H1</text>
+    <text x="285" y="190">event: lookup logged</text>
+    <text x="285" y="210">signature: audit key</text>
+
+    <text x="525" y="126" font-size="15" font-weight="700">seq 2</text>
+    <text x="525" y="150">prev_hash: H1</text>
+    <text x="525" y="170">entry_hash: H2</text>
+    <text x="525" y="190">event: share released</text>
+    <text x="525" y="210">signature: audit key</text>
+
+    <text x="765" y="126" font-size="15" font-weight="700">seq 3</text>
+    <text x="765" y="150">prev_hash: H2</text>
+    <text x="765" y="170">entry_hash: H3</text>
+    <text x="765" y="190">event: expiry</text>
+    <text x="765" y="210">signature: audit key</text>
+  </g>
+  <g stroke="#37474f" stroke-width="2.4" fill="none">
+    <path d="M232,175 H268" marker-end="url(#ar)"/>
+    <path d="M472,175 H508" marker-end="url(#ar)"/>
+    <path d="M712,175 H748" marker-end="url(#ar)"/>
+  </g>
+  <text x="500" y="285" text-anchor="middle" font-size="13" fill="#37474f">entry_hash is recomputed over the entry's fields plus prev_hash; verification walks from genesis to head</text>
+
+  <!-- tampered -->
+  <text x="500" y="330" text-anchor="middle" font-size="17" font-weight="700" fill="#c62828">Tamper: edit the event in seq 2</text>
+  <g stroke-width="2.5">
+    <rect x="270" y="350" width="200" height="110" rx="10" fill="#e6f4ea" stroke="#2e7d32"/>
+    <rect x="510" y="350" width="200" height="110" rx="10" fill="#fdecea" stroke="#c62828"/>
+    <rect x="750" y="350" width="200" height="110" rx="10" fill="#fdecea" stroke="#c62828" stroke-dasharray="7 5"/>
+  </g>
+  <g fill="#1a1a1a" font-size="13">
+    <text x="285" y="378" font-size="15" font-weight="700">seq 1</text>
+    <text x="285" y="402">link and hash match</text>
+    <text x="285" y="422" fill="#2e7d32" font-weight="700">OK</text>
+
+    <text x="525" y="378" font-size="15" font-weight="700">seq 2 (edited)</text>
+    <text x="525" y="402">recomputed hash &#8800; stored H2</text>
+    <text x="525" y="422" fill="#c62828" font-weight="700">tampered entry detected</text>
+
+    <text x="765" y="378" font-size="15" font-weight="700">seq 3</text>
+    <text x="765" y="402">prev_hash H2 no longer</text>
+    <text x="765" y="420">matches the new hash</text>
+    <text x="765" y="440" fill="#c62828" font-weight="700">broken link</text>
+  </g>
+  <g fill="none" stroke-width="2.4">
+    <path d="M472,405 H508" stroke="#37474f" marker-end="url(#ar)"/>
+    <path d="M712,405 H748" stroke="#c62828" marker-end="url(#ae)"/>
+  </g>
+
+  <rect x="30" y="485" width="940" height="52" rx="10" fill="#fafafa" stroke="#b0bec5" stroke-width="1.5"/>
+  <text x="46" y="508" font-size="13.5" fill="#1a1a1a"><tspan font-weight="700">Verification checks, in order:</tspan> signature, link (prev_hash equals previous entry_hash), recomputed hash.</text>
+  <text x="46" y="527" font-size="13.5" fill="#1a1a1a">The auditor portal runs this from genesis; boot fails if the chain does not verify. Edits can be detected, not prevented.</text>
+</svg>

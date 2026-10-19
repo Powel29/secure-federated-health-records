@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 900" font-family="Segoe UI, Arial, sans-serif">
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#37474f"/></marker></defs>
+<rect width="1100" height="900" fill="#ffffff"/>
+<text x="550" y="34" text-anchor="middle" font-size="22" font-weight="700" fill="#1a1a1a">Shared store: entity-relationship diagram</text>
+<text x="550" y="55" text-anchor="middle" font-size="13" fill="#546e7a">src/storage/migrations &#183; arrows point from the foreign key to the table it references &#183; the store holds ciphertext, never plaintext</text>
+<path d="M400,110 H332" fill="none" stroke="#37474f" stroke-width="2" marker-end="url(#ar)"/>
+<path d="M180,250 V180" fill="none" stroke="#37474f" stroke-width="2" marker-end="url(#ar)"/>
+<path d="M550,250 V163" fill="none" stroke="#37474f" stroke-width="2" marker-end="url(#ar)"/>
+<path d="M700,275 H740 V120 H768" fill="none" stroke="#37474f" stroke-width="2" marker-end="url(#ar)"/>
+<path d="M768,340 H702" fill="none" stroke="#37474f" stroke-width="2" marker-end="url(#ar)"/>
+<path d="M332,545 H366 V400 H398" fill="none" stroke="#37474f" stroke-width="2" marker-end="url(#ar)"/>
+<path d="M550,540 V445" fill="none" stroke="#37474f" stroke-width="2" marker-end="url(#ar)"/>
+<path d="M768,545 H735 V430 H702" fill="none" stroke="#37474f" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="30" y="70" width="300" height="108" rx="8" fill="#f3e5f5" stroke="#6a1b9a" stroke-width="2.5"/>
+<rect x="30" y="70" width="300" height="30" rx="8" fill="#6a1b9a"/>
+<rect x="30" y="92" width="300" height="8" fill="#6a1b9a"/>
+<text x="42" y="90" font-size="14.5" font-weight="700" fill="#ffffff">authorities</text>
+<text x="42" y="116" font-size="12.5" font-weight="700" fill="#1a1a1a">authority_id  PK</text>
+<text x="42" y="133" font-size="12.5" font-weight="400" fill="#1a1a1a">display_name</text>
+<text x="42" y="150" font-size="12.5" font-weight="400" fill="#1a1a1a">public_key</text>
+<text x="42" y="167" font-size="12.5" font-weight="400" fill="#1a1a1a">created_at</text>
+<rect x="400" y="70" width="300" height="91" rx="8" fill="#e3f2fd" stroke="#1565c0" stroke-width="2.5"/>
+<rect x="400" y="70" width="300" height="30" rx="8" fill="#1565c0"/>
+<rect x="400" y="92" width="300" height="8" fill="#1565c0"/>
+<text x="412" y="90" font-size="14.5" font-weight="700" fill="#ffffff">patients</text>
+<text x="690" y="90" text-anchor="end" font-size="11" font-weight="700" fill="#ffffff">identifiers only, no PHI</text>
+<text x="412" y="116" font-size="12.5" font-weight="700" fill="#1a1a1a">patient_id  PK</text>
+<text x="412" y="133" font-size="12.5" font-weight="400" fill="#1a1a1a">home_authority_id  FK</text>
+<text x="412" y="150" font-size="12.5" font-weight="400" fill="#1a1a1a">created_at</text>
+<rect x="770" y="70" width="300" height="125" rx="8" fill="#e6f4ea" stroke="#2e7d32" stroke-width="2.5"/>
+<rect x="770" y="70" width="300" height="30" rx="8" fill="#2e7d32"/>
+<rect x="770" y="92" width="300" height="8" fill="#2e7d32"/>
+<text x="782" y="90" font-size="14.5" font-weight="700" fill="#ffffff">facilities</text>
+<text x="782" y="116" font-size="12.5" font-weight="700" fill="#1a1a1a">facility_id  PK</text>
+<text x="782" y="133" font-size="12.5" font-weight="400" fill="#1a1a1a">display_name</text>
+<text x="782" y="150" font-size="12.5" font-weight="400" fill="#1a1a1a">endpoint</text>
+<text x="782" y="167" font-size="12.5" font-weight="400" fill="#1a1a1a">public_key</text>
+<text x="782" y="184" font-size="12.5" font-weight="400" fill="#1a1a1a">status</text>
+<rect x="30" y="250" width="300" height="91" rx="8" fill="#f3e5f5" stroke="#6a1b9a" stroke-width="2.5"/>
+<rect x="30" y="250" width="300" height="30" rx="8" fill="#6a1b9a"/>
+<rect x="30" y="272" width="300" height="8" fill="#6a1b9a"/>
+<text x="42" y="270" font-size="14.5" font-weight="700" fill="#ffffff">attributes</text>
+<text x="42" y="296" font-size="12.5" font-weight="700" fill="#1a1a1a">authority_id  PK, FK</text>
+<text x="42" y="313" font-size="12.5" font-weight="700" fill="#1a1a1a">name  PK</text>
+<text x="42" y="330" font-size="12.5" font-weight="700" fill="#1a1a1a">value  PK</text>
+<rect x="400" y="250" width="300" height="193" rx="8" fill="#fdecea" stroke="#c62828" stroke-width="2.5"/>
+<rect x="400" y="250" width="300" height="30" rx="8" fill="#c62828"/>
+<rect x="400" y="272" width="300" height="8" fill="#c62828"/>
+<text x="412" y="270" font-size="14.5" font-weight="700" fill="#ffffff">records</text>
+<text x="690" y="270" text-anchor="end" font-size="11" font-weight="700" fill="#ffffff">CIPHERTEXT ONLY</text>
+<text x="412" y="296" font-size="12.5" font-weight="700" fill="#1a1a1a">record_id  PK</text>
+<text x="412" y="313" font-size="12.5" font-weight="400" fill="#1a1a1a">patient_id  FK</text>
+<text x="412" y="330" font-size="12.5" font-weight="400" fill="#1a1a1a">facility_id  FK</text>
+<text x="412" y="347" font-size="12.5" font-weight="400" fill="#1a1a1a">policy_id</text>
+<text x="412" y="364" font-size="12.5" font-weight="400" fill="#1a1a1a">content_type</text>
+<text x="412" y="381" font-size="12.5" font-weight="400" fill="#1a1a1a">ciphertext</text>
+<text x="412" y="398" font-size="12.5" font-weight="400" fill="#1a1a1a">nonce (12 bytes)</text>
+<text x="412" y="415" font-size="12.5" font-weight="400" fill="#1a1a1a">aad</text>
+<text x="412" y="432" font-size="12.5" font-weight="400" fill="#1a1a1a">created_at</text>
+<rect x="770" y="300" width="300" height="91" rx="8" fill="#fff4e0" stroke="#ef6c00" stroke-width="2.5"/>
+<rect x="770" y="300" width="300" height="30" rx="8" fill="#ef6c00"/>
+<rect x="770" y="322" width="300" height="8" fill="#ef6c00"/>
+<text x="782" y="320" font-size="14.5" font-weight="700" fill="#ffffff">search_index</text>
+<text x="782" y="346" font-size="12.5" font-weight="700" fill="#1a1a1a">id  PK</text>
+<text x="782" y="363" font-size="12.5" font-weight="400" fill="#1a1a1a">record_id  FK</text>
+<text x="782" y="380" font-size="12.5" font-weight="400" fill="#1a1a1a">coded_term (opaque)</text>
+<rect x="30" y="480" width="300" height="159" rx="8" fill="#fdecea" stroke="#c62828" stroke-width="2.5"/>
+<rect x="30" y="480" width="300" height="30" rx="8" fill="#c62828"/>
+<rect x="30" y="502" width="300" height="8" fill="#c62828"/>
+<text x="42" y="500" font-size="14.5" font-weight="700" fill="#ffffff">dek_wrappings</text>
+<text x="320" y="500" text-anchor="end" font-size="11" font-weight="700" fill="#ffffff">CIPHERTEXT ONLY</text>
+<text x="42" y="526" font-size="12.5" font-weight="700" fill="#1a1a1a">wrapping_id  PK</text>
+<text x="42" y="543" font-size="12.5" font-weight="400" fill="#1a1a1a">record_id  FK</text>
+<text x="42" y="560" font-size="12.5" font-weight="400" fill="#1a1a1a">wrapped_for</text>
+<text x="42" y="577" font-size="12.5" font-weight="400" fill="#1a1a1a">wrapped_dek</text>
+<text x="42" y="594" font-size="12.5" font-weight="400" fill="#1a1a1a">nonce</text>
+<text x="42" y="611" font-size="12.5" font-weight="400" fill="#1a1a1a">generation</text>
+<text x="42" y="628" font-size="12.5" font-weight="400" fill="#1a1a1a">created_at</text>
+<rect x="400" y="540" width="300" height="108" rx="8" fill="#fff4e0" stroke="#ef6c00" stroke-width="2.5"/>
+<rect x="400" y="540" width="300" height="30" rx="8" fill="#ef6c00"/>
+<rect x="400" y="562" width="300" height="8" fill="#ef6c00"/>
+<text x="412" y="560" font-size="14.5" font-weight="700" fill="#ffffff">lifecycle_state</text>
+<text x="690" y="560" text-anchor="end" font-size="11" font-weight="700" fill="#ffffff">four-state machine</text>
+<text x="412" y="586" font-size="12.5" font-weight="700" fill="#1a1a1a">record_id  PK, FK</text>
+<text x="412" y="603" font-size="12.5" font-weight="400" fill="#1a1a1a">state</text>
+<text x="412" y="620" font-size="12.5" font-weight="400" fill="#1a1a1a">last_event_id</text>
+<text x="412" y="637" font-size="12.5" font-weight="400" fill="#1a1a1a">updated_at</text>
+<rect x="770" y="480" width="300" height="193" rx="8" fill="#fff4e0" stroke="#ef6c00" stroke-width="2.5"/>
+<rect x="770" y="480" width="300" height="30" rx="8" fill="#ef6c00"/>
+<rect x="770" y="502" width="300" height="8" fill="#ef6c00"/>
+<text x="782" y="500" font-size="14.5" font-weight="700" fill="#ffffff">transition_events</text>
+<text x="1060" y="500" text-anchor="end" font-size="11" font-weight="700" fill="#ffffff">signed events</text>
+<text x="782" y="526" font-size="12.5" font-weight="700" fill="#1a1a1a">event_id  PK</text>
+<text x="782" y="543" font-size="12.5" font-weight="400" fill="#1a1a1a">record_id  FK</text>
+<text x="782" y="560" font-size="12.5" font-weight="400" fill="#1a1a1a">from_state</text>
+<text x="782" y="577" font-size="12.5" font-weight="400" fill="#1a1a1a">to_state</text>
+<text x="782" y="594" font-size="12.5" font-weight="400" fill="#1a1a1a">actor_id</text>
+<text x="782" y="611" font-size="12.5" font-weight="400" fill="#1a1a1a">reason_code</text>
+<text x="782" y="628" font-size="12.5" font-weight="400" fill="#1a1a1a">issued_at</text>
+<text x="782" y="645" font-size="12.5" font-weight="400" fill="#1a1a1a">nonce</text>
+<text x="782" y="662" font-size="12.5" font-weight="400" fill="#1a1a1a">signature</text>
+<rect x="30" y="670" width="300" height="193" rx="8" fill="#eceff1" stroke="#546e7a" stroke-width="2.5"/>
+<rect x="30" y="670" width="300" height="30" rx="8" fill="#546e7a"/>
+<rect x="30" y="692" width="300" height="8" fill="#546e7a"/>
+<text x="42" y="690" font-size="14.5" font-weight="700" fill="#ffffff">audit_log</text>
+<text x="320" y="690" text-anchor="end" font-size="11" font-weight="700" fill="#ffffff">hash chain</text>
+<text x="42" y="716" font-size="12.5" font-weight="700" fill="#1a1a1a">seq  PK</text>
+<text x="42" y="733" font-size="12.5" font-weight="400" fill="#1a1a1a">prev_hash</text>
+<text x="42" y="750" font-size="12.5" font-weight="400" fill="#1a1a1a">entry_hash</text>
+<text x="42" y="767" font-size="12.5" font-weight="400" fill="#1a1a1a">event_type</text>
+<text x="42" y="784" font-size="12.5" font-weight="400" fill="#1a1a1a">event_data (jsonb)</text>
+<text x="42" y="801" font-size="12.5" font-weight="400" fill="#1a1a1a">actor_id</text>
+<text x="42" y="818" font-size="12.5" font-weight="400" fill="#1a1a1a">correlation_id</text>
+<text x="42" y="835" font-size="12.5" font-weight="400" fill="#1a1a1a">recorded_at</text>
+<text x="42" y="852" font-size="12.5" font-weight="400" fill="#1a1a1a">signature</text>
+<rect x="770" y="700" width="300" height="74" rx="8" fill="#eceff1" stroke="#546e7a" stroke-width="2.5"/>
+<rect x="770" y="700" width="300" height="30" rx="8" fill="#546e7a"/>
+<rect x="770" y="722" width="300" height="8" fill="#546e7a"/>
+<text x="782" y="720" font-size="14.5" font-weight="700" fill="#ffffff">consumed_ids</text>
+<text x="1060" y="720" text-anchor="end" font-size="11" font-weight="700" fill="#ffffff">one-time ids (replay)</text>
+<text x="782" y="746" font-size="12.5" font-weight="700" fill="#1a1a1a">kind + id  PK</text>
+<text x="782" y="763" font-size="12.5" font-weight="400" fill="#1a1a1a">consumed_at</text>
+<text x="30" y="878" font-size="12" fill="#546e7a">Also stored for the deployment: compiled_policies, consent_requests, consent_grants (encrypted policy and signed consent JSON) and deployment_bootstrap. Patient names live only in the portal database.</text>
+</svg>

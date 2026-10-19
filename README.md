@@ -131,7 +131,7 @@ DATABASE_URL="postgresql://postgres@localhost:55432/ehr_test" pytest tests/ -ra 
 
 This runs the real read/write round-trips, the standalone-federation demo
 integration, and the cross-facility break-glass end-to-end test over real
-sockets. Expected: the whole suite passes (currently **531 passed, 0 skipped**).
+sockets. Expected: the whole suite passes (currently **643 passed, 1 skipped, 6 xfailed**; the skip is the live capture test when `tshark` is absent, and the 6 expected-fails are the known security findings tracked in `tests/security/test_p51_system_claims.py`).
 
 The Django portals have their own suite (SQLite, no services) — see
 [portal/README.md](portal/README.md):
@@ -162,17 +162,34 @@ check fails, nothing is considered running. Ctrl+C stops everything.
 
 **Path B — Docker Compose:**
 
+Create the store password once. It goes in `deploy/.env`, which is git-ignored;
+Compose refuses to start without it:
+
 ```bash
-docker compose -f deploy/docker-compose.yml up
+python -c "import secrets, pathlib; pathlib.Path('deploy/.env').write_text('POSTGRES_PASSWORD=' + secrets.token_urlsafe(16) + '\n')"
 ```
 
-Compose brings up its own `store`, runs migrations and bootstrap, serves the
+Then start the stack:
+
+```bash
+docker compose -f deploy/docker-compose.yml up --build -d
+```
+
+Compose brings up its own `store` (Postgres, host port `55433`), runs
+migrations and bootstrap (seven steps, chain verified from genesis), serves the
 six roles at `8001/8002/8010/8011/8020/8030`, and starts the three portals at
-**http://127.0.0.1:8000/**. All published ports bind to loopback. Use
-`docker compose -f deploy/docker-compose.yml up --build -d` to include code changes.
+**http://127.0.0.1:8000/** with the same logins as step 5a. All published ports
+bind to loopback. Watch it come up with
+`docker compose -f deploy/docker-compose.yml logs -f bootstrap`; it is ready when
+that prints `federation is up.` and the `bootstrap` container has exited 0.
 After a key-service restart or a failed bootstrap, recreate the disposable demo
-with `down` followed by `up --build -d`; this resets its synthetic records. See
-[deploy/README.md](deploy/README.md) for verified TLS and recovery details.
+with `down` followed by `up --build -d`; this resets its synthetic records. Set
+`SEED_DATA=false` only when a driver seeds its own records (for example
+`python -m deploy.run_scenario`, which fails with a 500 on `rec-001` if bootstrap
+already seeded it). See [deploy/README.md](deploy/README.md) for verified TLS and
+recovery details.
+
+To stop it: `docker compose -f deploy/docker-compose.yml down`.
 
 ---
 
@@ -184,6 +201,43 @@ They identify users and show data; they **never** decide access, decrypt, or
 hold a key (ADR-0014 / ADR-0021). Anything needing a key goes to the Key
 Custodian by `subject_id` after login (ADR-0043).
 
+### Quick start: the two ways to get the portals up
+
+Both serve **http://127.0.0.1:8000/**. Log in as `david` (patient), `house`
+(clinician) or `auditor` (admin), password `demo1234` (table in 5a).
+
+**Option 1: one command, no Compose** (fastest for a live demo). Start the
+throwaway Postgres once (step 2), activate the venv, point at the database, run:
+
+```powershell
+docker start p08pg                       # or the docker run in step 2 the first time
+.venv\Scripts\Activate.ps1
+$env:DATABASE_URL="postgresql://postgres@127.0.0.1:55432/ehr_test"
+python -m deploy.run_portal_demo --duration 60
+```
+
+Bash / macOS / Linux:
+
+```bash
+source .venv/bin/activate
+DATABASE_URL="postgresql://postgres@127.0.0.1:55432/ehr_test" python -m deploy.run_portal_demo --duration 60
+```
+
+Wait for `[6/6] starting the portals at http://127.0.0.1:8000/`. Ctrl+C stops it.
+
+**Option 2: Docker Compose** (everything in containers, including Postgres).
+Create `deploy/.env` once (step 4, Path B), then:
+
+```bash
+docker compose -f deploy/docker-compose.yml up --build -d
+docker compose -f deploy/docker-compose.yml logs -f bootstrap   # wait for "federation is up."
+```
+
+Stop with `docker compose -f deploy/docker-compose.yml down`. Re-create it
+(`down`, then `up --build -d`) right before a demo so the synthetic records are
+fresh. Do not run `deploy.run_scenario` against it before a demo: that driver
+leaves records in the emergency-open state.
+
 ### 5a. One command (recommended)
 
 Brings up the six federation processes in-process, seeds the synthetic dataset,
@@ -192,7 +246,7 @@ schema and the read-only `portal_ro` store role, migrates Django, seeds the
 logins + patient directory, and serves the portals at **http://127.0.0.1:8000/**:
 
 ```bash
-DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/mydb python -m deploy.run_portal_demo
+DATABASE_URL="postgresql://postgres@127.0.0.1:55432/ehr_test" python -m deploy.run_portal_demo
 ```
 
 The schema is reset every run, so any reachable database works. Options:
@@ -271,7 +325,9 @@ the pcap:
 python -m wire.capture --mode plain --out wire/captures/plain.pcap
 ```
 
-For the TLS profile, run the federation with TLS enabled, then:
+For the TLS profile, run the federation with TLS enabled (Path A with `TLS_ENABLED=true`, or
+Compose with `TLS_ENABLED=true docker compose -f deploy/docker-compose.yml up --build -d`
+after `python -m wire.tls`), then:
 
 ```bash
 CAPTURE_TLS=true TLS_ENABLED=true python -m wire.capture --mode tls --out wire/captures/tls.pcap

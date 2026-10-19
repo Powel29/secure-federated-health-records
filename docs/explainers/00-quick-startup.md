@@ -109,7 +109,10 @@ docker rm -f p08pg         # delete it and all data; then repeat step 1
 | `port is already allocated` on `55432` | Port in use | Use `-p 55433:5432` and `...@localhost:55433/...` |
 | `connection refused` in step 3 | Container not running or not ready | `docker ps`, wait a few seconds, `docker start p08pg` |
 | `ModuleNotFoundError: psycopg` / `django` | Wrong Python, not the project venv | Run step 2's `Activate.ps1` first |
-| Port 8000 busy | Another server running | `--port 8001` |
+| Port 8000 busy | Another server running (or the Compose portal) | `--port 8001`, or stop the other one |
+| Compose says `POSTGRES_PASSWORD` is missing | No `deploy/.env` yet | Create it (see Other ways to run) |
+| `run_scenario` fails with a 500 on `rec-001` | Bootstrap already seeded that record | Recreate the stack with `SEED_DATA=false` |
+| `run_scenario` prints a `charmap` error on Windows | Console encoding | Set `PYTHONUTF8=1` |
 | Break-glass says `emergency_open -> emergency_open` | That record is already open this run | Restart the stack, or wait for the time-box to end |
 | Portal shows "store error" | Database unreachable | Check `$env:DATABASE_URL` and `docker ps` |
 

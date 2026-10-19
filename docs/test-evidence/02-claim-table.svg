@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 854" font-family="Segoe UI, Arial, sans-serif">
+<rect width="1240" height="854" fill="#ffffff"/>
+<text x="620.0" y="38" text-anchor="middle" font-size="24" font-weight="700" fill="#1a1a1a">Security claims: what is proven today</text>
+<text x="620.0" y="62" text-anchor="middle" font-size="14" fill="#546e7a">Each claim is written at full strength. A claim that fails today stays as a strict expected-fail until its fix lands, so it cannot be quietly weakened.</text>
+<rect x="40" y="82" width="170" height="40" rx="8" fill="#e6f4ea" stroke="#2e7d32" stroke-width="2"/>
+<text x="125" y="108" text-anchor="middle" font-size="16" font-weight="700" fill="#1b5e20">5 hold</text>
+<rect x="226" y="82" width="230" height="40" rx="8" fill="#fff4e0" stroke="#ef6c00" stroke-width="2"/>
+<text x="341" y="108" text-anchor="middle" font-size="16" font-weight="700" fill="#e65100">6 known gaps (tracked)</text>
+<rect x="30" y="116" width="1180" height="34" fill="#263238"/>
+<text x="40" y="139" font-size="14" font-weight="700" fill="#ffffff">Claim</text>
+<text x="110" y="139" font-size="14" font-weight="700" fill="#ffffff">What it proves</text>
+<text x="470" y="139" font-size="14" font-weight="700" fill="#ffffff">Evidence</text>
+<text x="840" y="139" font-size="14" font-weight="700" fill="#ffffff">Result</text>
+<text x="960" y="139" font-size="14" font-weight="700" fill="#ffffff">Open finding</text>
+<rect x="30" y="150" width="1180" height="54" fill="#f6faf7" stroke="#cfd8dc" stroke-width="1"/>
+<text x="40" y="182" font-size="16" font-weight="700" fill="#1a1a1a">C1</text>
+<text x="110" y="174" font-size="13.5" fill="#1a1a1a">A revoked user cannot decrypt after the key is</text>
+<text x="110" y="191" font-size="13.5" fill="#1a1a1a">rotated</text>
+<text x="470" y="174" font-size="13" fill="#37474f">revoked clinician cannot read after the revoke</text>
+<text x="470" y="191" font-size="13" fill="#37474f">endpoint</text>
+<rect x="840" y="163" width="100" height="28" rx="14" fill="#2e7d32"/>
+<text x="890" y="182" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">HOLDS</text>
+<rect x="30" y="204" width="1180" height="54" fill="#f6faf7" stroke="#cfd8dc" stroke-width="1"/>
+<text x="40" y="236" font-size="16" font-weight="700" fill="#1a1a1a">C2</text>
+<text x="110" y="228" font-size="13.5" fill="#1a1a1a">No committed log entry, no key (fails closed)</text>
+<text x="470" y="228" font-size="13" fill="#37474f">share 3 not released when the log commit fails</text>
+<rect x="840" y="217" width="100" height="28" rx="14" fill="#2e7d32"/>
+<text x="890" y="236" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">HOLDS</text>
+<rect x="30" y="258" width="1180" height="54" fill="#fffaf2" stroke="#cfd8dc" stroke-width="1"/>
+<text x="40" y="290" font-size="16" font-weight="700" fill="#1a1a1a">C3</text>
+<text x="110" y="282" font-size="13.5" fill="#1a1a1a">One share alone, even the audit service's, opens</text>
+<text x="110" y="299" font-size="13.5" fill="#1a1a1a">nothing</text>
+<text x="470" y="282" font-size="13" fill="#37474f">single-share tests hold; system test is expected-fail</text>
+<rect x="840" y="271" width="100" height="28" rx="14" fill="#ef6c00"/>
+<text x="890" y="290" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">GAP</text>
+<text x="960" y="282" font-size="12.5" fill="#bf360c">Audit service releases share 3 without</text>
+<text x="960" y="299" font-size="12.5" fill="#bf360c">checking the assertion</text>
+<rect x="30" y="312" width="1180" height="54" fill="#fffaf2" stroke="#cfd8dc" stroke-width="1"/>
+<text x="40" y="344" font-size="16" font-weight="700" fill="#1a1a1a">C4</text>
+<text x="110" y="336" font-size="13.5" fill="#1a1a1a">Search capability does not survive the emergency</text>
+<text x="470" y="336" font-size="13" fill="#37474f">module test holds; system test is expected-fail</text>
+<rect x="840" y="325" width="100" height="28" rx="14" fill="#ef6c00"/>
+<text x="890" y="344" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">GAP</text>
+<text x="960" y="336" font-size="12.5" fill="#bf360c">Expiry does not replace the emergency</text>
+<text x="960" y="353" font-size="12.5" fill="#bf360c">shares, so old ones still work</text>
+<rect x="30" y="366" width="1180" height="54" fill="#f6faf7" stroke="#cfd8dc" stroke-width="1"/>
+<text x="40" y="398" font-size="16" font-weight="700" fill="#1a1a1a">C5</text>
+<text x="110" y="390" font-size="13.5" fill="#1a1a1a">A tampered audit entry is detected</text>
+<text x="470" y="390" font-size="13" fill="#37474f">edited row fails chain verification endpoint</text>
+<rect x="840" y="379" width="100" height="28" rx="14" fill="#2e7d32"/>
+<text x="890" y="398" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">HOLDS</text>
+<rect x="30" y="420" width="1180" height="54" fill="#fffaf2" stroke="#cfd8dc" stroke-width="1"/>
+<text x="40" y="452" font-size="16" font-weight="700" fill="#1a1a1a">C6</text>
+<text x="110" y="444" font-size="13.5" fill="#1a1a1a">An illegal state change is rejected</text>
+<text x="470" y="444" font-size="13" fill="#37474f">module test holds; system test is expected-fail</text>
+<rect x="840" y="433" width="100" height="28" rx="14" fill="#ef6c00"/>
+<text x="890" y="452" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">GAP</text>
+<text x="960" y="444" font-size="12.5" fill="#bf360c">Revoke handler can overwrite an</text>
+<text x="960" y="461" font-size="12.5" fill="#bf360c">emergency-open record</text>
+<rect x="30" y="474" width="1180" height="54" fill="#fffaf2" stroke="#cfd8dc" stroke-width="1"/>
+<text x="40" y="506" font-size="16" font-weight="700" fill="#1a1a1a">C7</text>
+<text x="110" y="498" font-size="13.5" fill="#1a1a1a">An event with an invalid signature is rejected</text>
+<text x="470" y="498" font-size="13" fill="#37474f">module test holds; system test is expected-fail</text>
+<rect x="840" y="487" width="100" height="28" rx="14" fill="#ef6c00"/>
+<text x="890" y="506" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">GAP</text>
+<text x="960" y="498" font-size="12.5" fill="#bf360c">Break-glass event is signed with a</text>
+<text x="960" y="515" font-size="12.5" fill="#bf360c">throwaway key</text>
+<rect x="30" y="528" width="1180" height="54" fill="#f6faf7" stroke="#cfd8dc" stroke-width="1"/>
+<text x="40" y="560" font-size="16" font-weight="700" fill="#1a1a1a">C8</text>
+<text x="110" y="552" font-size="13.5" fill="#1a1a1a">A replayed emergency assertion is refused</text>
+<text x="470" y="552" font-size="13" fill="#37474f">replay rejected, also after a facility restart</text>
+<rect x="840" y="541" width="100" height="28" rx="14" fill="#2e7d32"/>
+<text x="890" y="560" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">HOLDS</text>
+<rect x="30" y="582" width="1180" height="54" fill="#fffaf2" stroke="#cfd8dc" stroke-width="1"/>
+<text x="40" y="614" font-size="16" font-weight="700" fill="#1a1a1a">C9</text>
+<text x="110" y="606" font-size="13.5" fill="#1a1a1a">Unauthorised caller denied before any crypto or</text>
+<text x="110" y="623" font-size="13.5" fill="#1a1a1a">database work</text>
+<text x="470" y="606" font-size="13" fill="#37474f">system test is expected-fail</text>
+<rect x="840" y="595" width="100" height="28" rx="14" fill="#ef6c00"/>
+<text x="890" y="614" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">GAP</text>
+<text x="960" y="606" font-size="12.5" fill="#bf360c">Record is loaded before the caller is</text>
+<text x="960" y="623" font-size="12.5" fill="#bf360c">checked</text>
+<rect x="30" y="636" width="1180" height="54" fill="#fffaf2" stroke="#cfd8dc" stroke-width="1"/>
+<text x="40" y="668" font-size="16" font-weight="700" fill="#1a1a1a">C10</text>
+<text x="110" y="660" font-size="13.5" fill="#1a1a1a">Expired or revoked credential releases no key</text>
+<text x="470" y="660" font-size="13" fill="#37474f">module tests hold; system test is expected-fail</text>
+<rect x="840" y="649" width="100" height="28" rx="14" fill="#ef6c00"/>
+<text x="890" y="668" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">GAP</text>
+<text x="960" y="660" font-size="12.5" fill="#bf360c">Attribute-key endpoint checks no</text>
+<text x="960" y="677" font-size="12.5" fill="#bf360c">credential</text>
+<rect x="30" y="690" width="1180" height="54" fill="#f6faf7" stroke="#cfd8dc" stroke-width="1"/>
+<text x="40" y="722" font-size="16" font-weight="700" fill="#1a1a1a">C11</text>
+<text x="110" y="714" font-size="13.5" fill="#1a1a1a">A patient login alone never releases a key</text>
+<text x="470" y="714" font-size="13" fill="#37474f">patient without owner attribute is refused</text>
+<rect x="840" y="703" width="100" height="28" rx="14" fill="#2e7d32"/>
+<text x="890" y="722" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">HOLDS</text>
+<text x="40" y="774" font-size="13" fill="#37474f">Full suite on 2026-10-09 against Postgres: 643 passed, 1 skipped, 6 expected-fail. List the table yourself with: python -m tests.security.claims --table</text>
+<text x="40" y="796" font-size="13" fill="#37474f">Prove each test is real by switching its control off and watching it fail: python -m tests.security.mutations</text>
+</svg>

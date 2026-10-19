@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 560" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#37474f"/>
+    </marker>
+  </defs>
+  <rect width="1000" height="560" fill="#ffffff"/>
+  <text x="500" y="34" text-anchor="middle" font-size="22" font-weight="700" fill="#1a1a1a">Emergency-only search: tokens live and die with the key</text>
+  <text x="500" y="55" text-anchor="middle" font-size="13" fill="#546e7a">src/search &#183; src/lifecycle/expiry.py &#183; token = HKDF(emergency key, term), so no key means no token</text>
+
+  <!-- time axis -->
+  <path d="M40,300 H960" stroke="#37474f" stroke-width="2.6" fill="none" marker-end="url(#ar)"/>
+  <text x="960" y="324" text-anchor="end" font-size="12" fill="#546e7a">time</text>
+
+  <!-- lifecycle lane -->
+  <text x="40" y="120" font-size="14" font-weight="700" fill="#1a1a1a">Record state</text>
+  <rect x="40" y="132" width="180" height="50" rx="8" fill="#e6f4ea" stroke="#2e7d32" stroke-width="2.5"/>
+  <text x="130" y="162" text-anchor="middle" font-size="14" font-weight="700">GRANTED</text>
+  <rect x="260" y="132" width="360" height="50" rx="8" fill="#fff4e0" stroke="#ef6c00" stroke-width="2.5"/>
+  <text x="440" y="162" text-anchor="middle" font-size="14" font-weight="700">EMERGENCY_OPEN</text>
+  <rect x="660" y="132" width="110" height="50" rx="8" fill="#eceff1" stroke="#546e7a" stroke-width="2.5"/>
+  <text x="715" y="162" text-anchor="middle" font-size="14" font-weight="700">EXPIRED</text>
+  <rect x="810" y="132" width="150" height="50" rx="8" fill="#e6f4ea" stroke="#2e7d32" stroke-width="2.5"/>
+  <text x="885" y="162" text-anchor="middle" font-size="14" font-weight="700">GRANTED</text>
+  <g stroke="#37474f" stroke-width="2" fill="none">
+    <path d="M220,157 H258" marker-end="url(#ar)"/>
+    <path d="M620,157 H658" marker-end="url(#ar)"/>
+    <path d="M770,157 H808" marker-end="url(#ar)"/>
+  </g>
+
+  <!-- event ticks -->
+  <g stroke="#37474f" stroke-width="2.4">
+    <path d="M240,190 V300"/><path d="M640,190 V300"/><path d="M790,190 V300"/>
+  </g>
+  <g font-size="12.5" fill="#1a1a1a">
+    <text x="240" y="340" text-anchor="middle" font-weight="700">unlock</text>
+    <text x="240" y="357" text-anchor="middle">assertion valid,</text>
+    <text x="240" y="374" text-anchor="middle">2-of-3 shares met</text>
+    <text x="640" y="340" text-anchor="middle" font-weight="700">expires_at</text>
+    <text x="640" y="357" text-anchor="middle">timer signs</text>
+    <text x="640" y="374" text-anchor="middle">EMERGENCY_OPEN &#8594; EXPIRED</text>
+    <text x="800" y="340" text-anchor="middle" font-weight="700">re-key done</text>
+    <text x="800" y="357" text-anchor="middle">timer signs</text>
+    <text x="800" y="374" text-anchor="middle">EXPIRED &#8594; GRANTED</text>
+  </g>
+
+  <!-- token lane -->
+  <text x="40" y="430" font-size="14" font-weight="700" fill="#1a1a1a">Search token</text>
+  <rect x="260" y="442" width="380" height="46" rx="8" fill="#e6f4ea" stroke="#2e7d32" stroke-width="2.5"/>
+  <text x="450" y="470" text-anchor="middle" font-size="14" font-weight="700" fill="#1b5e20">TOKEN LIVE: "glucose" matches the record</text>
+  <rect x="660" y="442" width="300" height="46" rx="8" fill="#fdecea" stroke="#c62828" stroke-width="2.5"/>
+  <text x="810" y="470" text-anchor="middle" font-size="14" font-weight="700" fill="#c62828">TOKEN DEAD: old tokens match nothing</text>
+  <rect x="40" y="442" width="200" height="46" rx="8" fill="#f3f3f3" stroke="#90a4ae" stroke-width="2" stroke-dasharray="6 5"/>
+  <text x="140" y="470" text-anchor="middle" font-size="13" fill="#546e7a">no emergency key, no token</text>
+
+  <text x="40" y="528" font-size="12.5" fill="#37474f">The store holds only the coded index, so it cannot tell which term a token stands for. On rotation the index is rebuilt under the new key (rekey_search_index).</text>
+  <text x="40" y="546" font-size="12.5" fill="#546e7a">Known gap: on the emergency path the pre-expiry shares can still re-derive the old tokens until the emergency key itself is replaced (review finding F9).</text>
+</svg>
