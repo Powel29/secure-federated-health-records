@@ -33,10 +33,13 @@ from tests.api.conftest import (  # noqa: F401
 from tests.sealing import seal_all
 from tests.security.conftest import skip_or_fail_without_postgres
 from tests.security.test_p51_system_claims import (
+    _SURGEON_ONLY,
     PATIENT,
     RECORD,
+    _clinician_keyring,
     _owner_keyring,
     _read,
+    _revoke_payload,
     _seed,
     _unlock_payload,
 )
@@ -185,6 +188,34 @@ def test_stale_emergency_open_returns_409_not_silent_reset(store):
     )
     assert response.status_code == 409
     assert store["repo"].get_lifecycle_state(RECORD) is LifecycleState.EMERGENCY_OPEN
+
+
+@pytest.mark.claim("C1", level="system")
+def test_c1_revoked_clinician_cannot_read_on_postgres(store):
+    """C1 on the real store: revocation re-encrypts the stored row.
+
+    The in-memory C1 test proves the policy and rotation logic; this one proves
+    the same outcome when the ciphertext, DEK wrappings and policy live in
+    Postgres, so a revoked clinician is locked out of what the store holds.
+    """
+    client = store["process"]()
+    attrs = store["attrs"]
+
+    before = _read(client, "dr-alice", _clinician_keyring(attrs))
+    assert before.status_code == 200, before.text
+
+    revoked = client.post(
+        f"/records/{RECORD}/revoke", json=_revoke_payload(store, _SURGEON_ONLY)
+    )
+    assert revoked.status_code == 200, revoked.text
+    assert store["repo"].get_lifecycle_state(RECORD) is LifecycleState.REVOKED
+
+    # A restarted process reads the same store: the lock-out is the data.
+    after = _read(store["process"](), "dr-alice", _clinician_keyring(attrs))
+    assert after.status_code == 403
+    assert "plaintext_b64" not in after.text
+
+    assert _read(client, PATIENT, _owner_keyring(attrs)).status_code == 200
 
 
 @pytest.mark.claim("C8", level="system")

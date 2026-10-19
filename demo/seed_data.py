@@ -381,7 +381,9 @@ def create_synthetic_dataset() -> SyntheticDataset:
                 },
             ],
             "allergies": [],
-            "allergy_status": "No known drug allergies (confirmed with patient, GCS 13)",
+            "allergy_status": (
+                "No known drug allergies (confirmed with patient, GCS 13)"
+            ),
             "notes": (
                 "Emergency FAST examination positive for fluid in splenorenal recess. "
                 "Orthopedic surgery on standby."
