@@ -217,13 +217,14 @@ def identify(request: Any) -> HttpResponse:
             break
 
     # Log before showing: a lookup that cannot be recorded is not served.
+    # Nothing about what was typed enters the chain, not even a hash: names
+    # and dates of birth have too little entropy to hide (ADR-0085).
     correlation_id = f"lookup-{uuid4()}"
     seq = notify.append_audit(
         event_type=notify.EVENT_PATIENT_LOOKUP,
         event_data={
             "clinician_id": ctx["subject_id"],
             "facility_id": ctx["facility_id"],
-            "query_hash": notify.query_hash(family, given, dob_raw),
             "candidate_count": len(candidates),
             "candidate_ids": [c.subject_id for c in candidates],
             "selected_patient_id": None,

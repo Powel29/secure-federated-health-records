@@ -18,8 +18,10 @@ deferred to Phase 4:
 
 from __future__ import annotations
 
+import json
 import os
 import threading
+from pathlib import Path
 from typing import Any, Callable
 
 import httpx
@@ -27,9 +29,67 @@ import httpx
 DEFAULT_TIMEOUT_SECONDS = 5.0
 
 # Highest seq each audit service has returned to this process (review F31).
-# In memory only: a restarted process starts trusting again from the next entry.
+# With a high-water file (``use_high_water_file``) it survives a restart;
+# without one a restarted process starts trusting again from the next entry.
 _last_seq: dict[str, int] = {}
 _last_seq_lock = threading.Lock()
+_high_water_file: Path | None = None
+
+
+def use_high_water_file(path: Path) -> None:
+    """Persist the highest seq seen per audit service in ``path`` (review F31).
+
+    Loads any mark already in the file, so a restarted facility still refuses
+    a chain shorter than the one it saw before the restart. The file lives on
+    the facility's own disk, not in the shared store: every service reaches
+    the store as the same role, so a mark kept there could be lowered by
+    whoever truncated the chain.
+
+    A fresh federation (new store, new chain) needs a fresh file; the
+    launchers delete it when they reset the store.
+
+    Raises:
+        RuntimeError: The file exists but is not a JSON object of
+            ``{audit_service_url: int}`` -- the facility must not start with a
+            mark it cannot read (fail closed, CLAUDE.md).
+    """
+    global _high_water_file
+    loaded: dict[str, int] = {}
+    if path.exists():
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(
+                f"unreadable audit high-water file {path}: {exc}"
+            ) from exc
+        if not isinstance(raw, dict) or not all(
+            isinstance(k, str) and isinstance(v, int) and not isinstance(v, bool)
+            for k, v in raw.items()
+        ):
+            raise RuntimeError(f"malformed audit high-water file {path}")
+        loaded = raw
+    with _last_seq_lock:
+        for url, seq in loaded.items():
+            _last_seq[url] = max(seq, _last_seq.get(url, -1))
+        _high_water_file = path
+
+
+def _persist_locked() -> None:
+    """Write ``_last_seq`` to the high-water file; caller holds the lock.
+
+    Written to a temporary file and renamed, so a crash mid-write leaves the
+    previous mark rather than a truncated file.
+    """
+    if _high_water_file is None:
+        return
+    tmp = _high_water_file.with_name(_high_water_file.name + ".tmp")
+    try:
+        tmp.write_text(json.dumps(_last_seq, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, _high_water_file)
+    except OSError as exc:
+        raise AuditServiceError(
+            f"could not persist the audit high-water mark: {exc}"
+        ) from exc
 
 
 def _seq_before_send(audit_service_url: str) -> int:
@@ -44,7 +104,8 @@ def _check_seq_advances(audit_service_url: str, seq: int, before: int) -> None:
     Every entry already returned was committed before this append was sent, so
     this one must come after it; a lower seq means a truncated or replaced
     chain. Concurrent appends may return out of order, so the check is against
-    ``before``, not the latest seq seen since.
+    ``before``, not the latest seq seen since. When a high-water file is in
+    use, a raised mark is persisted before the entry is accepted.
     """
     with _last_seq_lock:
         if seq <= before:
@@ -52,7 +113,9 @@ def _check_seq_advances(audit_service_url: str, seq: int, before: int) -> None:
                 f"audit chain went backwards: seq {seq} after {before} "
                 "(truncated or replaced chain)"
             )
-        _last_seq[audit_service_url] = max(seq, _last_seq.get(audit_service_url, -1))
+        if seq > _last_seq.get(audit_service_url, -1):
+            _last_seq[audit_service_url] = seq
+            _persist_locked()
 
 
 _DISABLE_VALUES = {"0", "false", "no"}

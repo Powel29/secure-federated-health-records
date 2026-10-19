@@ -41,6 +41,8 @@ FEDERATION_CONFIG_PATH = REPO_ROOT / "deploy" / "pki" / "federation.json"
 TRUST_DIR = REPO_ROOT / "deploy" / "pki" / "trust"
 # Each service's request-signing key and certificate (ADR-0066), also step 2.
 SERVICES_DIR = REPO_ROOT / "deploy" / "pki" / "services"
+# Each facility's audit high-water mark (review F31); cleared with the store.
+STATE_DIR = REPO_ROOT / "deploy" / "pki" / "state"
 
 _AUDIT_PORT = 8020
 _CUSTODIAN_PORT = 8030  # Key Custodian, ADR-0043 (the portals' key agent)
@@ -60,6 +62,21 @@ class ServiceSpec:
 
 def _identity_env(service_id: str) -> dict[str, str]:
     return bootstrap.service_env(SERVICES_DIR, service_id, TRUST_DIR)
+
+
+def _high_water_path(facility_id: str) -> Path:
+    return STATE_DIR / f"{facility_id}-audit-high-water.json"
+
+
+def _clear_high_water_marks() -> None:
+    """Forget every facility's audit position along with the reset store.
+
+    The reset starts a new chain at seq 0, so a mark from the last run would
+    make every append look like a truncated chain (review F31).
+    """
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    for facility_id in _FACILITY_PORTS:
+        _high_water_path(facility_id).unlink(missing_ok=True)
 
 
 def _default_specs(database_url: str, audit_base_url: str) -> list[ServiceSpec]:
@@ -110,6 +127,7 @@ def _default_specs(database_url: str, audit_base_url: str) -> list[ServiceSpec]:
                 "AUTHORITY_URLS": authority_urls,
                 "CUSTODIAN_URL": _base_url(_CUSTODIAN_PORT),
                 "FACILITY_CA_CERTS_DIR": str(TRUST_DIR / "facility-cas"),
+                "AUDIT_HIGH_WATER_FILE": str(_high_water_path(facility_id)),
                 **_identity_env(facility_id),
             },
         )
@@ -190,6 +208,7 @@ def start_federation(
     try:
         print("[1/7] applying database migrations...")
         applied = bootstrap.run_migrations(database_url, reset=True)
+        _clear_high_water_marks()
         print(f"      applied: {applied or 'nothing to apply'}")
 
         print("[2/7] generating federation PKI (root anchor + facility CAs)...")

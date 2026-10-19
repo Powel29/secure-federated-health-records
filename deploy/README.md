@@ -183,8 +183,18 @@ rewritten. Regenerating certificates means restarting the store as well.
 ## Restarts and recovery
 
 Compiled policies and signed consent artifacts are shared through PostgreSQL,
-so routine cross-facility reads now return a real policy decision. Private keys,
-emergency sessions and replay caches remain in process memory by design.
+so routine cross-facility reads now return a real policy decision. Private keys
+remain in process memory by design. Open emergency sessions are stored without
+their keys, and a restarted facility closes its own with a rotation
+(ADR-0081); the facility's one-time ids persist in the store (review F22).
+
+Each facility also keeps the highest audit `seq` it has seen in
+`AUDIT_HIGH_WATER_FILE` (ADR-0083), so after a restart it still refuses an
+audit chain that was cut back. Under Compose the file lives in the container's
+own filesystem and goes away on `down` together with the store; Path A keeps it
+in `deploy/pki/state/` and deletes it when it resets the store. If you reset
+only the store, delete that file too, or every audit append from that facility
+fails with "audit chain went backwards".
 
 A successful bootstrap records the live service instance IDs only after seeding
 and audit verification finish. Re-running bootstrap on the same live stack

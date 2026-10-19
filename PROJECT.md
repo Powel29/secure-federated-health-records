@@ -275,7 +275,9 @@ These go in the abstract and the limitations section, not buried. Claiming more
 than this is the fastest way to lose credibility in the viva.
 
 1. **Revocation is forward-only.** Re-wrapping the DEK denies future reads. It
-   cannot retract plaintext a user has already decrypted and kept.
+   cannot retract plaintext a user has already decrypted and kept. Only the
+   patient can revoke in this build; revocation by the home authority is not
+   wired (ADR-0084).
 2. **Emergency expiry is server/HSM-enforced, not pure cryptography.** A
    compromised server could decline to expire an emergency key. We reduce, but
    do not eliminate, this: expiry is implemented as a *signed, logged* forced
@@ -345,6 +347,13 @@ than this is the fastest way to lose credibility in the viva.
     demonstration parameters), but record plaintext, DEKs and attribute keys
     cross, because the facility encrypts and decrypts server-side.
     Client-side crypto in the key agent is future work.
+12. **The audit chain is pseudonymous, not anonymous (ADR-0085).** It holds
+    no name or date of birth, but it names patients by `patient_id`, the
+    store's own index. Whoever can read the chain (the auditor, the store
+    operator) learns which pseudonymous patient was accessed, by whom and
+    when; only the portal DB links that id to a person. Hiding even that
+    would need keyed pseudonyms across the store and the signed assertion,
+    which is future work.
 
 ---
 

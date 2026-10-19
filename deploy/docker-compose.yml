@@ -213,6 +213,10 @@ services:
       # authorities and hands new shares to the custodian (ADR-0069).
       AUTHORITY_URLS: "${AUTHORITY_URLS:-authority-med=http://authority-med:8010,authority-net=http://authority-net:8011}"
       CUSTODIAN_URL: "${CUSTODIAN_URL:-http://custodian:8030}"
+      # Highest audit seq seen, kept in the container's own filesystem (no
+      # volume): it survives a restart and goes away with the store on
+      # `down` (review F31).
+      AUDIT_HIGH_WATER_FILE: /var/lib/ehr/audit-high-water.json
       SERVICE_KEY_FILE: /identity/service.key
       SERVICE_CERT_FILE: /identity/service.crt
       TLS_ENABLED: "${TLS_ENABLED:-false}"
@@ -255,6 +259,10 @@ services:
       # authorities and hands new shares to the custodian (ADR-0069).
       AUTHORITY_URLS: "${AUTHORITY_URLS:-authority-med=http://authority-med:8010,authority-net=http://authority-net:8011}"
       CUSTODIAN_URL: "${CUSTODIAN_URL:-http://custodian:8030}"
+      # Highest audit seq seen, kept in the container's own filesystem (no
+      # volume): it survives a restart and goes away with the store on
+      # `down` (review F31).
+      AUDIT_HIGH_WATER_FILE: /var/lib/ehr/audit-high-water.json
       SERVICE_KEY_FILE: /identity/service.key
       SERVICE_CERT_FILE: /identity/service.crt
       TLS_ENABLED: "${TLS_ENABLED:-false}"
