@@ -40,7 +40,7 @@ From the whole-project check of 2026-10-19:
 
 | # | Finding | Fix | Owner (suggested) |
 |---|---|---|---|
-| W2 | Pinned dependencies with later security releases: Django 5.0.6 (series out of support), cryptography 42.0.5, Starlette 0.36.3 via FastAPI 0.110 | `pip-audit`, bump with an ADR, then **re-run the evidence** (timings change) | Avaneeth |
+| W2 | **FIXED** (ADR-0086, Proposed) — Django 5.2.18, cryptography 50.0.2, FastAPI 0.148.0, Starlette 1.9.0 pinned; suite, portal tests and mutation check green; `pip-audit` clean | **Re-run benchmarks and captures** on the new libraries before Stage 4 | Powel |
 | W3 | **FIXED** — `tests/security/test_postgres_lifecycle.py::test_c1_revoked_clinician_cannot_read_on_postgres` (revokes on the Postgres store, reads from a restarted process) | — | Powel |
 | W4 | **FIXED** — CI ruff and black now cover `deploy/ wire/ bench/ demo/`; the one long line in `demo/seed_data.py` is wrapped | — | Avaneeth |
 
