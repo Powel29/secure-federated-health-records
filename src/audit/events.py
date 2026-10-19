@@ -51,7 +51,6 @@ from typing import Any
 
 import psycopg
 from contracts import AuditEntry
-from crypto_core import sha256_digest
 from crypto_core.types import ECPrivateKey
 
 from audit.chain import append_entry
@@ -68,10 +67,11 @@ EVENT_RECORD_REVOKED = "record.revoked"
 # standalone Audit Service's ``POST /entries`` by the clinician/patient portals
 # (which never hold the chain signing key); the constants live here so the
 # event vocabulary has one home. ``event_data`` for both carries identifiers
-# and counts only -- a lookup logs the *hashed* query and the candidate
-# ``patient_id``s, never the name or date of birth entered (PII stays in the
-# portal DB, ADR-0011/0033); a notification logs its kind, the patient it
-# concerns, and the correlation_id of the flow it reports on.
+# and counts only -- a lookup logs the candidate ``patient_id``s and the
+# selection, nothing about the name or date of birth entered, not even a hash
+# (PII stays in the portal DB, ADR-0011/0033/0085); a notification logs its
+# kind, the patient it concerns, and the correlation_id of the flow it reports
+# on.
 EVENT_PATIENT_LOOKUP = "patient.lookup"  # P4-8a: every name+DOB search, hit or miss
 EVENT_PATIENT_NOTIFICATION = "patient.notification"  # P4-10: break-glass / revoked
 EVENT_CONSENT_DECISION = "consent.decision"  # P4-7: grant / deny / revoke recorded
@@ -102,11 +102,6 @@ DENIED_BY_BREAKGLASS_TRANSITION = "breakglass_transition"
 DENIED_BY_RECORD_NOT_FOUND = "record_not_found"
 DENIED_BY_DEK_UNWRAP = "dek_unwrap"
 DENIED_BY_EMERGENCY_SEARCH = "emergency_search"
-
-
-def patient_id_hash(patient_id: str) -> str:
-    """Hex SHA-256 of a patient id, for events that must not name the patient."""
-    return sha256_digest(patient_id.encode("utf-8")).hex()
 
 
 def log_access_granted(
@@ -247,12 +242,8 @@ def log_federation_discovery(
     """Log a federated discovery lookup (``federation.discovery``, C13).
 
     Args:
-        patient_id: The patient the caller searched for. Never stored raw --
-            only its SHA-256 hash goes into ``event_data`` (see Security
-            property), matching this codebase's existing convention of
-            keeping patient identity out of audit metadata
-            (``records.revocation.RevocationResult.audit_payload`` likewise
-            omits ``patient_id``, carrying only ``record_id``).
+        patient_id: The patient the caller searched for, logged as is like
+            in every other event that concerns a patient (ADR-0085).
         requester_id: The facility or clinician that ran the lookup.
         record_ids: The record identifiers the lookup returned (may be
             empty -- an empty result is still logged, matching ARCHITECTURE
@@ -267,15 +258,14 @@ def log_federation_discovery(
         The newly persisted, signed :class:`~contracts.AuditEntry`.
 
     Security property:
-        ``patient_id`` never appears in ``event_data`` -- only
-        ``sha256_digest(patient_id)`` does, hex-encoded so it survives JSON
-        canonicalisation as a plain string. A reader of the chain can
-        correlate repeated lookups for the same patient without the chain
-        itself becoming a store of patient identities (ADR-0011: no PII in
-        the crypto store).
+        ``event_data`` holds identifiers and a count, no PII. ``patient_id``
+        is the federation's pseudonym for the patient: the store is indexed
+        by it (ADR-0011) and only the portal DB links it to a name. A hash of
+        it would hide nothing -- ids can be enumerated, and ``record_ids``
+        map back to the patient in the store -- so none is used (ADR-0085).
     """
     event_data: dict[str, Any] = {
-        "patient_id_hash": sha256_digest(patient_id.encode("utf-8")).hex(),
+        "patient_id": patient_id,
         "requester_id": requester_id,
         "record_count": len(record_ids),
         "record_ids": list(record_ids),

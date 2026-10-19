@@ -38,7 +38,8 @@ Needs a reachable PostgreSQL and the repo installed (`pip install -e .` or
 DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/mydb python -m deploy.run_portal_demo
 ```
 
-That starts the five federation services and the custodian in-process, seeds
+That starts the five federation services and the custodian as separate
+processes on the fixed ports (`--in-process` runs them as threads instead), seeds
 the synthetic dataset (P4-5) and deposits each persona's key material, creates
 the `portal` schema and the read-only `portal_ro` store role, migrates Django,
 seeds the logins + patient directory, and serves the portals at

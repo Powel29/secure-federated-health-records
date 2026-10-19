@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#37474f"/>
+    </marker>
+  </defs>
+  <rect width="1000" height="600" fill="#ffffff"/>
+  <text x="500" y="34" text-anchor="middle" font-size="22" font-weight="700" fill="#1a1a1a">Envelope encryption: one key per record</text>
+  <text x="500" y="55" text-anchor="middle" font-size="13" fill="#546e7a">src/records &#183; the store only ever sees the two boxes with a red border</text>
+
+  <!-- top row: record encryption -->
+  <rect x="30" y="100" width="190" height="80" rx="10" fill="#f3f3f3" stroke="#90a4ae" stroke-width="2.5"/>
+  <text x="125" y="135" text-anchor="middle" font-size="16" font-weight="700">Plaintext record</text>
+  <text x="125" y="156" text-anchor="middle" font-size="12" fill="#546e7a">synthetic data only</text>
+
+  <rect x="290" y="90" width="260" height="100" rx="10" fill="#e3f2fd" stroke="#1565c0" stroke-width="2.5"/>
+  <text x="420" y="122" text-anchor="middle" font-size="16" font-weight="700" fill="#0d47a1">AES-256-GCM encrypt</text>
+  <text x="420" y="144" text-anchor="middle" font-size="12.5">fresh 32-byte DEK per record</text>
+  <text x="420" y="162" text-anchor="middle" font-size="12.5">fresh 12-byte nonce, never reused</text>
+  <text x="420" y="180" text-anchor="middle" font-size="12.5">aad authenticated, not hidden</text>
+
+  <rect x="620" y="100" width="210" height="80" rx="10" fill="#fdecea" stroke="#c62828" stroke-width="3"/>
+  <text x="725" y="132" text-anchor="middle" font-size="16" font-weight="700">Ciphertext</text>
+  <text x="725" y="154" text-anchor="middle" font-size="12">stored in records</text>
+  <text x="725" y="170" text-anchor="middle" font-size="12" fill="#c62828" font-weight="700">store cannot read it</text>
+
+  <g stroke="#37474f" stroke-width="2.4" fill="none">
+    <path d="M220,140 H288" marker-end="url(#ar)"/>
+    <path d="M550,140 H618" marker-end="url(#ar)"/>
+  </g>
+
+  <!-- DEK down -->
+  <path d="M420,190 V270" stroke="#37474f" stroke-width="2.4" fill="none" marker-end="url(#ar)"/>
+  <text x="432" y="236" font-size="13" font-weight="700">DEK</text>
+
+  <!-- wrap -->
+  <rect x="290" y="272" width="260" height="100" rx="10" fill="#e3f2fd" stroke="#1565c0" stroke-width="2.5"/>
+  <text x="420" y="304" text-anchor="middle" font-size="16" font-weight="700" fill="#0d47a1">wrap_dek (AES-GCM)</text>
+  <text x="420" y="326" text-anchor="middle" font-size="12.5">AAD = record_id</text>
+  <text x="420" y="344" text-anchor="middle" font-size="12.5">generation counter (+1 on re-wrap)</text>
+  <text x="420" y="362" text-anchor="middle" font-size="12.5">wrong key or wrong record: refuse</text>
+
+  <rect x="620" y="282" width="210" height="80" rx="10" fill="#fdecea" stroke="#c62828" stroke-width="3"/>
+  <text x="725" y="314" text-anchor="middle" font-size="16" font-weight="700">Wrapped DEK</text>
+  <text x="725" y="336" text-anchor="middle" font-size="12">stored in dek_wrappings</text>
+  <text x="725" y="352" text-anchor="middle" font-size="12" fill="#c62828" font-weight="700">one per authorised party</text>
+  <path d="M550,322 H618" stroke="#37474f" stroke-width="2.4" fill="none" marker-end="url(#ar)"/>
+
+  <!-- wrapping key sources -->
+  <rect x="30" y="272" width="190" height="100" rx="10" fill="#e6f4ea" stroke="#2e7d32" stroke-width="2.5"/>
+  <text x="125" y="304" text-anchor="middle" font-size="15" font-weight="700">Policy root secret</text>
+  <text x="125" y="326" text-anchor="middle" font-size="12">rebuilt from attribute keys</text>
+  <text x="125" y="344" text-anchor="middle" font-size="12">through the policy tree</text>
+  <text x="125" y="362" text-anchor="middle" font-size="12" fill="#546e7a">routine reads</text>
+  <path d="M220,322 H288" stroke="#37474f" stroke-width="2.4" fill="none" marker-end="url(#ar)"/>
+
+  <rect x="30" y="410" width="190" height="90" rx="10" fill="#fff4e0" stroke="#ef6c00" stroke-width="2.5"/>
+  <text x="125" y="442" text-anchor="middle" font-size="15" font-weight="700">Emergency key</text>
+  <text x="125" y="464" text-anchor="middle" font-size="12">split 2-of-3 (Shamir)</text>
+  <text x="125" y="482" text-anchor="middle" font-size="12" fill="#546e7a">break-glass only</text>
+  <path d="M220,455 C260,455 270,380 330,374" stroke="#37474f" stroke-width="2.4" fill="none" marker-end="url(#ar)"/>
+  <text x="280" y="440" font-size="12" fill="#546e7a">a second wrapping</text>
+
+  <!-- rules -->
+  <rect x="290" y="410" width="680" height="150" rx="10" fill="#fafafa" stroke="#b0bec5" stroke-width="1.5"/>
+  <text x="306" y="436" font-size="14.5" font-weight="700" fill="#1a1a1a">Why this shape</text>
+  <g font-size="13" fill="#37474f">
+    <text x="306" y="460">&#8226; Stealing the store gets locked boxes and locked keys, never a usable key.</text>
+    <text x="306" y="482">&#8226; Binding record_id as AAD means a wrapped DEK copied from record A will not open record B.</text>
+    <text x="306" y="504">&#8226; Revoking someone means a new key for the record, so their old copy stops working.</text>
+    <text x="306" y="526">&#8226; All crypto calls go through crypto_core; route handlers contain none.</text>
+    <text x="306" y="548">&#8226; Nonces are random per encryption, 12 bytes, and the database rejects any other length.</text>
+  </g>
+</svg>

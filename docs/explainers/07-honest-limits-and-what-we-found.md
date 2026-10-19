@@ -84,10 +84,15 @@ stale state, fixed both with negative tests, and logged the decision as an ADR."
 ## What is left (be plain about status)
 
 - Phases 0 to 4 are marked done in `WORKFLOW.md`.
-- **Phase 5:** benchmark harness (P5-2), search-leakage analysis (P5-3), edge
-  cases including re-key persistence (P5-4), PyShark assertions over both
-  captures (P5-5), and the full security suite sign-off (P5-1).
+- **Phase 5 (merged to `main`, gate not passed):** P5-1 security suite
+  implemented, 5 of 11 claims green; P5-2 benchmark harness built, numbers to be
+  re-run on the demo machine; P5-3 search-leakage measured; P5-4 partial shares
+  and replayed events done, **clock skew undecided**; P5-5 analyser built, not run
+  on real captures. Eleven team decisions (D1 to D8, CS, F14, F40) are pending.
 - **Phase 6:** the paper (10 marks, `PROJECT.md` §3), demo rehearsal twice, and a
   recorded fallback video.
-- A few Phase 4 items (P4-6, P4-9, P4-10) are built but not ticked in
-  `WORKFLOW.md`; the file should be updated so it matches reality.
+- P4-9 and P4-10 are now ticked in `WORKFLOW.md`; P4-6 (traffic capture setup)
+  is built but still unticked.
+- Deployment is a local demonstration: the custodian assumes trusted local callers,
+  keys are regenerated on every fresh run, the portal is the development server on
+  loopback (ADR-0047).

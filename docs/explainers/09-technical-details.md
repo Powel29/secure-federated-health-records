@@ -109,7 +109,8 @@ Share holders: 1 = clinician custody (Key Custodian), 2 = home authority
 
 `run_portal_demo` starts the federation processes in-process on **ephemeral
 ports** and prints them; the table gives the fixed ports used by
-`deploy.run_local` and Docker Compose. All service URLs come from config
+`deploy.run_local` and Docker Compose (ports published on `127.0.0.1` only; the
+store needs `POSTGRES_PASSWORD` from `deploy/.env`, ADR-0047). All service URLs come from config
 (`CUSTODIAN_URL`, `AUDIT_SERVICE_URL`, `FACILITY_URLS`, `AUTHORITY_URLS`).
 
 Docker Compose (ADR-0047) also runs the portal on 8000 once bootstrap

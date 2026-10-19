@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 680" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#37474f"/>
+    </marker>
+  </defs>
+  <rect width="1000" height="680" fill="#ffffff"/>
+  <text x="500" y="34" text-anchor="middle" font-size="22" font-weight="700" fill="#1a1a1a">System block diagram: seven processes</text>
+  <text x="500" y="55" text-anchor="middle" font-size="13" fill="#546e7a">All ports bound to 127.0.0.1 &#183; Docker Compose publishes them on loopback only</text>
+
+  <!-- users + portals -->
+  <rect x="300" y="75" width="400" height="44" rx="10" fill="#f3f3f3" stroke="#90a4ae" stroke-width="2"/>
+  <text x="500" y="103" text-anchor="middle" font-size="15" font-weight="700">Clinician &#183; Patient &#183; Auditor (browsers)</text>
+  <rect x="230" y="160" width="540" height="64" rx="10" fill="#e3f2fd" stroke="#1565c0" stroke-width="2.5"/>
+  <text x="500" y="188" text-anchor="middle" font-size="16" font-weight="700" fill="#0d47a1">Web portals (Django) :8000</text>
+  <text x="500" y="209" text-anchor="middle" font-size="12.5">/patient/ &#183; /clinician/ &#183; /oversight/ &#8212; identify users, hold no keys, never decide access</text>
+  <path d="M500,119 V158" stroke="#37474f" stroke-width="2.2" fill="none" marker-end="url(#ar)"/>
+
+  <!-- bus portals -> services -->
+  <g stroke="#37474f" stroke-width="2.2" fill="none">
+    <path d="M500,224 V258"/>
+    <path d="M95,258 H905"/>
+    <path d="M95,258 V300" marker-end="url(#ar)"/>
+    <path d="M257,258 V300" marker-end="url(#ar)"/>
+    <path d="M419,258 V300" marker-end="url(#ar)"/>
+    <path d="M581,258 V300" marker-end="url(#ar)"/>
+    <path d="M743,258 V300" marker-end="url(#ar)"/>
+    <path d="M905,258 V300" marker-end="url(#ar)"/>
+  </g>
+  <text x="515" y="246" font-size="12" fill="#546e7a">HTTP calls to the services (no keys cross the portal)</text>
+
+  <!-- services -->
+  <g stroke-width="2.5">
+    <rect x="25" y="300" width="140" height="130" rx="10" fill="#e6f4ea" stroke="#2e7d32"/>
+    <rect x="187" y="300" width="140" height="130" rx="10" fill="#e6f4ea" stroke="#2e7d32"/>
+    <rect x="349" y="300" width="140" height="130" rx="10" fill="#e3f2fd" stroke="#1565c0"/>
+    <rect x="511" y="300" width="140" height="130" rx="10" fill="#fff4e0" stroke="#ef6c00"/>
+    <rect x="673" y="300" width="140" height="130" rx="10" fill="#f3e5f5" stroke="#6a1b9a"/>
+    <rect x="835" y="300" width="140" height="130" rx="10" fill="#f3e5f5" stroke="#6a1b9a"/>
+  </g>
+  <g text-anchor="middle" fill="#1a1a1a">
+    <text x="95" y="327" font-size="15" font-weight="700">facility-a</text>
+    <text x="95" y="345" font-size="12" fill="#546e7a">:8001</text>
+    <text x="95" y="368" font-size="12">patient's home facility</text>
+    <text x="95" y="385" font-size="12">clinician certs</text>
+    <text x="95" y="402" font-size="12">no records held</text>
+
+    <text x="257" y="327" font-size="15" font-weight="700">facility-b</text>
+    <text x="257" y="345" font-size="12" fill="#546e7a">:8002</text>
+    <text x="257" y="368" font-size="12">out-of-network</text>
+    <text x="257" y="385" font-size="12">hospital, demo</text>
+    <text x="257" y="402" font-size="12">entry point</text>
+
+    <text x="419" y="327" font-size="15" font-weight="700">custodian</text>
+    <text x="419" y="345" font-size="12" fill="#546e7a">:8030</text>
+    <text x="419" y="368" font-size="12">each subject's key</text>
+    <text x="419" y="385" font-size="12">agent: signing keys,</text>
+    <text x="419" y="402" font-size="12">credentials, share 1</text>
+
+    <text x="581" y="327" font-size="15" font-weight="700" fill="#e65100">audit</text>
+    <text x="581" y="345" font-size="12" fill="#546e7a">:8020</text>
+    <text x="581" y="368" font-size="12">hash chain and</text>
+    <text x="581" y="385" font-size="12">break-glass share 3</text>
+    <text x="581" y="402" font-size="12" font-weight="700">separate process</text>
+
+    <text x="743" y="327" font-size="15" font-weight="700">authority-med</text>
+    <text x="743" y="345" font-size="12" fill="#546e7a">:8010</text>
+    <text x="743" y="368" font-size="12">attribute keys</text>
+    <text x="743" y="385" font-size="12">for role:*</text>
+
+    <text x="905" y="327" font-size="15" font-weight="700">authority-net</text>
+    <text x="905" y="345" font-size="12" fill="#546e7a">:8011</text>
+    <text x="905" y="368" font-size="12">attribute keys: specialty,</text>
+    <text x="905" y="385" font-size="12">facility, owner</text>
+  </g>
+
+  <!-- bus services -> store -->
+  <g stroke="#37474f" stroke-width="2.2" fill="none">
+    <path d="M95,430 V480"/><path d="M257,430 V480"/><path d="M419,430 V480"/>
+    <path d="M581,430 V480"/><path d="M743,430 V480"/><path d="M905,430 V480"/>
+    <path d="M95,480 H905"/>
+    <path d="M500,480 V518" marker-end="url(#ar)"/>
+  </g>
+  <text x="515" y="500" font-size="12" fill="#546e7a">SQL: ciphertext in, ciphertext out</text>
+
+  <rect x="230" y="520" width="540" height="84" rx="10" fill="#eceff1" stroke="#546e7a" stroke-width="2.5"/>
+  <text x="500" y="548" text-anchor="middle" font-size="16" font-weight="700">store: PostgreSQL (host port 55433 in Compose)</text>
+  <text x="500" y="570" text-anchor="middle" font-size="12.5">ciphertext, wrapped keys, coded search index, hash-chained audit log</text>
+  <text x="500" y="589" text-anchor="middle" font-size="12.5" fill="#c62828" font-weight="700">never plaintext, never an unwrapped key</text>
+
+  <text x="500" y="640" text-anchor="middle" font-size="12.5" fill="#37474f">Bootstrap runs once after every service is healthy: migrations, PKI, authority registration, seed data, audit-chain check from genesis.</text>
+</svg>

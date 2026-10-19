@@ -284,12 +284,11 @@ class _CaptureConnection:
         return self.cursor_obj
 
 
-def test_sec_federation_discovery_event_never_stores_raw_patient_id(
-    conn, audit_keypair
-):
-    """Claim: a discovery lookup is logged for oversight, but the patient
-    identity it searched for never appears in the chain -- only its hash and
-    the record identifiers already returned to the caller (ADR-0011)."""
+def test_sec_federation_discovery_event_carries_identifiers_only(conn, audit_keypair):
+    """Claim: a discovery lookup is logged for oversight with identifiers only
+    -- the patient's pseudonymous id, the requester, and the record ids
+    already returned to the caller -- and nothing else (ADR-0011, ADR-0085).
+    No hash of the id: ids can be enumerated, so a hash would hide nothing."""
     priv, _pub = audit_keypair
     _seed_genesis(conn, priv)
 
@@ -310,9 +309,13 @@ def test_sec_federation_discovery_event_never_stores_raw_patient_id(
     )
 
     assert entry.event_type == EVENT_FEDERATION_DISCOVERY
-    persisted = _persisted_text(entry)
-    assert "patient-super-secret" not in persisted
-    assert entry.event_data["record_ids"] == ["rec-1", "rec-2"]
+    # The exact field set: an extra field (a key, a hash, a name) fails here.
+    assert entry.event_data == {
+        "patient_id": "patient-super-secret",
+        "requester_id": "facility-b",
+        "record_count": 2,
+        "record_ids": ["rec-1", "rec-2"],
+    }
 
 
 # ---------------------------------------------------------------------------

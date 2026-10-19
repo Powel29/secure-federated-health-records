@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 640" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#37474f"/>
+    </marker>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c62828"/>
+    </marker>
+  </defs>
+  <rect width="980" height="640" fill="#ffffff"/>
+  <text x="490" y="36" text-anchor="middle" font-size="22" font-weight="700" fill="#1a1a1a">Key-lifecycle state machine (one record)</text>
+  <text x="490" y="58" text-anchor="middle" font-size="13" fill="#546e7a">src/lifecycle/state_machine.py &#183; LEGAL_TRANSITIONS &#183; four states, six legal arrows</text>
+
+  <!-- states -->
+  <g stroke-width="2.5">
+    <rect x="170" y="110" width="210" height="84" rx="14" fill="#fdecea" stroke="#c62828"/>
+    <rect x="170" y="440" width="210" height="84" rx="14" fill="#e6f4ea" stroke="#2e7d32"/>
+    <rect x="450" y="275" width="230" height="96" rx="14" fill="#fff4e0" stroke="#ef6c00"/>
+    <rect x="770" y="275" width="170" height="96" rx="14" fill="#eceff1" stroke="#546e7a"/>
+  </g>
+  <g text-anchor="middle" fill="#1a1a1a">
+    <text x="275" y="146" font-size="19" font-weight="700">REVOKED</text>
+    <text x="275" y="168" font-size="12">access withdrawn, key rotated</text>
+    <text x="275" y="482" font-size="19" font-weight="700">GRANTED</text>
+    <text x="275" y="504" font-size="12">normal, consent-gated reads</text>
+    <text x="565" y="315" font-size="19" font-weight="700">EMERGENCY_OPEN</text>
+    <text x="565" y="337" font-size="12">time-boxed break-glass</text>
+    <text x="565" y="355" font-size="12">2-of-3 gate passed</text>
+    <text x="855" y="315" font-size="19" font-weight="700">EXPIRED</text>
+    <text x="855" y="337" font-size="12">window closed,</text>
+    <text x="855" y="355" font-size="12">record being re-keyed</text>
+  </g>
+
+  <!-- start marker -->
+  <circle cx="90" cy="482" r="9" fill="#37474f"/>
+  <path d="M99,482 H168" stroke="#37474f" stroke-width="2" fill="none" marker-end="url(#ar)"/>
+  <text x="90" y="510" text-anchor="middle" font-size="11" fill="#546e7a">ingest</text>
+
+  <!-- arrows -->
+  <g fill="none" stroke="#37474f" stroke-width="2.2">
+    <!-- 1 GRANTED -> REVOKED -->
+    <path d="M235,440 V196" marker-end="url(#ar)"/>
+    <!-- 2 REVOKED -> GRANTED -->
+    <path d="M315,194 V438" marker-end="url(#ar)"/>
+  </g>
+  <g fill="none" stroke="#c62828" stroke-width="2.4">
+    <!-- 3 GRANTED -> EMERGENCY -->
+    <path d="M380,482 H565 V373" marker-end="url(#arr)"/>
+    <!-- 4 REVOKED -> EMERGENCY -->
+    <path d="M380,152 H565 V273" marker-end="url(#arr)"/>
+  </g>
+  <g fill="none" stroke="#37474f" stroke-width="2.2">
+    <!-- 5 EMERGENCY -> EXPIRED -->
+    <path d="M680,323 H768" marker-end="url(#ar)"/>
+    <!-- 6 EXPIRED -> GRANTED -->
+    <path d="M855,373 V590 H275 V526" marker-end="url(#ar)"/>
+  </g>
+
+  <!-- arrow labels -->
+  <g font-size="12.5" fill="#1a1a1a">
+    <text x="224" y="330" text-anchor="end" font-weight="700">1 revoke</text>
+    <text x="224" y="348" text-anchor="end" fill="#546e7a">patient / home authority</text>
+    <text x="224" y="364" text-anchor="end" fill="#546e7a">rotates the key</text>
+    <text x="326" y="330" font-weight="700">2 re-consent</text>
+    <text x="326" y="348" fill="#546e7a">patient re-grants</text>
+
+    <text x="395" y="470" font-weight="700" fill="#c62828">3 break-glass</text>
+    <text x="575" y="420" fill="#c62828">reason code required</text>
+    <text x="395" y="140" font-weight="700" fill="#c62828">4 break-glass on a revoked record</text>
+    <text x="575" y="236" fill="#c62828">reason code required</text>
+
+    <text x="724" y="306" text-anchor="middle" font-weight="700">5 timer</text>
+    <text x="724" y="342" text-anchor="middle" fill="#546e7a">expires_at</text>
+
+    <text x="565" y="582" text-anchor="middle" font-weight="700">6 forced re-key, then back to normal</text>
+    <text x="565" y="607" text-anchor="middle" fill="#546e7a">automatic baseline; not skippable</text>
+  </g>
+
+  <!-- footer -->
+  <g font-size="12.5" fill="#1a1a1a">
+    <rect x="30" y="76" width="1" height="1" fill="none"/>
+    <text x="690" y="130" font-weight="700">Every arrow is a signed TransitionEvent</text>
+    <text x="690" y="150" fill="#37474f">event_id (single use, consumed), record_id,</text>
+    <text x="690" y="167" fill="#37474f">from/to state, actor, reason code, issued_at,</text>
+    <text x="690" y="184" fill="#37474f">nonce, ECDSA-P256 signature</text>
+    <text x="690" y="212" font-weight="700" fill="#c62828">Illegal (fail closed, IllegalTransitionError):</text>
+    <text x="690" y="230" fill="#37474f">self-transitions, GRANTED &#8594; EXPIRED,</text>
+    <text x="690" y="247" fill="#37474f">EMERGENCY_OPEN &#8594; REVOKED, EXPIRED &#8594; EMERGENCY_OPEN</text>
+  </g>
+</svg>

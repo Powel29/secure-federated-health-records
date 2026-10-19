@@ -52,7 +52,6 @@ from audit.events import (
     log_access_granted,
     log_federation_discovery,
     log_federation_rewrap,
-    patient_id_hash,
 )
 from breakglass import (
     ConsumedAssertionIds,
@@ -452,7 +451,7 @@ def _log_discovery(
         audit_auth=audit_auth,
         event_type=EVENT_FEDERATION_DISCOVERY,
         event_data={
-            "patient_id_hash": patient_id_hash(patient_id),
+            "patient_id": patient_id,
             "requester_id": requester_id,
             "record_count": len(record_ids),
             "record_ids": list(record_ids),
