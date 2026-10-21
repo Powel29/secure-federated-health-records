@@ -30,10 +30,10 @@
 <text x="40" y="290" font-size="16" font-weight="700" fill="#1a1a1a">C3</text>
 <text x="110" y="282" font-size="13.5" fill="#1a1a1a">One share alone, even the audit service's, opens</text>
 <text x="110" y="299" font-size="13.5" fill="#1a1a1a">nothing</text>
-<text x="470" y="282" font-size="13" fill="#37474f">share 3 refused without a valid assertion</text>
+<text x="470" y="282" font-size="13" fill="#37474f">no share pair skips audit; no share w/o assertion</text>
 <rect x="840" y="271" width="100" height="28" rx="14" fill="#2e7d32"/>
 <text x="890" y="290" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">HOLDS</text>
-<text x="960" y="282" font-size="12.5" fill="#1b5e20">Fixed: ADR-0067</text>
+<text x="960" y="282" font-size="12.5" fill="#1b5e20">Fixed: ADR-0067, 0089</text>
 <rect x="30" y="312" width="1180" height="54" fill="#f6faf7" stroke="#cfd8dc" stroke-width="1"/>
 <text x="40" y="344" font-size="16" font-weight="700" fill="#1a1a1a">C4</text>
 <text x="110" y="336" font-size="13.5" fill="#1a1a1a">Search capability does not survive the emergency</text>
@@ -88,6 +88,6 @@
 <text x="470" y="714" font-size="13" fill="#37474f">patient without owner attribute is refused</text>
 <rect x="840" y="703" width="100" height="28" rx="14" fill="#2e7d32"/>
 <text x="890" y="722" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">HOLDS</text>
-<text x="40" y="774" font-size="13" fill="#37474f">Full suite on 2026-10-21 (867d472) against Postgres: 951 passed, 2 skipped, 0 expected-fail. List the table yourself with: python -m tests.security.claims --table</text>
+<text x="40" y="774" font-size="13" fill="#37474f">Full suite on 2026-10-21 (3-of-4, ADR-0089) against Postgres: 1006 passed, 2 skipped, 0 expected-fail. List the table yourself with: python -m tests.security.claims --table</text>
 <text x="40" y="796" font-size="13" fill="#37474f">Prove each test is real by switching its control off and watching it fail: python -m tests.security.mutations</text>
 </svg>

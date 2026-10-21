@@ -34,9 +34,9 @@ every access.
 ## Positioning
 
 Logging is a cryptographic precondition of emergency access: break-glass reconstructs an
-emergency key from a 2-of-3 Shamir gate (attending clinician, home authority or federated
-delegate, audit service), and the audit service releases its share only after committing a
-hash-chained entry. No log entry, no key, no access. Emergency search exists only while the
+emergency key from a weighted 3-of-4 Shamir gate (one share for the attending clinician's
+custody, one for the patient's home authority as its backup, two for the audit service), and
+the audit service releases its shares only after committing a hash-chained entry (ADR-0089). No log entry, no key, no access. Emergency search exists only while the
 emergency state lives. The record follows the patient across a simulated federation.
 
 ## Operating Context

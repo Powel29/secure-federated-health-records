@@ -10,15 +10,16 @@
 3. stores it in one transaction (``StorageRepository.apply_rotation``): new
    ciphertext, new policy wrapping and compiled policy, new emergency
    wrapping, new search index and sealed terms;
-4. hands the new share 1 to the custodian and share 3 to the audit service,
-   each replacing the previous generation's share and sealed to the holder's
-   verified share key (ADR-0079). Share 2 is not deposited, exactly as at
-   ingest (share 2 reserved, ADR-0074).
+4. hands the new shares to their holders, exactly as at ingest (ADR-0089):
+   share 1 to the custodian, share 2 to the patient's home authority (the
+   authority of the policy's ``owner`` leaf), shares 3 and 4 to the audit
+   service, each replacing the previous generation's and sealed to the
+   holder's verified share key (ADR-0079).
 
 Storing before handing out shares means the old shares are dead the moment
 the store commits: they open the replaced emergency wrapping only, which no
 longer exists. If a holder is unreachable the expiry is retried and the record
-stays closed until both have the new share.
+stays closed until every holder has the new shares.
 
 The same rotation, planned from the store instead of from a session's
 emergency key (:meth:`FacilityRotator.plan_from_store`), serves a patient's
@@ -34,10 +35,16 @@ from __future__ import annotations
 import base64
 import logging
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
-from breakglass.emergency_key import Share
+from breakglass.emergency_key import (
+    AUDIT_SHARE_XS,
+    CLINICIAN_SHARE_XS,
+    HOME_AUTHORITY_SHARE_XS,
+    Share,
+)
+from breakglass.share_sealing import ShareRecipient
 from contracts.enums import LifecycleState
 from contracts.policy import PolicyTree
 from contracts.records import Record
@@ -58,10 +65,6 @@ _logger = logging.getLogger(__name__)
 
 AttributeKey = tuple[str, str, str]
 
-# Which share goes where: the same split the custodian makes at ingest.
-CLINICIAN_SHARE_X = 1
-AUDIT_SHARE_X = 3
-
 _STORED = "stored"
 _SHARES = "shares"
 
@@ -71,17 +74,27 @@ class RotationError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class ShareDistribution:
+    """One rotation's new shares, routed to their holders (ADR-0089)."""
+
+    clinician: Share = field(repr=False)
+    home_authority_id: str
+    home_authority: Share = field(repr=False)
+    audit: tuple[Share, ...] = field(repr=False)
+
+
+@dataclass(frozen=True)
 class RotationPorts:
     """The two calls a rotation makes outside the facility.
 
     Attributes:
         author_keys: ``leaves -> {leaf: authoring key}`` from the authorities.
-        deposit_shares: ``(record_id, generation, share 1, share 3)`` --
-            replace the holders' shares with this generation's.
+        deposit_shares: ``(record_id, generation, distribution)`` -- replace
+            every holder's shares with this generation's.
     """
 
     author_keys: Callable[[list[AttributeKey]], dict[AttributeKey, bytes]]
-    deposit_shares: Callable[[str, int, Share, Share], None]
+    deposit_shares: Callable[[str, int, ShareDistribution], None]
 
 
 class FacilityRotator:
@@ -177,12 +190,25 @@ class FacilityRotator:
         )
 
     def deposit(self, plan: RotationPlan) -> None:
-        """Hand the plan's share 1 to the custodian and share 3 to audit."""
+        """Hand the plan's shares to the custodian, home authority and audit.
+
+        Raises:
+            RotationError: The record's policy names no single owner authority
+                to hand share 2 to.
+        """
+        (clinician,) = plan.holding(CLINICIAN_SHARE_XS)
+        (home,) = plan.holding(HOME_AUTHORITY_SHARE_XS)
         self._ports.deposit_shares(
             plan.record.record_id,
             plan.generation,
-            plan.share(CLINICIAN_SHARE_X),
-            plan.share(AUDIT_SHARE_X),
+            ShareDistribution(
+                clinician=clinician,
+                home_authority_id=owner_authority_of(
+                    plan.compiled_policy, plan.record.patient_id
+                ),
+                home_authority=home,
+                audit=plan.holding(AUDIT_SHARE_XS),
+            ),
         )
 
     def _compiled_policy(self, record: Record) -> CompiledPolicy:
@@ -190,6 +216,27 @@ class FacilityRotator:
         if compiled is None:
             raise RotationError(f"compiled policy of {record.record_id!r} not found")
         return compiled
+
+
+def owner_authority_of(compiled: CompiledPolicy, patient_id: str) -> str:
+    """The authority of the policy's ``owner:<patient_id>`` leaf (ADR-0016).
+
+    That is the patient's home authority, which holds share 2 (ADR-0089).
+
+    Raises:
+        RotationError: The policy has no single owner leaf for ``patient_id``.
+    """
+    owners = {
+        authority_id
+        for authority_id, name, value in policy_leaves(policy_tree_of(compiled))
+        if name == "owner" and value == patient_id
+    }
+    if len(owners) != 1:
+        raise RotationError(
+            f"policy names {len(owners)} owner authorities for {patient_id!r}; "
+            "share 2 has no single holder"
+        )
+    return owners.pop()
 
 
 class RepositorySessionStore:
@@ -305,23 +352,56 @@ def http_rotation_ports(
         return keyring
 
     def deposit_shares(
-        record_id: str, generation: int, clinician_share: Share, audit_share: Share
+        record_id: str, generation: int, distribution: ShareDistribution
     ) -> None:
-        for base, kind, path, share in (
-            (
-                custodian_url,
-                "custodian",
-                f"/records/{record_id}/shares",
-                clinician_share,
-            ),
-            (audit_url, "audit", f"/breakglass/shares/{record_id}", audit_share),
-        ):
+        home_id = distribution.home_authority_id
+        home_url = authorities.get(home_id)
+        if not home_url:
+            raise RotationError(
+                f"no URL configured for home authority {home_id!r}; "
+                "share 2 has nowhere to go"
+            )
+
+        def recipient_of(
+            base: str, kind: str, service_id: str | None = None
+        ) -> ShareRecipient:
             recipient = fetch_share_recipient(
                 http, base, kind=kind, trusted_root=trusted_root
             )
-            sealed = sealed_json(share, record_id=record_id, recipient=recipient)
+            if service_id is not None and recipient.service_id != service_id:
+                raise RotationError(
+                    f"{kind} share key at {base} belongs to "
+                    f"{recipient.service_id!r}, not {service_id!r}"
+                )
+            return recipient
+
+        # Share 1: the custodian takes a single sealed share.
+        custodian = recipient_of(custodian_url, "custodian")
+        resp = http.put(
+            f"{custodian_url}/records/{record_id}/shares",
+            json={
+                "sealed_share": sealed_json(
+                    distribution.clinician, record_id=record_id, recipient=custodian
+                ),
+                "generation": generation,
+            },
+        )
+        resp.raise_for_status()
+        # Share 2 and shares 3 + 4: each holder takes its list of sealed shares.
+        for base, kind, service_id, holding in (
+            (home_url, "authority", home_id, (distribution.home_authority,)),
+            (audit_url, "audit", None, distribution.audit),
+        ):
+            recipient = recipient_of(base, kind, service_id)
             resp = http.put(
-                f"{base}{path}", json={"sealed_share": sealed, "generation": generation}
+                f"{base}/breakglass/shares/{record_id}",
+                json={
+                    "sealed_shares": [
+                        sealed_json(share, record_id=record_id, recipient=recipient)
+                        for share in holding
+                    ],
+                    "generation": generation,
+                },
             )
             resp.raise_for_status()
 

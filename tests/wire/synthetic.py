@@ -110,11 +110,18 @@ def plain_scenario(
     """
     c = {name: can.value for name, can in canaries.items()}
 
-    def sealed(value: bytes) -> dict[str, object]:
-        return {"x": 3, "c1": 5, "c2": 7, "ciphertext_b64": value.hex()}
+    def sealed(value: bytes, x: int = 3) -> dict[str, object]:
+        return {"x": x, "c1": 5, "c2": 7, "ciphertext_b64": value.hex()}
 
+    # The audit service holds shares 3 and 4 of the 3-of-4 split (ADR-0089).
     custody = (
-        {"share_key": "rec-001", "sealed_share": sealed(secrets.token_bytes(49))}
+        {
+            "share_key": "rec-001",
+            "sealed_shares": [
+                sealed(secrets.token_bytes(49), 3),
+                sealed(secrets.token_bytes(49), 4),
+            ],
+        }
         if sealed_shares
         else {"share_key": "rec-001", "x": 3, "share_hex": c["share3"].hex()}
     )
@@ -159,7 +166,12 @@ def plain_scenario(
         200,
         {
             **(
-                {"sealed_share": sealed(c["share3_sealed"])}
+                {
+                    "sealed_shares": [
+                        sealed(c["share3_sealed"], 3),
+                        sealed(secrets.token_bytes(49), 4),
+                    ]
+                }
                 if sealed_shares
                 else {"x": 3, "share_hex": c["share3"].hex()}
             ),
@@ -180,7 +192,11 @@ def plain_scenario(
 
     unlock_body = {
         "sealed_shares": (
-            [sealed(secrets.token_bytes(49)), sealed(c["share3_sealed"])]
+            [
+                sealed(secrets.token_bytes(49), 1),
+                sealed(c["share3_sealed"], 3),
+                sealed(secrets.token_bytes(49), 4),
+            ]
             if sealed_shares
             else [[1, c["share1"].hex()], [3, c["share3"].hex()]]
         ),
@@ -213,7 +229,9 @@ def tls_scenario(canaries: dict[str, Canary], *, leak: bytes | None = None) -> C
     w = Wire()
     w.exchange("authority-med", record(200), record(150))
     w.exchange("audit", record(300), record(120))
-    w.exchange("audit", record(200), record(400))
-    w.exchange("facility-b", record(6500) + (leak or b""), record(300))
+    # The release response and the unlock request carry the 3-of-4 split's
+    # sealed shares (two and three of them, ADR-0089); TLS keeps their size.
+    w.exchange("audit", record(200), record(560))
+    w.exchange("facility-b", record(6700) + (leak or b""), record(300))
     w.exchange("facility-b", record(250), record(180))
     return Capture("tls", w.segments, list(canaries.values()), dict(SERVICES), DB_PORT)

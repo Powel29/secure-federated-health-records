@@ -117,7 +117,7 @@ def _release_without_commit(mp: pytest.MonkeyPatch) -> None:
         try:
             return real(*args, **kwargs)
         except AuditCommitFailedError:
-            return kwargs["share"], None
+            return kwargs["shares"], None
 
     _swap(mp, "audit.share_custody", "release_share_after_commit", careless)
 
@@ -131,13 +131,18 @@ def _threshold_one(mp: pytest.MonkeyPatch) -> None:
     mp.setattr(breakglass.gate, "THRESHOLD", 1)
 
 
-def _audit_skips_assertion_checks(mp: pytest.MonkeyPatch) -> None:
-    """The audit service releases share 3 without validating the assertion."""
-    import api.audit_service
+def _holders_skip_assertion_checks(mp: pytest.MonkeyPatch) -> None:
+    """Share holders release without validating the assertion.
+
+    The audit service (shares 3 and 4) and the home authority (share 2) run
+    the one check in ``api.share_release`` (ADR-0089), so this switches it off
+    for both.
+    """
+    import api.share_release
     from api.hospital import FacilityTrust
 
-    mp.setattr(api.audit_service, "validate_emergency_assertion", lambda **k: None)
-    mp.setattr(api.audit_service, "validate_clinical_context", lambda *a: None)
+    mp.setattr(api.share_release, "validate_emergency_assertion", lambda **k: None)
+    mp.setattr(api.share_release, "validate_clinical_context", lambda *a: None)
     mp.setattr(
         FacilityTrust,
         "issuing_ca",
@@ -295,8 +300,8 @@ MUTATIONS: dict[str, list[Mutation]] = {
         Mutation("C3a", "gate threshold lowered to one share", _threshold_one),
         Mutation(
             "C3b",
-            "audit service releases without validating the assertion",
-            _audit_skips_assertion_checks,
+            "share holders release without validating the assertion",
+            _holders_skip_assertion_checks,
         ),
     ],
     "C4": [

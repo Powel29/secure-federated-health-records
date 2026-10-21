@@ -14,6 +14,7 @@ import datetime
 import httpx
 import pytest
 from api import schemas
+from breakglass.emergency_key import THRESHOLD
 from contracts.enums import LifecycleState, PolicyNodeType
 from contracts.policy import Attribute, PolicyTree
 from crypto_core import certificate_to_pem, generate_ec_keypair
@@ -24,6 +25,8 @@ from pydantic import BaseModel
 from records.exceptions import DecryptionError, UnwrappingError
 from records.service import decrypt_record, unwrap_dek
 from shamir import combine_shares
+
+from tests.shares import deposited_unlock_points, unlock_points
 
 RECORD = "rec-001"
 PATIENT = "patient-001"
@@ -113,14 +116,14 @@ def test_break_glass_on_the_revoked_record_uses_the_new_shares(test_setup):
     assert response.status_code == 200, response.text
     repo = test_setup["repo"]
     (deposit,) = test_setup["rotation"].deposits
-    new_key = combine_shares([deposit["clinician_share"], deposit["audit_share"]], k=2)
+    new_key = combine_shares(deposited_unlock_points(deposit), k=THRESHOLD)
     emergency = repo.get_wrapping_for_record(RECORD, wrapped_for="emergency")
     assert emergency.generation == deposit["generation"]
     rotated = repo.get_record(RECORD)
     assert decrypt_record(rotated, unwrap_dek(emergency, new_key)) == (
         test_setup["plaintext"]
     )
-    old_key = combine_shares(test_setup["em_shares"][:2], k=2)
+    old_key = combine_shares(unlock_points(test_setup["em_shares"]), k=THRESHOLD)
     with pytest.raises(UnwrappingError):
         unwrap_dek(emergency, old_key)
 

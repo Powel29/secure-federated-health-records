@@ -80,9 +80,10 @@ def _payload(
 ) -> dict:
     """A well-formed unlock request; keyword overrides build the attacks.
 
-    Presents the shares the holders hold now: the ingest split, or the one
-    the latest expiry rotation handed out (ADR-0069), each sealed to the
-    facility for ``record_id`` (ADR-0079).
+    Presents the shares of the share-1 path that the holders hold now --
+    share 1 and the audit service's shares 3 and 4 (ADR-0089) -- from the
+    ingest split, or the one the latest expiry rotation handed out
+    (ADR-0069), each sealed to the facility for ``record_id`` (ADR-0079).
     """
     pki = test_setup["pki"]
     em_shares = test_setup["em_shares"]
@@ -90,8 +91,8 @@ def _payload(
     if shares is None and deposits:
         latest = deposits[-1]
         shares = [
-            (latest["clinician_share"][0], latest["clinician_share"][1].hex()),
-            (latest["audit_share"][0], latest["audit_share"][1].hex()),
+            (x, s.hex())
+            for x, s in (latest["clinician_share"], *latest["audit_shares"])
         ]
     key = signing_key or pki["alice_priv"]
     assertion = create_emergency_assertion(
@@ -123,12 +124,7 @@ def _payload(
             [
                 (x, bytes.fromhex(share_hex))
                 for x, share_hex in (
-                    shares
-                    if shares is not None
-                    else [
-                        (em_shares[0][0], em_shares[0][1].hex()),
-                        (em_shares[1][0], em_shares[1][1].hex()),
-                    ]
+                    shares if shares is not None else _hex(_points(em_shares, 1, 3, 4))
                 )
             ],
         ),
@@ -137,6 +133,15 @@ def _payload(
     }
     body.update(extra)
     return body
+
+
+def _points(shares, *xs: int) -> list:
+    """The shares of a split at the given x-coordinates."""
+    return [s for s in shares if s[0] in xs]
+
+
+def _hex(shares) -> list[tuple[int, str]]:
+    return [(x, s.hex()) for x, s in shares]
 
 
 def _assert_no_side_effects(test_setup, sink: RecordingAuditSink) -> None:
@@ -152,8 +157,9 @@ def _assert_no_side_effects(test_setup, sink: RecordingAuditSink) -> None:
 class TestHospitalBreakglassEndpoint:
     """Test suite for POST /records/{record_id}/breakglass."""
 
-    def test_breakglass_unlock_with_two_shares(self, test_setup):
-        """Presenting 2 shares with a valid EmergencyAssertion unlocks the record."""
+    def test_breakglass_unlock_with_three_shares(self, test_setup):
+        """Share 1 plus shares 3 and 4 with a valid EmergencyAssertion unlock
+        the record (ADR-0089)."""
         client = test_setup["client"]
         pki = test_setup["pki"]
 
@@ -185,20 +191,62 @@ class TestHospitalBreakglassEndpoint:
 
     @pytest.mark.claim("C3", level="system")
     def test_breakglass_single_share_fails(self, test_setup):
-        """Presenting fewer than 2 shares fails with HTTP 400 and no side effect."""
+        """Presenting fewer than 3 shares fails with HTTP 400 and no side effect."""
         em_shares = test_setup["em_shares"]
         response = test_setup["client"].post(
             "/records/rec-001/breakglass",
-            json=_payload(
-                test_setup, shares=[(em_shares[0][0], em_shares[0][1].hex())]
-            ),
+            json=_payload(test_setup, shares=_hex(_points(em_shares, 1))),
         )
 
         assert response.status_code == 400
         # The threshold itself refused -- not a later format check on a
         # one-share "reconstruction" (the C3a mutation shows the difference).
-        assert "requires 2 unique shares" in response.json()["detail"]
+        assert "requires 3 unique shares" in response.json()["detail"]
         _assert_no_side_effects(test_setup, test_setup["audit_sink"])
+
+    @pytest.mark.claim("C3", level="system")
+    def test_custodian_and_home_authority_shares_alone_open_nothing(self, test_setup):
+        """ADR-0089: shares 1 and 2 -- every point outside the audit service --
+        are two of three, so the gate refuses before any key exists, and the
+        same request with share 3 added proves the setup was valid."""
+        em_shares = test_setup["em_shares"]
+        client = test_setup["client"]
+        response = client.post(
+            "/records/rec-001/breakglass",
+            json=_payload(test_setup, shares=_hex(_points(em_shares, 1, 2))),
+        )
+        assert response.status_code == 400
+        assert "requires 3 unique shares" in response.json()["detail"]
+        assert "rewrapped_dek_b64" not in response.text
+        _assert_no_side_effects(test_setup, test_setup["audit_sink"])
+
+        opened = client.post(
+            "/records/rec-001/breakglass",
+            json=_payload(test_setup, shares=_hex(_points(em_shares, 1, 2, 3))),
+        )
+        assert opened.status_code == 200, opened.text
+
+    @pytest.mark.claim("C3", level="system")
+    def test_audit_service_shares_alone_open_nothing(self, test_setup):
+        """The audit service's two points are not a threshold: refused (400)."""
+        em_shares = test_setup["em_shares"]
+        response = test_setup["client"].post(
+            "/records/rec-001/breakglass",
+            json=_payload(test_setup, shares=_hex(_points(em_shares, 3, 4))),
+        )
+        assert response.status_code == 400
+        assert "requires 3 unique shares" in response.json()["detail"]
+        _assert_no_side_effects(test_setup, test_setup["audit_sink"])
+
+    def test_home_authority_share_stands_in_for_share_1(self, test_setup):
+        """Shares 2, 3 and 4 -- the fallback path -- open the record."""
+        response = test_setup["client"].post(
+            "/records/rec-001/breakglass",
+            json=_payload(
+                test_setup, shares=_hex(_points(test_setup["em_shares"], 2, 3, 4))
+            ),
+        )
+        assert response.status_code == 200, response.text
 
     def test_share_sealed_to_another_facility_is_refused(self, test_setup):
         """ADR-0079: shares sealed to another facility's gate open nothing here;
@@ -215,7 +263,7 @@ class TestHospitalBreakglassEndpoint:
             seal_share(s, record_id="rec-001", recipient=elsewhere).model_dump(
                 mode="json"
             )
-            for s in test_setup["em_shares"][:2]
+            for s in _points(test_setup["em_shares"], 1, 3, 4)
         ]
         response = test_setup["client"].post(
             "/records/rec-001/breakglass", json=payload
@@ -296,10 +344,7 @@ class TestHospitalBreakglassEndpoint:
         old = test_setup["em_shares"]
         stale = client.post(
             "/records/rec-001/breakglass",
-            json=_payload(
-                test_setup,
-                shares=[(old[0][0], old[0][1].hex()), (old[1][0], old[1][1].hex())],
-            ),
+            json=_payload(test_setup, shares=_hex(_points(old, 1, 3, 4))),
         )
         assert stale.status_code == 403, stale.text
         assert "rewrapped_dek_b64" not in stale.text
@@ -601,20 +646,18 @@ class TestJoinOpenSession:
         assert len(sink.of_type(EVENT_FEDERATION_REWRAP)) == 2
 
     def test_join_with_one_share_releases_nothing(self, test_setup):
-        """Joining is not a shortcut around the 2-of-3 threshold."""
+        """Joining is not a shortcut around the 3-of-4 threshold."""
         sink = test_setup["audit_sink"]
         em_shares = test_setup["em_shares"]
         self._open(test_setup)
 
         response = test_setup["client"].post(
             "/records/rec-001/breakglass",
-            json=_payload(
-                test_setup, shares=[(em_shares[0][0], em_shares[0][1].hex())]
-            ),
+            json=_payload(test_setup, shares=_hex(_points(em_shares, 1))),
         )
 
         assert response.status_code == 400
-        assert "requires 2 unique shares" in response.json()["detail"]
+        assert "requires 3 unique shares" in response.json()["detail"]
         assert "rewrapped_dek_b64" not in response.text
         assert len(sink.of_type(EVENT_FEDERATION_REWRAP)) == 1
         assert [
@@ -748,9 +791,7 @@ class TestEveryRefusalIsAudited:
         em_shares = test_setup["em_shares"]
         path = "/records/rec-001/breakglass"
         if case == "single_share":
-            payload = _payload(
-                test_setup, shares=[(em_shares[0][0], em_shares[0][1].hex())]
-            )
+            payload = _payload(test_setup, shares=_hex(_points(em_shares, 1)))
         elif case == "aliased_share":
             x, share = em_shares[0]
             payload = _payload(
@@ -758,14 +799,14 @@ class TestEveryRefusalIsAudited:
                 shares=[(x, share.hex()), (x + PRIME_MODULUS, share.hex())],
             )
         elif case == "wrong_shares":
-            # Two genuine-looking shares of some other key: unwrap fails.
+            # Three genuine-looking shares of some other key: unwrap fails.
             from breakglass.emergency_key import (
                 generate_emergency_key,
                 split_emergency_key,
             )
 
             other = split_emergency_key(generate_emergency_key())
-            payload = _payload(test_setup, shares=[(x, s.hex()) for x, s in other[:2]])
+            payload = _payload(test_setup, shares=_hex(_points(other, 1, 3, 4)))
         elif case == "unknown_record":
             path = "/records/rec-nope/breakglass"
             payload = _payload(test_setup, record_id="rec-nope")

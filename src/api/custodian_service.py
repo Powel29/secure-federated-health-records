@@ -12,17 +12,18 @@ deployment). It:
 
 - holds each subject's ECDSA signing key, certificate, PRE keypair and the
   credentials an authority issued them, deposited once at seed time the same
-  way the audit service is handed share 3;
+  way the audit service is handed shares 3 and 4;
 - signs on a subject's behalf (consent requests/decisions/revocations,
   emergency assertions) and returns the *signed public artifact* -- never a key;
 - performs the key-bearing federation calls a subject would perform themself
   (attribute-key release at the authorities, ``/records/{id}/read``,
-  ``/breakglass/release`` at the audit service, ``/records/{id}/breakglass``
+  ``/breakglass/release`` at the audit service -- and at the patient's home
+  authority when share 1 is lost (ADR-0089) -- ``/records/{id}/breakglass``
   at a facility) and returns only the outcome.
 
 What it does **not** do is decide access. A read still goes through the
 facility's policy engine; a break-glass still needs the audit service's
-committed log entry before share 3 exists; a consent grant is still verified
+committed log entry before shares 3 and 4 exist; a consent grant is still verified
 by the facility against the patient's public key. A portal login whose subject
 has no material here gets ``404`` and nothing decrypts -- that is ADR-0021's
 "a portal account alone grants zero access", made concrete.
@@ -56,8 +57,8 @@ from uuid import uuid4
 import httpx
 from audit.chain import verify_entry_signature
 from breakglass.assertion import clinical_context_digest
-from breakglass.emergency_key import Share
-from breakglass.exceptions import SealedShareError
+from breakglass.emergency_key import CLINICIAN_SHARE_XS, Share, check_holding
+from breakglass.exceptions import SealedShareError, ShareHoldingError
 from breakglass.share_sealing import (
     SealedShare,
     ShareKeyStatement,
@@ -210,7 +211,7 @@ class CustodianVault:
     real deployment would split across each subject's own device (smartcard /
     enclave / browser keystore). A memory dump of this process yields every
     deposited key at once. This does not weaken the threshold or logging
-    properties (share 3 is still committed-before-released by the audit service,
+    properties (shares 3 and 4 are still committed-before-released by the audit service,
     the policy engine still gates reads), but it is the demo's single largest
     trust concentration and must be stated as such, not hidden.
     """
@@ -400,6 +401,29 @@ def _raise_upstream(resp: httpx.Response, *, what: str) -> None:
         status_code=status.HTTP_502_BAD_GATEWAY,
         detail=f"{what} failed upstream ({resp.status_code}): {detail}",
     )
+
+
+def _home_authority(
+    vault: CustodianVault, endpoints: CustodianEndpoints, patient_id: str
+) -> tuple[str, str] | None:
+    """The patient's home authority ``(authority_id, url)``, or ``None``.
+
+    The authority that issued the patient's ``owner`` credential holds share
+    2 of the patient's records (ADR-0089). This key agent knows it because it
+    holds the patient's credentials (ADR-0043); an authority with no
+    configured URL cannot be asked.
+    """
+    material = vault.get_subject(patient_id)
+    if material is None or material.kind != "patient":
+        return None
+    for credential in material.credentials:
+        if (
+            credential.attribute.name == "owner"
+            and credential.attribute.value == patient_id
+        ):
+            url = endpoints.authorities.get(credential.issuer_id)
+            return (credential.issuer_id, url) if url else None
+    return None
 
 
 def _patient_certificate(material: SubjectMaterial) -> str:
@@ -685,22 +709,38 @@ def create_custodian_app(
     sealing_key = share_key or ShareSealingKey.generate()
 
     def open_share(record_id: str, sealed: SealedShare) -> Share:
+        """A deposited share 1, opened with this service's key (ADR-0079).
+
+        Refused unless it is share 1: clinician custody holds no other point
+        of the 3-of-4 split (ADR-0089).
+        """
         try:
-            return open_sealed_share(
+            share = open_sealed_share(
                 sealed,
                 record_id=record_id,
                 service_id=identity.service_id,
                 key=sealing_key,
             )
-        except SealedShareError as exc:
+            check_holding((share,), CLINICIAN_SHARE_XS)
+        except (SealedShareError, ShareHoldingError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
             ) from exc
+        return share
 
     def share_key_of(
-        http: httpx.Client, base_url: str, kind: str
+        http: httpx.Client,
+        base_url: str,
+        kind: str,
+        *,
+        service_id: str | None = None,
     ) -> tuple[dict[str, Any], ShareRecipient]:
-        """A holder's or facility's share-key statement, verified (ADR-0079)."""
+        """A holder's or facility's share-key statement, verified (ADR-0079).
+
+        ``service_id``, when given, must be the service the statement names:
+        a home authority's URL that answers as another authority gets no
+        share (ADR-0089).
+        """
         statement = _get(http, f"{base_url}{SHARE_KEY_PATH}", what=f"{kind} share key")
         try:
             recipient = verify_key_statement(
@@ -713,6 +753,14 @@ def create_custodian_app(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"{kind} share key did not verify: {exc}",
             ) from exc
+        if service_id is not None and recipient.service_id != service_id:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=(
+                    f"{kind} share key belongs to {recipient.service_id!r}, "
+                    f"not {service_id!r}"
+                ),
+            )
         return statement, recipient
 
     if root_certificate_pem:
@@ -1106,7 +1154,17 @@ def create_custodian_app(
         if not endpoints.audit:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="no audit service configured; share 3 has nowhere to go",
+                detail="no audit service configured; shares 3 and 4 have nowhere "
+                "to go",
+            )
+        home_url = endpoints.authorities.get(owner_authority_id)
+        if not home_url:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    f"no URL configured for home authority {owner_authority_id!r}; "
+                    "share 2 has nowhere to go"
+                ),
             )
         try:
             plaintext = base64.b64decode(payload.content_b64, validate=True)
@@ -1126,11 +1184,12 @@ def create_custodian_app(
         leaves.append((owner_authority_id, "owner", subject_id))
         keyring = _authoring_keyring(http, endpoints, leaves)
 
-        # 2-of-3 emergency key: share 3 to the audit service (commit-before-
-        # release custody), share 1 to clinician custody here, share 2 unused
-        # (home authority, reserved: ADR-0074) -- the same split the seed performs.
+        # Weighted 3-of-4 emergency key (ADR-0089): shares 3 and 4 to the audit
+        # service (commit-before-release custody), share 2 to the patient's home
+        # authority, share 1 to clinician custody here -- the same split the
+        # seed performs.
         emergency = provision_emergency_key()
-        share1, share3 = emergency.clinician_share, emergency.audit_share
+        share1 = emergency.clinician_share
 
         # The patient signs the labels, bound to this record (ADR-0064), so a
         # store write cannot loosen them; without a certificate they go unsigned
@@ -1157,11 +1216,30 @@ def create_custodian_app(
             f"{endpoints.audit}/breakglass/shares",
             {
                 "share_key": record_id,
-                "sealed_share": sealed_json(
-                    share3, record_id=record_id, recipient=audit_recipient
-                ),
+                "sealed_shares": [
+                    sealed_json(share, record_id=record_id, recipient=audit_recipient)
+                    for share in emergency.audit_shares
+                ],
             },
             what="audit share deposit",
+        )
+        _, home_recipient = share_key_of(
+            http, home_url, "authority", service_id=owner_authority_id
+        )
+        _post(
+            http,
+            f"{home_url}/breakglass/shares",
+            {
+                "share_key": record_id,
+                "sealed_shares": [
+                    sealed_json(
+                        emergency.home_authority_share,
+                        record_id=record_id,
+                        recipient=home_recipient,
+                    )
+                ],
+            },
+            what="home authority share deposit",
         )
         try:
             vault.put_share(record_id, share1)
@@ -1190,9 +1268,9 @@ def create_custodian_app(
                 what="record ingest",
             )
         except HTTPException:
-            # No record was stored. Share 1 is released here; share 3 stays
-            # with the audit service under an id no record uses, a share of a
-            # key that protects nothing. A retry gets a fresh record_id.
+            # No record was stored. Share 1 is released here; shares 2-4 stay
+            # with their holders under an id no record uses, shares of a key
+            # that protects nothing. A retry gets a fresh record_id.
             vault.drop_share(record_id, share1)
             raise
         return IngestResult(
@@ -1308,11 +1386,14 @@ def create_custodian_app(
         """Run the clinician's side of ARCHITECTURE.md §5 steps 1-5.
 
         1. Sign the ``EmergencyAssertion`` with the clinician's certificate key.
-        2. Ask the audit service for share 3 -- it commits its log entry
-           first and returns the share only with the new chain head
+        2. Take share 1 from clinician custody. If it is not held (lost, e.g.
+           in a restart), ask the patient's home authority for share 2
+           instead; it validates the assertion itself (ADR-0089). This comes
+           before the audit service is asked, so a refusal costs no release.
+        3. Ask the audit service for shares 3 and 4 -- it commits its log
+           entry first and returns them only with the new chain head
            (log-before-release; a failed commit means no share, no unlock).
-        3. Take share 1 from clinician custody.
-        4. Present assertion + certificate chain + 2 shares + PRE public key
+        4. Present assertion + certificate chain + 3 shares + PRE public key
            to the declaring facility's threshold gate.
         5. Open the PRE delivery package and, when a record loader is
            configured, decrypt the record for display.
@@ -1365,19 +1446,27 @@ def create_custodian_app(
                 detail="no audit service configured; break-glass cannot proceed",
             )
         share1 = vault.get_share(payload.record_id)
-        if share1 is None:
+        # Share 1 lost (a custodian restart keeps none): the patient's home
+        # authority stands in with share 2 (ADR-0089).
+        home = (
+            None
+            if share1 is not None
+            else _home_authority(vault, endpoints, payload.patient_id)
+        )
+        if share1 is None and home is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=(
                     f"no clinician-custody share held for record "
-                    f"{payload.record_id!r}; threshold cannot be met"
+                    f"{payload.record_id!r} and no home authority to ask; "
+                    "threshold cannot be met"
                 ),
             )
         corr_id = payload.correlation_id or str(uuid4())
 
         # 0. The record's state decides whether this opens or joins, and so
         # whether the clinician signs a transition (ADR-0068). Read before
-        # share 3 is requested, so a refusal costs no release.
+        # any share is requested, so a refusal costs no release.
         state = LifecycleState(
             _get(
                 http,
@@ -1407,10 +1496,44 @@ def create_custodian_app(
         )
         assertion = unlock_material.assertion
 
-        # 2. Share 3: the audit service commits first, releases second, and
-        # seals it to the facility's gate, so this process never holds shares
-        # 1 and 3 together in the clear (ADR-0079).
         gate_statement, gate = share_key_of(http, facility_url, "facility")
+        # 2. The third point: share 1 from custody, sealed to the facility's
+        # gate here, or -- share 1 lost -- share 2 from the home authority,
+        # which seals it to the gate itself, so this process never holds share
+        # 2 in the clear (ADR-0079, ADR-0089).
+        if share1 is not None:
+            unlock_path = "custodian"
+            third_points = [
+                sealed_json(share1, record_id=payload.record_id, recipient=gate)
+            ]
+            shares_presented = [
+                SharePresented(holder=SHARE_HOLDER_CLINICIAN, x=share1[0])
+            ]
+        else:
+            home_id, home_url = home
+            unlock_path = "home_authority"
+            home_release = _post(
+                http,
+                f"{home_url}/breakglass/release",
+                {
+                    "share_key": payload.record_id,
+                    "assertion": assertion.model_dump(mode="json"),
+                    "clinician_certificate_pem": material.certificate_pem,
+                    "justification": payload.justification,
+                    "sensitive_justification": payload.sensitive_justification,
+                    "recipient": gate_statement,
+                },
+                what=f"home authority {home_id} share release",
+            )
+            third_points = list(home_release["sealed_shares"])
+            shares_presented = [
+                SharePresented(holder=SHARE_HOLDER_HOME_AUTHORITY, x=sealed["x"])
+                for sealed in third_points
+            ]
+
+        # 3. Shares 3 and 4: the audit service commits first, releases second,
+        # and seals them to the facility's gate, so this process never holds
+        # three points together in the clear (ADR-0079).
         seq_before = vault.audit_seq_before_release()
         release = _post(
             http,
@@ -1433,6 +1556,7 @@ def create_custodian_app(
                 },
                 "actor_id": SHARE_HOLDER_AUDIT,
                 "correlation_id": corr_id,
+                "unlock_path": unlock_path,
                 # The audit service validates the assertion itself before it
                 # commits or releases anything (ADR-0067).
                 "assertion": assertion.model_dump(mode="json"),
@@ -1444,13 +1568,13 @@ def create_custodian_app(
             what="audit share release",
         )
         _check_release_entry(vault, release["entry"], corr_id, seq_before)
-        shares_presented = [
-            SharePresented(holder=SHARE_HOLDER_CLINICIAN, x=share1[0]),
+        shares_presented += [
             SharePresented(
                 holder=SHARE_HOLDER_AUDIT,
-                x=release["sealed_share"]["x"],
+                x=sealed["x"],
                 audit_entry_seq=release["entry"]["seq"],
-            ),
+            )
+            for sealed in release["sealed_shares"]
         ]
 
         # 4. Threshold gate at the declaring facility.
@@ -1479,10 +1603,7 @@ def create_custodian_app(
                 # The facility validates this chain against its own configured
                 # root and CAs; it never accepts trust anchors from a caller (F1).
                 "clinician_certificate_pem": material.certificate_pem,
-                "sealed_shares": [
-                    sealed_json(share1, record_id=payload.record_id, recipient=gate),
-                    release["sealed_share"],
-                ],
+                "sealed_shares": [*third_points, *release["sealed_shares"]],
                 "pre_rewrap_key": material.pre_public_key,
                 "transition_event": (
                     transition_event.model_dump(mode="json")

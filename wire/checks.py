@@ -19,9 +19,10 @@ claim fails.
 
 2. **Commit-before-release.** In the plain capture, the audit service's
    Postgres ``COMMIT`` for the release entry crosses the wire before the
-   ``/breakglass/release`` response that carries share 3, sealed to the
-   facility's gate (ADR-0079), and those sealed bytes never appear before
-   that response.
+   ``/breakglass/release`` response that carries shares 3 and 4, sealed to
+   the facility's gate (ADR-0079, ADR-0089), and the sealed share 3 never
+   appears before that response. Only the audit service's release counts: a
+   home authority's share-2 release (the fallback) commits nothing.
 3. **Search leakage.** The P5-3 profile, computed from the same capture.
 4. **Break-glass is metadata, not content.** The break-glass URI is visible in
    plain mode; in TLS mode an observer can still pick out the exchange from

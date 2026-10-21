@@ -10,8 +10,14 @@ from __future__ import annotations
 
 import datetime
 
-from contracts import Attribute, AttributeCredential, RequestEnvelope
-from pydantic import BaseModel
+from breakglass.share_sealing import SealedShare, ShareKeyStatement
+from contracts import (
+    Attribute,
+    AttributeCredential,
+    EmergencyAssertion,
+    RequestEnvelope,
+)
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class HealthResponse(BaseModel):
@@ -116,6 +122,33 @@ class AuthorAttributeKeyRequest(BaseModel):
 
     name: str
     value: str
+
+
+class HomeShareReleaseRequest(BaseModel):
+    """Ask the patient's home authority for share 2 (ADR-0089).
+
+    Sent by the clinician's key agent only when it does not hold share 1. The
+    authority validates ``assertion`` itself, exactly as the audit service
+    does (``api.share_release``), before it seals share 2 to ``recipient``,
+    the facility gate that will combine it with shares 3 and 4.
+    ``justification`` texts are only checked against the assertion's signed
+    digest, which binds the record; they are never logged.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    share_key: str
+    assertion: EmergencyAssertion
+    clinician_certificate_pem: str
+    justification: str = Field(default="", max_length=2000)
+    sensitive_justification: str = Field(default="", max_length=2000)
+    recipient: ShareKeyStatement
+
+
+class HomeShareReleaseResponse(BaseModel):
+    """Share 2, sealed to the facility gate named in the request."""
+
+    sealed_shares: list[SealedShare]
 
 
 class ErrorResponse(BaseModel):

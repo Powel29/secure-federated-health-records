@@ -16,9 +16,10 @@ What it does, in order (ARCHITECTURE.md §7 bootstrap sequence, then ADR-0043):
 3. Root anchor + facility CAs generated, authorities registered, genesis
    entry written, facilities configured with the trust anchors.
 4. Seeds the synthetic dataset (P4-5): credentials issued, records ingested
-   at their facilities, 2-of-3 emergency keys split -- share 3 deposited at
-   the audit service, share 1 at the custodian, each persona's key material
-   deposited at the custodian.
+   at their facilities, weighted 3-of-4 emergency keys split -- shares 3
+   and 4 deposited at the audit service, share 2 at the patient's home
+   authority, share 1 at the custodian (ADR-0089), each persona's key
+   material deposited at the custodian.
 5. Creates the ``portal`` schema and the read-only ``portal_ro`` store role,
    runs the Django migrations, and seeds the portal logins + patient
    directory (name + DOB, ADR-0033).

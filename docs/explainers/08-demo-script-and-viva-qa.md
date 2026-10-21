@@ -79,10 +79,12 @@ Phase 6).
    EuroS&P 2023). We instantiate it for health-record break-glass, inside the
    lifecycle. Their log is stronger than ours: ours is a trusted hash chain
    (PROJECT.md §5 item 13).
-3. **Why 2-of-3?** One party alone (even the audit service) must not be able
-   to open a record. In this build share 2 is reserved, not deposited, so
-   break-glass needs the clinician's share *and* the audit service's share:
-   2-of-2 in practice, with no fallback if either is down (ADR-0074).
+3. **Why 3-of-4?** One party alone (even the audit service) must not be
+   able to open a record, and no pair may skip the audit service. The audit
+   service holds two of the four points, so it is in every opening; the
+   custodian holds share 1 and the patient's home authority share 2 as its
+   backup, used if share 1 is lost (ADR-0089). If the audit service is down,
+   nothing opens.
 4. **What if the audit service is down?** Break-glass fails closed. That is the
    point: no log, no key.
 5. **Why not just use CP-ABE?** Install risk (ADR-0001). We built a policy tree

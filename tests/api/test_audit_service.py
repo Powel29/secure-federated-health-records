@@ -90,7 +90,7 @@ def audit_app(audit_conn, federation_pki):
 
 @pytest.fixture()
 def client(audit_app, federation_pki) -> TestClient:
-    """Signed as the custodian, which deposits and requests share 3."""
+    """Signed as the custodian, which deposits and requests shares 3 and 4."""
     return federation_pki["services"].client(
         audit_app, "audit-service", caller="custodian"
     )
@@ -116,7 +116,7 @@ def _release(pki, share_key: str, correlation_id: str, **overrides) -> dict:
             "ascii"
         ),
         "justification": JUSTIFICATION,
-        # Share 3 is sealed to facility-a's gate (ADR-0079).
+        # Shares 3 and 4 are sealed to facility-a's gate (ADR-0079).
         "recipient": _gate(pki)[1].model_dump(mode="json"),
     }
     body.update(overrides)
@@ -141,27 +141,45 @@ def _gate(pki) -> tuple[ShareSealingKey, ShareKeyStatement]:
     return pki["gate"]
 
 
+def _released(pki, share_key: str, response) -> dict[int, str]:
+    """The shares in a release response, opened as facility-a's gate would."""
+    opened = {}
+    for sealed in response.json()["sealed_shares"]:
+        x, value = open_sealed_share(
+            SealedShare.model_validate(sealed),
+            record_id=share_key,
+            service_id="facility-a",
+            key=_gate(pki)[0],
+        )
+        opened[x] = value.hex()
+    return opened
+
+
 def _released_hex(pki, share_key: str, response) -> str:
-    """The share in a release response, opened as facility-a's gate would."""
-    _x, value = open_sealed_share(
-        SealedShare.model_validate(response.json()["sealed_share"]),
-        record_id=share_key,
-        service_id="facility-a",
-        key=_gate(pki)[0],
-    )
-    return value.hex()
+    """Share 3 of a release response, opened as facility-a's gate would."""
+    return _released(pki, share_key, response)[3]
 
 
 def _sealed(client, share_key: str, share_hex: str, x: int = 3) -> dict:
     return seal_for(client, share_key, (x, bytes.fromhex(share_hex)))
 
 
-def _register(client, share_key: str, share_hex: str = "deadbeef", x: int = 3):
+def _holding(
+    client, share_key: str, share_hex: str = "deadbeef", share4_hex: str = "feedface"
+) -> list[dict]:
+    """Shares 3 and 4, the audit service's holding of the 3-of-4 split (ADR-0089)."""
+    return [
+        _sealed(client, share_key, share_hex, 3),
+        _sealed(client, share_key, share4_hex, 4),
+    ]
+
+
+def _register(client, share_key: str, share_hex: str = "deadbeef"):
     return client.post(
         "/breakglass/shares",
         json={
             "share_key": share_key,
-            "sealed_share": _sealed(client, share_key, share_hex, x),
+            "sealed_shares": _holding(client, share_key, share_hex),
         },
     )
 
@@ -255,10 +273,12 @@ def test_share_release_only_after_commit(client: TestClient, federation_pki) -> 
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["sealed_share"]["x"] == 3
-    assert _released_hex(federation_pki, "rec-1", r) == "deadbeef"
-    # Sealed to the gate: the share's bytes are not in the response (ADR-0079).
+    # Both of the audit service's points, each sealed to the gate (ADR-0089).
+    assert [s["x"] for s in body["sealed_shares"]] == [3, 4]
+    assert _released(federation_pki, "rec-1", r) == {3: "deadbeef", 4: "feedface"}
+    # Sealed to the gate: the shares' bytes are not in the response (ADR-0079).
     assert "deadbeef" not in r.text
+    assert "feedface" not in r.text
     assert body["entry"]["event_type"] == "breakglass_share_release"
     assert body["entry"]["seq"] == 1
     # Never log the share itself alongside the entry (CONVENTIONS.md §2 rule 3).
@@ -289,7 +309,7 @@ def test_release_share_fails_closed_on_commit_failure(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, federation_pki
 ) -> None:
     """No log commit, no share -- P3-4's headline property, enforced over HTTP."""
-    assert _register(client, "rec-2", "cafef00d", x=1).status_code == 201
+    assert _register(client, "rec-2", "cafef00d").status_code == 201
 
     import audit.share_custody as share_custody_module
 
@@ -322,7 +342,7 @@ def _nothing_released(client, response) -> None:
 
 
 class TestReleaseNeedsAValidAssertion:
-    """Share 3 moves only against an assertion validated here. Each refusal is
+    """Shares 3 and 4 move only against an assertion validated here. Each refusal is
     checked against the positive control in the same fixture."""
 
     def test_positive_control_valid_assertion_releases(self, client, federation_pki):
@@ -475,7 +495,10 @@ class TestShareReplacement:
         _register(client, "rec-r1")
         _seed_record(audit_conn, "rec-r1", LifecycleState.EXPIRED)
         facility = self._facility(audit_app, federation_pki)
-        body = {"sealed_share": _sealed(client, "rec-r1", "abcdef01"), "generation": 1}
+        body = {
+            "sealed_shares": _holding(client, "rec-r1", "abcdef01"),
+            "generation": 1,
+        }
         assert facility.put("/breakglass/shares/rec-r1", json=body).status_code == 200
         # A retry of the same replacement is a no-op, not an error.
         assert facility.put("/breakglass/shares/rec-r1", json=body).status_code == 200
@@ -492,12 +515,15 @@ class TestShareReplacement:
         r = self._facility(audit_app, federation_pki).put(
             "/breakglass/shares/rec-r2",
             json={
-                "sealed_share": _sealed(client, "rec-r2", "abcdef01"),
+                "sealed_shares": _holding(client, "rec-r2", "abcdef01"),
                 "generation": 1,
             },
         )
         assert r.status_code == 409
-        assert client.app.state.shares.get("rec-r2") == (3, bytes.fromhex("deadbeef"))
+        assert client.app.state.shares.get("rec-r2")[0] == (
+            3,
+            bytes.fromhex("deadbeef"),
+        )
 
     def test_only_a_later_generation_replaces(
         self, client, audit_app, audit_conn, federation_pki
@@ -510,20 +536,23 @@ class TestShareReplacement:
         skipped = facility.put(
             "/breakglass/shares/rec-r3",
             json={
-                "sealed_share": _sealed(client, "rec-r3", "abcdef01"),
+                "sealed_shares": _holding(client, "rec-r3", "abcdef01"),
                 "generation": 2,
             },
         )
         assert skipped.status_code == 200
         assert client.app.state.shares.generation("rec-r3") == 2
-        other = _sealed(client, "rec-r3", "abcdef02")
+        other = _holding(client, "rec-r3", "abcdef02")
         for generation in (1, 2):  # a rollback, then a swap within generation 2
             r = facility.put(
                 "/breakglass/shares/rec-r3",
-                json={"sealed_share": other, "generation": generation},
+                json={"sealed_shares": other, "generation": generation},
             )
             assert r.status_code == 409
-        assert client.app.state.shares.get("rec-r3") == (3, bytes.fromhex("abcdef01"))
+        assert client.app.state.shares.get("rec-r3")[0] == (
+            3,
+            bytes.fromhex("abcdef01"),
+        )
 
     def test_a_revocation_rotation_replaces_the_share(
         self, client, audit_app, audit_conn, federation_pki
@@ -534,7 +563,7 @@ class TestShareReplacement:
         r = self._facility(audit_app, federation_pki).put(
             "/breakglass/shares/rec-r5",
             json={
-                "sealed_share": _sealed(client, "rec-r5", "abcdef01"),
+                "sealed_shares": _holding(client, "rec-r5", "abcdef01"),
                 "generation": 1,
             },
         )
@@ -547,10 +576,58 @@ class TestShareReplacement:
         r = client.put(  # signed as the custodian
             "/breakglass/shares/rec-r4",
             json={
-                "sealed_share": _sealed(client, "rec-r4", "abcdef01"),
+                "sealed_shares": _holding(client, "rec-r4", "abcdef01"),
                 "generation": 1,
             },
         )
         assert r.status_code == 403
         assert client.app.state.shares.generation("rec-r4") == 0
         assert get_chain_head(audit_conn).seq == 0
+
+
+class TestAuditHoldsExactlySharesThreeAndFour:
+    """ADR-0089: the audit service takes shares 3 and 4 of the 3-of-4 split and
+    nothing else, so a misrouted share cannot give custodian + home authority
+    three points."""
+
+    def test_positive_control_shares_3_and_4_are_accepted(self, client):
+        assert _register(client, "rec-h0").status_code == 201
+        assert [x for x, _ in client.app.state.shares.get("rec-h0")] == [3, 4]
+
+    @pytest.mark.parametrize(
+        "xs",
+        [(3,), (4,), (2,), (1, 3), (2, 3), (3, 4, 1), (3, 3)],
+        ids=["only-3", "only-4", "home-share", "clinician+3", "home+3", "extra", "dup"],
+    )
+    def test_any_other_holding_is_refused(self, client, xs):
+        r = client.post(
+            "/breakglass/shares",
+            json={
+                "share_key": "rec-h1",
+                "sealed_shares": [
+                    _sealed(client, "rec-h1", f"{i:02x}" * 4, x)
+                    for i, x in enumerate(xs)
+                ],
+            },
+        )
+        assert r.status_code == 400, r.text
+        assert not client.app.state.shares.has("rec-h1")
+
+
+def test_release_entry_records_the_unlock_path(client, federation_pki):
+    """The audit entry says whether share 1 or the home authority's share 2 was
+    the third point (ADR-0089); only those two values are accepted."""
+    assert _register(client, "rec-up").status_code == 201
+    r = client.post(
+        "/breakglass/release",
+        json=_release(
+            federation_pki, "rec-up", "corr-up", unlock_path="home_authority"
+        ),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["entry"]["event_data"]["unlock_path"] == "home_authority"
+    bad = client.post(
+        "/breakglass/release",
+        json=_release(federation_pki, "rec-up", "corr-up2", unlock_path="anyone"),
+    )
+    assert bad.status_code == 422

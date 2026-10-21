@@ -116,10 +116,20 @@ class EnvelopeExpiredError(BreakglassError):
 class InsufficientSharesError(BreakglassError):
     """Fewer than ``THRESHOLD`` unique shares presented -- break-glass fails closed.
 
-    Uniqueness is by share x-coordinate: presenting the same share twice (or
-    any single custodian's share alone -- including the audit service's) does
-    not satisfy the 2-of-3 threshold. No single party can open a record
-    unilaterally (ARCHITECTURE.md §8).
+    Uniqueness is by share x-coordinate: presenting the same share twice, any
+    single holder's shares alone (including the audit service's two), or the
+    custodian's and home authority's together does not satisfy the 3-of-4
+    threshold. No single party can open a record unilaterally, and no pair
+    without the audit service can (ARCHITECTURE.md C11, ADR-0089).
+    """
+
+
+class ShareHoldingError(BreakglassError):
+    """A holding is not exactly the holder's own share indices (ADR-0089).
+
+    The custodian takes {1}, the home authority {2}, the audit service
+    {3, 4}. A deposit or replacement outside that set is refused, so a
+    misrouted share cannot give two non-audit holders three points.
     """
 
 

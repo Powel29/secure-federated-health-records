@@ -1,9 +1,11 @@
 """Threshold shares travel sealed to their recipient (review D6 step 2, ADR-0079).
 
 A share is only ever readable by the service it is addressed to: the audit
-service (share 3 deposits), the custodian (share 1 deposits) or the facility
-whose gate combines them (break-glass). Nothing in between -- including the
-custodian forwarding the audit service's share 3 -- sees share bytes.
+service (share 3 and 4 deposits), the patient's home authority (share 2
+deposits), the custodian (share 1 deposits) or the facility whose gate
+combines them (break-glass). Nothing in between -- including the custodian
+forwarding the audit service's shares 3 and 4 or the home authority's share
+2 -- sees share bytes.
 
 Two pieces, both built from primitives the project already uses:
 
@@ -137,7 +139,7 @@ def verify_key_statement(
     Args:
         statement: What the recipient published.
         trusted_root: The federation root from the sender's own configuration.
-        kind: The service kind the sender means to reach (``audit``,
+        kind: The service kind the sender means to reach (``audit``, ``authority``,
             ``custodian`` or ``facility``).
 
     Raises:

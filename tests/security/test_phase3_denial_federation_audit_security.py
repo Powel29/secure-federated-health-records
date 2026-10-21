@@ -56,6 +56,7 @@ from records.revocation import check_revocation_authorization
 from records.service import wrap_dek
 from storage import repositories as repo
 
+from tests.shares import unlock_points
 from tests.transitions import open_event
 
 MED = "authority-med"
@@ -343,9 +344,9 @@ def test_sec_federation_rewrap_event_never_contains_key_material(conn, audit_key
     lifecycle_priv, _lifecycle_pub = generate_ec_keypair()
     _, pre_pub = generate_pre_keypair()
 
-    # Positive control: 2-of-3 shares actually unlock.
+    # Positive control: 3 of the 4 shares actually unlock (ADR-0089).
     result = open_emergency_access(
-        shares_presented=[shares[0], shares[1]],
+        shares_presented=unlock_points(shares),
         dek_wrapping=wrapping,
         transition_source_state=LifecycleState.GRANTED,
         record_id=record_id,

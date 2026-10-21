@@ -1,7 +1,8 @@
 """Threshold secret sharing (owner module: ``shamir``, C2).
 
 Provides (k, n) threshold secret sharing over a prime field GF(P).
-Used by both the break-glass 2-of-3 threshold gate and the policy engine.
+Used by both the break-glass 3-of-4 threshold gate (ADR-0089) and the policy
+engine.
 """
 
 from __future__ import annotations

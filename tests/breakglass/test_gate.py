@@ -11,6 +11,8 @@ Covers:
 
 from __future__ import annotations
 
+import itertools
+
 import pytest
 from breakglass.emergency_key import (
     THRESHOLD,
@@ -183,21 +185,20 @@ class TestOpenEmergencyAccessEdgeCases:
     def test_truncated_share_fails_closed(self, unlock_scenario):
         """A share of the wrong length is rejected by reconstruction.
 
-        One valid share is presented alongside the malformed one so the
+        Valid shares are presented alongside the malformed one so the
         threshold count is met -- the refusal must come from the malformed
         bytes, not from the share count.
         """
-        valid = unlock_scenario["shares"][0]
-        x, share_bytes = unlock_scenario["shares"][1]
+        shares = unlock_scenario["shares"]
+        x, share_bytes = shares[1]
         malformed = (x, share_bytes[:-1])
         with pytest.raises(InvalidShareError):
-            self._open(unlock_scenario, [valid, malformed])
+            self._open(unlock_scenario, [shares[0], malformed, shares[2]])
 
     def test_garbage_share_of_wrong_block_size_fails_closed(self, unlock_scenario):
-        x1, _ = unlock_scenario["shares"][0]
-        x2, _ = unlock_scenario["shares"][1]
+        xs = [x for x, _ in unlock_scenario["shares"][:THRESHOLD]]
         with pytest.raises(InvalidShareError):
-            self._open(unlock_scenario, [(x1, b"malformed"), (x2, b"malformed")])
+            self._open(unlock_scenario, [(x, b"malformed") for x in xs])
 
 
 class TestEmergencyKeySplitCombineRoundTrip:
@@ -208,13 +209,13 @@ class TestEmergencyKeySplitCombineRoundTrip:
         recovered = combine_shares(shares[:THRESHOLD], k=THRESHOLD)
         assert recovered == key
 
-    def test_different_threshold_pairs_all_recover_key(self):
+    def test_every_threshold_subset_recovers_key(self):
+        """Any THRESHOLD of the TOTAL_SHARES points recover the key; which
+        sets the gate accepts is a matter of who holds which point (ADR-0089)."""
         key = generate_emergency_key()
         shares = split_emergency_key(key)
-        for i in range(TOTAL_SHARES):
-            for j in range(i + 1, TOTAL_SHARES):
-                pair = [shares[i], shares[j]]
-                assert combine_shares(pair, k=THRESHOLD) == key
+        for subset in itertools.combinations(shares, THRESHOLD):
+            assert combine_shares(list(subset), k=THRESHOLD) == key
 
 
 class TestTransitionEventShape:

@@ -43,6 +43,7 @@ from tests.security.test_p51_system_claims import (
     _seed,
     _unlock_payload,
 )
+from tests.shares import unlock_points
 
 _DB_URL = os.environ.get("DATABASE_URL")
 
@@ -231,7 +232,7 @@ def test_c8_replayed_assertion_rejected_across_processes_on_postgres(store):
     # refuses (ADR-0079).
     resealed = {
         **payload,
-        "sealed_shares": seal_all(restarted, RECORD, list(store["shares"][:2])),
+        "sealed_shares": seal_all(restarted, RECORD, unlock_points(store["shares"])),
     }
     replay = restarted.post(f"/records/{RECORD}/breakglass", json=resealed)
     assert replay.status_code == 400

@@ -12,8 +12,10 @@ The negative cases here are the evidence for the portal boundary
 - a subject with no deposited material can sign nothing and read nothing;
 - a patient whose ``owner:<patient_id>`` credential is absent is refused by
   the facility's policy engine (ADR-0016 fail-closed);
-- break-glass fails closed when the audit service cannot commit -- no share
-  3, no unlock, the record stays GRANTED.
+- break-glass fails closed when the audit service cannot commit -- no
+  shares 3 and 4, no unlock, the record stays GRANTED;
+- the patient's home authority stands in for a lost share 1 (ADR-0089), and
+  custodian + home authority alone open nothing.
 """
 
 from __future__ import annotations
@@ -35,7 +37,14 @@ from api.hospital import FacilityTrust, create_hospital_app
 from api.repository import InMemoryStorageRepository
 from api.service_auth import CERTIFICATE_HEADER, ENVELOPE_HEADER
 from audit.chain import build_entry, create_genesis_entry
-from breakglass.emergency_key import generate_emergency_key, split_emergency_key
+from breakglass.emergency_key import (
+    AUDIT_SHARE_XS,
+    CLINICIAN_SHARE_XS,
+    HOME_AUTHORITY_SHARE_XS,
+    generate_emergency_key,
+    holder_shares,
+    split_emergency_key,
+)
 from breakglass.share_sealing import (
     SealedShare,
     ShareKeyStatement,
@@ -87,7 +96,7 @@ PLAINTEXT = b'{"diagnosis": "Acute MI", "allergies": ["Penicillin"]}'
 
 
 def _audit_stub(
-    shares: dict[str, tuple[int, bytes]],
+    shares: dict[str, tuple[tuple[int, bytes], ...]],
     federation: dict[str, Any],
     *,
     commit_ok: bool = True,
@@ -95,11 +104,11 @@ def _audit_stub(
 ) -> FastAPI:
     """Stand-in for ``api.audit_service`` without Postgres.
 
-    Honours the properties the custodian relies on: the share is released
-    only when the commit succeeded (``commit_ok``), otherwise 503 and nothing;
-    a share is never overwritten (409, review F4); ``deposit_ok=False`` makes
-    every deposit fail with 503. Shares travel sealed both ways, with the real
-    sealing code (ADR-0079).
+    Honours the properties the custodian relies on: shares 3 and 4 are
+    released only when the commit succeeded (``commit_ok``), otherwise 503 and
+    nothing; a holding is never overwritten (409, review F4);
+    ``deposit_ok=False`` makes every deposit fail with 503. Shares travel
+    sealed both ways, with the real sealing code (ADR-0079).
     """
     app = FastAPI()
     identity = federation["services"].identity("audit-service")
@@ -146,11 +155,14 @@ def _audit_stub(
             raise HTTPException(status_code=503, detail="audit service unavailable")
         if payload["share_key"] in shares:
             raise HTTPException(status_code=409, detail="share already held")
-        shares[payload["share_key"]] = open_sealed_share(
-            SealedShare.model_validate(payload["sealed_share"]),
-            record_id=payload["share_key"],
-            service_id=identity.service_id,
-            key=sealing_key,
+        shares[payload["share_key"]] = tuple(
+            open_sealed_share(
+                SealedShare.model_validate(sealed),
+                record_id=payload["share_key"],
+                service_id=identity.service_id,
+                key=sealing_key,
+            )
+            for sealed in payload["sealed_shares"]
         )
         return {"status": "registered", "share_key": payload["share_key"]}
 
@@ -168,16 +180,23 @@ def _audit_stub(
             kind="facility",
         )
         entry = _signed(payload)
-        sealed = seal_share(
-            shares[payload["share_key"]],
-            record_id=payload["share_key"],
-            recipient=recipient,
-        )
-        return {"sealed_share": sealed.model_dump(mode="json"), "entry": entry}
+        sealed = [
+            seal_share(share, record_id=payload["share_key"], recipient=recipient)
+            for share in shares[payload["share_key"]]
+        ]
+        return {
+            "sealed_shares": [s.model_dump(mode="json") for s in sealed],
+            "entry": entry,
+        }
 
     app.state.log = state
     app.state.public_key_pem = public_key_to_pem(public_key).decode("ascii")
     return app
+
+
+def _audit_holding(federation: dict[str, Any]) -> tuple[tuple[int, bytes], ...]:
+    """The audit service's shares 3 and 4 of the federation's record."""
+    return (federation["shares"]["share3"], federation["shares"]["share4"])
 
 
 def _forwarded(request: httpx.Request) -> dict[str, str]:
@@ -233,17 +252,30 @@ def federation():
         root=root.certificate,
         facility_cas={"facility-a": fa_cert, "facility-b": fb_cert},
     )
+    trust = FacilityTrust(
+        root=root.certificate,
+        facility_cas={"facility-a": fa_cert, "facility-b": fb_cert},
+    )
+    repo = InMemoryStorageRepository()
+    # Each authority is its patients' home authority and holds share 2
+    # (ADR-0089), validating assertions against the same trust anchors.
     app_med = create_authority_app(
         "authority-med",
         frozenset({"role"}),
         service_root=root.certificate,
         subject_trust=subject_trust,
+        identity=services.identity("authority-med"),
+        trust=trust,
+        state_loader=repo.get_lifecycle_state,
     )
     app_net = create_authority_app(
         "authority-net",
         frozenset({"specialty", "facility", "owner"}),
         service_root=root.certificate,
         subject_trust=subject_trust,
+        identity=services.identity("authority-net"),
+        trust=trust,
+        state_loader=repo.get_lifecycle_state,
     )
     med = services.client(app_med, "authority-med")
     net = services.client(app_net, "authority-net")
@@ -305,7 +337,12 @@ def federation():
     ).decode("ascii")
 
     em_key = generate_emergency_key()
-    share1, share2, share3 = split_emergency_key(em_key)
+    split = split_emergency_key(em_key)
+    (share1,) = holder_shares(split, CLINICIAN_SHARE_XS)
+    (share2,) = holder_shares(split, HOME_AUTHORITY_SHARE_XS)
+    share3, share4 = holder_shares(split, AUDIT_SHARE_XS)
+    # authority-net issued the patient's owner credential: it holds share 2.
+    app_net.state.shares.put(RECORD, (share2,))
     ingest = ingest_record(
         plaintext=PLAINTEXT,
         patient_id=PATIENT,
@@ -324,7 +361,6 @@ def federation():
             certificate_pem=pat_cert_pem,
         ),
     )
-    repo = InMemoryStorageRepository()
     repo.insert_record(ingest.record)
     repo.insert_dek_wrapping(ingest.dek_wrapping)
     assert ingest.emergency_dek_wrapping is not None
@@ -336,10 +372,6 @@ def federation():
 
     life_priv, _ = generate_ec_keypair()
     expiry = EmergencyExpiryManager(signing_key=life_priv, default_duration_seconds=60)
-    trust = FacilityTrust(
-        root=root.certificate,
-        facility_cas={"facility-a": fa_cert, "facility-b": fb_cert},
-    )
     audit_sink = RecordingAuditSink()
     expiry_a = EmergencyExpiryManager(
         signing_key=life_priv, default_duration_seconds=60
@@ -384,7 +416,12 @@ def federation():
         "rotation": rotation,
         "expiry_a": expiry_a,
         "er_pub": er_pub,
-        "shares": {"share1": share1, "share2": share2, "share3": share3},
+        "shares": {
+            "share1": share1,
+            "share2": share2,
+            "share3": share3,
+            "share4": share4,
+        },
         "creds": creds,
         "root_pem": certificate_to_pem(root.certificate).decode("ascii"),
         "fa_pem": certificate_to_pem(fa_cert).decode("ascii"),
@@ -423,7 +460,7 @@ def _custodian(
     audit_deposit_ok: bool = True,
     seen: list[httpx.Request] | None = None,
 ) -> TestClient:
-    audit_shares = {RECORD: federation["shares"]["share3"]}
+    audit_shares = {RECORD: _audit_holding(federation)}
     audit = _audit_stub(
         audit_shares,
         federation,
@@ -545,7 +582,7 @@ def test_authority_outage_is_distinct_from_a_policy_denial(federation):
     def _release(payload: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail="authority-med under maintenance")
 
-    audit = _audit_stub({RECORD: federation["shares"]["share3"]}, federation)
+    audit = _audit_stub({RECORD: _audit_holding(federation)}, federation)
     http = _router({**federation["apps"], "authority-med": down, "audit": audit})
     app = create_custodian_app(
         endpoints=CustodianEndpoints(
@@ -736,11 +773,13 @@ def test_breakglass_unlocks_with_clinician_and_audit_shares(federation):
     event = TransitionEvent.model_validate(body["transition_event"])
     assert event.actor_id == DOC_ER
     verify_transition_event(event, federation["er_pub"])
-    assert [s["holder"] for s in body["shares_presented"]] == [
-        "clinician",
-        "audit-service",
+    # Share 1 from custody plus shares 3 and 4 from the audit service (ADR-0089).
+    assert [(s["holder"], s["x"]) for s in body["shares_presented"]] == [
+        ("clinician", 1),
+        ("audit-service", 3),
+        ("audit-service", 4),
     ]
-    assert body["shares_presented"][1]["audit_entry_seq"] == 1
+    assert {s["audit_entry_seq"] for s in body["shares_presented"][1:]} == {1}
     assert base64.b64decode(body["plaintext_b64"]) == PLAINTEXT
     assert body["expires_at"] is not None
     assert (
@@ -751,6 +790,7 @@ def test_breakglass_unlocks_with_clinician_and_audit_shares(federation):
     entry = client.app_audit.state.log["entries"][0]  # type: ignore[attr-defined]
     assert entry["event_type"] == "breakglass_share_released"
     assert entry["event_data"]["assertion_id"] == body["assertion_id"]
+    assert entry["unlock_path"] == "custodian"
     assert "share" not in json.dumps(entry["event_data"]).lower()
 
 
@@ -788,16 +828,69 @@ def test_breakglass_fails_closed_when_audit_cannot_commit(federation):
     assert federation["repo"].get_lifecycle_state(RECORD) is LifecycleState.GRANTED
 
 
-def test_breakglass_needs_clinician_custody_share(federation):
+def _deposit_material_only(client: TestClient, federation: dict[str, Any]) -> None:
+    """Every subject's material but no share 1: as after a custodian restart."""
+    for subject_id, material in federation["material"].items():
+        r = client.post(f"/subjects/{subject_id}/material", json=material)
+        assert r.status_code == 201, r.text
+
+
+BREAKGLASS = {"patient_id": PATIENT, "record_id": RECORD, "reason_code": "stroke"}
+
+
+def test_lost_share_1_falls_back_to_the_home_authoritys_share_2(federation):
+    """ADR-0089: with share 1 lost, share 2 from the patient's home authority
+    plus shares 3 and 4 open the record, and the log says which path it took."""
+    client = _custodian(federation)
+    _deposit_material_only(client, federation)
+    r = client.post(f"/subjects/{DOC_ER}/breakglass", json=BREAKGLASS)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert [(s["holder"], s["x"]) for s in body["shares_presented"]] == [
+        ("home-authority", 2),
+        ("audit-service", 3),
+        ("audit-service", 4),
+    ]
+    assert base64.b64decode(body["plaintext_b64"]) == PLAINTEXT
+    entry = client.app_audit.state.log["entries"][0]  # type: ignore[attr-defined]
+    assert entry["unlock_path"] == "home_authority"
+
+
+def test_no_share_1_and_no_home_authority_to_ask_fails_closed(federation):
+    """Without share 1 and without the patient's credentials (so no home
+    authority is known) the threshold cannot be met: nothing is released."""
     client = _custodian(federation)
     for subject_id, material in federation["material"].items():
-        client.post(f"/subjects/{subject_id}/material", json=material)
-    r = client.post(
-        f"/subjects/{DOC_ER}/breakglass",
-        json={"patient_id": PATIENT, "record_id": RECORD, "reason_code": "stroke"},
-    )
+        if subject_id != PATIENT:
+            client.post(f"/subjects/{subject_id}/material", json=material)
+    r = client.post(f"/subjects/{DOC_ER}/breakglass", json=BREAKGLASS)
     assert r.status_code == 404
     assert "threshold cannot be met" in r.json()["detail"]
+    assert client.app_audit.state.log["entries"] == []  # type: ignore[attr-defined]
+    assert federation["repo"].get_lifecycle_state(RECORD) is LifecycleState.GRANTED
+
+
+def test_home_authority_without_share_2_refuses_before_any_audit_release(federation):
+    """The home authority is asked before the audit service, so its refusal
+    costs no release of shares 3 and 4 (ADR-0089)."""
+    federation["apps"]["authority-net"].state.shares.forget(RECORD)
+    client = _custodian(federation)
+    _deposit_material_only(client, federation)
+    r = client.post(f"/subjects/{DOC_ER}/breakglass", json=BREAKGLASS)
+    assert r.status_code >= 400
+    assert client.app_audit.state.log["entries"] == []  # type: ignore[attr-defined]
+    assert federation["repo"].get_lifecycle_state(RECORD) is LifecycleState.GRANTED
+
+
+def test_fallback_still_needs_the_audit_commit(federation):
+    """C2 on the fallback path: share 2 from the home authority with no
+    committed audit entry opens nothing -- custodian + home authority hold two
+    points of three, and the audit service releases none without a commit."""
+    client = _custodian(federation, audit_commit_ok=False)
+    _deposit_material_only(client, federation)
+    r = client.post(f"/subjects/{DOC_ER}/breakglass", json=BREAKGLASS)
+    assert r.status_code == 503
+    assert "share was not released" in r.json()["detail"]
     assert federation["repo"].get_lifecycle_state(RECORD) is LifecycleState.GRANTED
 
 
@@ -824,7 +917,7 @@ def test_breakglass_never_puts_the_clinician_key_on_the_wire(federation):
     forward ``material.signing_key`` as ``lifecycle_signing_key_pem``.
     """
     captured: list[bytes] = []
-    audit = _audit_stub({RECORD: federation["shares"]["share3"]}, federation)
+    audit = _audit_stub({RECORD: _audit_holding(federation)}, federation)
     apps = {**federation["apps"], "audit": audit}
     # Each in-process service sees the custodian as an allowlisted caller.
     clients = {host: TestClient(app) for host, app in apps.items()}
@@ -878,14 +971,11 @@ def test_breakglass_never_puts_the_clinician_key_on_the_wire(federation):
     ]
     assert key_lines
     # No share either (ADR-0079): share 1 leaves sealed to the facility's gate
-    # and share 3 arrives sealed to it, so the custodian never forwards
+    # and shares 3 and 4 arrive sealed to it, so the custodian never forwards
     # share bytes -- in hex or base64.
     share_encodings = [
         enc
-        for _x, value in (
-            federation["shares"]["share1"],
-            federation["shares"]["share3"],
-        )
+        for _x, value in federation["shares"].values()
         for enc in (value.hex(), base64.b64encode(value).decode("ascii"))
     ]
     for body in captured:
@@ -1026,6 +1116,104 @@ def test_failed_share_deposit_stores_no_record(federation):
     _deposit_all(client, federation)
     r = _upload(client, b"Report during an audit outage")
     assert r.status_code == 201, r.text
+
+
+def test_upload_hands_every_holder_its_own_shares(federation):
+    """ADR-0089: ingest gives share 1 to custody, share 2 to the patient's home
+    authority (authority-net issued the owner credential) and shares 3 and 4
+    to the audit service -- and the fallback really opens the new record."""
+    client = _custodian(federation)
+    _deposit_all(client, federation)
+    r = _upload(client, b"Uploaded for the fallback")
+    assert r.status_code == 201, r.text
+    rid = r.json()["record_id"]
+
+    vault = client.app.state.vault
+    share1 = vault.get_share(rid)
+    assert share1 is not None and share1[0] == 1
+    home = federation["apps"]["authority-net"].state.shares.get(rid)
+    assert [x for x, _ in home] == [2]
+    assert not federation["apps"]["authority-med"].state.shares.has(rid)
+    audit = client.app_audit_shares[rid]  # type: ignore[attr-defined]
+    assert [x for x, _ in audit] == [3, 4]
+
+    # Share 1 lost (as after a restart): the home authority's share 2 opens it.
+    vault.drop_share(rid, share1)
+    r = client.post(
+        f"/subjects/{DOC_ER}/breakglass",
+        json={
+            "patient_id": PATIENT,
+            "record_id": rid,
+            "reason_code": "stroke",
+            "justification": "Urgent stroke treatment needs medication history.",
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert base64.b64decode(r.json()["plaintext_b64"]) == b"Uploaded for the fallback"
+    assert r.json()["shares_presented"][0]["holder"] == "home-authority"
+
+
+def test_custodian_takes_only_share_1(federation):
+    """ADR-0089: clinician custody holds no other point of the split."""
+    client = _custodian(federation)
+    for x in (2, 3, 4):
+        body = {"sealed_share": seal_for(client, "rec-y", (x, b"\x00" * 33))}
+        assert client.post("/records/rec-y/shares", json=body).status_code == 400
+    assert client.app.state.vault.get_share("rec-y") is None
+    body = {"sealed_share": seal_for(client, "rec-y", (1, b"\x00" * 33))}
+    assert client.post("/records/rec-y/shares", json=body).status_code == 201
+
+
+def test_home_authority_url_answering_as_another_authority_gets_no_share(federation):
+    """The share key the home authority's URL publishes must name that
+    authority: one that names authority-med gets no share 2, and no record is
+    stored. Every other call still reaches the real authority-net, so only the
+    share-key identity check can refuse (signed requests already bind their
+    recipient, ADR-0066)."""
+    real_net = federation["apps"]["authority-net"]
+    med_statement = federation["apps"]["authority-med"].state.share_key_statement
+    impostor = FastAPI()
+
+    @impostor.get("/share-key")
+    def share_key() -> dict[str, Any]:
+        return med_statement.model_dump(mode="json")
+
+    impostor.mount("/", real_net)
+    audit = _audit_stub({RECORD: _audit_holding(federation)}, federation)
+    app = create_custodian_app(
+        endpoints=CustodianEndpoints(
+            authorities={"authority-med": AUTH_MED, "authority-net": AUTH_NET},
+            facilities={"facility-a": FACILITY_A, "facility-b": FACILITY_B},
+            audit=AUDIT,
+        ),
+        http_client=_router(
+            {**federation["apps"], "authority-net": impostor, "audit": audit}
+        ),
+        identity=federation["services"].identity("custodian"),
+        service_root=federation["root_cert"],
+        state_loader=federation["repo"].get_lifecycle_state,
+        record_loader=federation["repo"].get_record,
+        root_certificate_pem=federation["root_pem"],
+        audit_public_key_pem=audit.state.public_key_pem,
+        facility_ca_certificate_pems={
+            "facility-a": federation["fa_pem"],
+            "facility-b": federation["fb_pem"],
+        },
+    )
+    client = federation["services"].client(app, "custodian")
+    _deposit_all(client, federation)
+    before = set(federation["repo"].records)
+    held_before = set(real_net.state.shares._holdings)
+
+    r = _upload(client, b"Should never be stored")
+    assert r.status_code == 502, r.text
+    assert "belongs to 'authority-med', not 'authority-net'" in r.json()["detail"]
+    assert set(federation["repo"].records) == before
+    assert set(real_net.state.shares._holdings) == held_before
+    # Positive control in the same federation: the real authority-net works.
+    good = _custodian(federation)
+    _deposit_all(good, federation)
+    assert _upload(good, b"Should be stored").status_code == 201
 
 
 def test_share_deposit_never_overwrites(federation):
@@ -1190,7 +1378,7 @@ def test_share_1_is_not_replaced_outside_the_records_expiry(federation):
 
 def test_share_1_replacement_needs_store_access(federation):
     """Without a view of the store it cannot tell an expiry rotation: refuse."""
-    audit = _audit_stub({RECORD: federation["shares"]["share3"]}, federation)
+    audit = _audit_stub({RECORD: _audit_holding(federation)}, federation)
     app = create_custodian_app(
         endpoints=CustodianEndpoints(audit=AUDIT),
         http_client=_router({**federation["apps"], "audit": audit}),
@@ -1229,7 +1417,7 @@ def test_breakglass_after_rotation_uses_the_new_share_1(federation):
         == 200
     )
     federation["repo"].upsert_lifecycle_state(RECORD, LifecycleState.GRANTED)
-    client.app_audit_shares[RECORD] = deposit["audit_share"]  # type: ignore[attr-defined]
+    client.app_audit_shares[RECORD] = deposit["audit_shares"]  # type: ignore[attr-defined]
 
     again = client.post(f"/subjects/{DOC_ER}/breakglass", json=body)
     assert again.status_code == 200, again.text

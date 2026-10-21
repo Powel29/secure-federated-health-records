@@ -4,13 +4,16 @@ Executes the complete cross-hospital break-glass scenario start to finish across
 all five federation services:
 1. Health check & bootstrap verification across all five processes.
 2. Federated identity & attribute credential issuance for synthetic personas.
-3. Record ingest at Facility A (Home Hospital) with 2-of-3 emergency key split
-   and Share 3 custody deposit at the standalone Audit Service.
+3. Record ingest at Facility A (Home Hospital) with a weighted 3-of-4
+   emergency key split (ADR-0089): Shares 3 and 4 deposited at the standalone
+   Audit Service, Share 2 at the patient's home authority, Share 1 at the
+   custodian.
 4. In-network routine clinical read at Facility A under attribute policy.
 5. Out-of-network emergency access attempt & policy denial at Facility B.
 6. Federated record discovery and signed EmergencyAssertion creation.
-7. Log-before-release share release from Audit Service (Share 3) and 2-of-3
-   threshold break-glass unlock at Facility B, with PRE DEK decapsulation.
+7. Log-before-release share release from Audit Service (Shares 3 and 4) and
+   3-of-4 threshold break-glass unlock at Facility B, with PRE DEK
+   decapsulation.
 8. Emergency-only search capability while EMERGENCY_OPEN.
 9. Time-box auto-expiry, forced DEK rotation, search dead-token verification,
    and full SHA-256 audit chain verification.
@@ -45,7 +48,14 @@ from api.service_auth import ServiceIdentity, signed_client
 from api.share_transport import fetch_share_key, fetch_share_recipient, sealed_json
 from breakglass import create_emergency_assertion
 from breakglass.assertion import clinical_context_digest
-from breakglass.emergency_key import generate_emergency_key, split_emergency_key
+from breakglass.emergency_key import (
+    AUDIT_SHARE_XS,
+    CLINICIAN_SHARE_XS,
+    HOME_AUTHORITY_SHARE_XS,
+    generate_emergency_key,
+    holder_shares,
+    split_emergency_key,
+)
 from breakglass.share_sealing import verify_key_statement
 from contracts.base import GCM_NONCE_BYTES
 from contracts.clinical import ClinicalMetadata
@@ -410,16 +420,18 @@ def run_scenario(
     )
     record_id = "rec-001"
 
-    # Generate 2-of-3 emergency key & split
+    # Generate the weighted 3-of-4 emergency key & split (ADR-0089)
     emergency_key = generate_emergency_key()
     em_shares = split_emergency_key(emergency_key)
-    # Share 1: Dr. Carol / Emergency facility
-    # Share 2: Home authority (authority-net)
-    # Share 3: Audit service custody
-    share1 = em_shares[0]
-    share3 = em_shares[2]
+    # Share 1: Dr. Carol's custody (the custodian)
+    # Share 2: the patient's home authority (authority-net, owner issuer)
+    # Shares 3 and 4: Audit service custody
+    (share1,) = holder_shares(em_shares, CLINICIAN_SHARE_XS)
+    (share2,) = holder_shares(em_shares, HOME_AUTHORITY_SHARE_XS)
+    share3, share4 = holder_shares(em_shares, AUDIT_SHARE_XS)
 
-    # Deposit Share 3 with Audit Service, sealed to its share key (ADR-0079)
+    # Deposit Shares 3 and 4 with the Audit Service, sealed to its share key
+    # (ADR-0079)
     audit_recipient = fetch_share_recipient(
         client, endpoints.audit, kind="audit", trusted_root=trusted_root
     )
@@ -427,13 +439,29 @@ def run_scenario(
         f"{endpoints.audit}/breakglass/shares",
         json={
             "share_key": record_id,
-            "sealed_share": sealed_json(
-                share3, record_id=record_id, recipient=audit_recipient
-            ),
+            "sealed_shares": [
+                sealed_json(share, record_id=record_id, recipient=audit_recipient)
+                for share in (share3, share4)
+            ],
         },
     )
     audit_reg_res.raise_for_status()
-    log(f"  * Share 3 deposited in Audit Service custody for record {record_id}")
+    log(f"  * Shares 3 and 4 deposited in Audit Service custody for record {record_id}")
+    # Share 2 with the patient's home authority, which issued pat-101's owner
+    # credential, so expiry can rotate it too (ADR-0089).
+    home_recipient = fetch_share_recipient(
+        client, endpoints.authority_net, kind="authority", trusted_root=trusted_root
+    )
+    client.post(
+        f"{endpoints.authority_net}/breakglass/shares",
+        json={
+            "share_key": record_id,
+            "sealed_shares": [
+                sealed_json(share2, record_id=record_id, recipient=home_recipient)
+            ],
+        },
+    ).raise_for_status()
+    log(f"  * Share 2 deposited with home authority authority-net for {record_id}")
     if endpoints.custodian:
         # Share 1 in clinician custody, so expiry can rotate it (ADR-0069).
         custodian = fetch_share_recipient(
@@ -557,12 +585,12 @@ def run_scenario(
     log("  * Signed EmergencyAssertion generated for pat-101 (UNCONSCIOUS_PATIENT)")
 
     # -------------------------------------------------------------------------
-    # Step 7: 2-of-3 Threshold Collection & Break-Glass Unlock
+    # Step 7: 3-of-4 Threshold Collection & Break-Glass Unlock
     # -------------------------------------------------------------------------
-    log("[7/9] Releasing Share 3 from Audit Service & Unlocking...")
-    # Request Share 3 release from Audit Service (log-before-release)
+    log("[7/9] Releasing Shares 3 and 4 from Audit Service & Unlocking...")
+    # Request Shares 3 and 4 from the Audit Service (log-before-release)
     corr_id = "corr-bg-alice-001"
-    # Share 3 is sealed to Facility B's gate (ADR-0079).
+    # Shares 3 and 4 are sealed to Facility B's gate (ADR-0079).
     gate_statement = fetch_share_key(client, endpoints.facility_b)
     gate = verify_key_statement(
         gate_statement, trusted_root=trusted_root, kind="facility"
@@ -589,19 +617,19 @@ def run_scenario(
     )
     release_res.raise_for_status()
     release_data = release_res.json()
-    rel_sealed = release_data["sealed_share"]
-    rel_x = rel_sealed["x"]
+    released = release_data["sealed_shares"]
+    rel_sealed = next(s for s in released if s["x"] == share3[0])
     new_seq = release_data["entry"]["seq"]
     log(
         f"  * Audit Service committed entry to hash chain (new seq={new_seq})\n"
-        f"  * Share 3 released: x={rel_x}"
+        f"  * Shares released: x={[s['x'] for s in released]}"
     )
 
-    # Submit 2 shares (Share 1 from Carol + Share 3 from Audit) to Facility B,
-    # both sealed to its gate: no share bytes on the wire (ADR-0079).
+    # Submit 3 shares (Share 1 from Carol + Shares 3 and 4 from Audit) to
+    # Facility B, all sealed to its gate: no share bytes on the wire (ADR-0079).
     shares_payload = [
         sealed_json(share1, record_id=record_id, recipient=gate),
-        rel_sealed,
+        *released,
     ]
 
     # Carol's own signed transition, not a private key, goes on the wire
@@ -730,9 +758,12 @@ def run_scenario(
                 "dek": ("dek", recovered_dek),
                 "emergency_key": ("emergency_key", emergency_key),
                 "share1": ("share", share1[1]),
+                "share2": ("share", share2[1]),
                 "share3": ("share", share3[1]),
+                "share4": ("share", share4[1]),
                 # Not a secret: the sealed share 3 as the audit service sent
-                # it, which claim 2 times against the audit COMMIT (ADR-0079).
+                # it with share 4, which claim 2 times against the audit COMMIT
+                # (ADR-0079).
                 "share3_sealed": (
                     "sealed_share",
                     base64.b64decode(rel_sealed["ciphertext_b64"]),

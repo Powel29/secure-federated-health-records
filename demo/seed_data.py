@@ -15,7 +15,14 @@ from typing import Any
 import httpx
 import psycopg
 from api.share_transport import fetch_share_recipient, sealed_json
-from breakglass.emergency_key import generate_emergency_key, split_emergency_key
+from breakglass.emergency_key import (
+    AUDIT_SHARE_XS,
+    CLINICIAN_SHARE_XS,
+    HOME_AUTHORITY_SHARE_XS,
+    generate_emergency_key,
+    holder_shares,
+    split_emergency_key,
+)
 from contracts.clinical import ClinicalMetadata
 from contracts.enums import PolicyNodeType
 from contracts.policy import Attribute, PolicyTree
@@ -630,29 +637,49 @@ def seed_synthetic_data(
         "facility-b": endpoints.facility_b,
     }
 
-    # Share 3 goes to the audit service sealed to its verified share key.
+    # Shares 3 and 4 go to the audit service and share 2 to the patients'
+    # home authority (authority-net, which issues every owner credential
+    # here), each sealed to the holder's verified share key (ADR-0079,
+    # ADR-0089). Share 1 is returned for the custodian.
+    trusted_root = certificate_from_pem(root_cert_pem.encode("ascii"))
     audit_recipient = fetch_share_recipient(
-        http,
-        endpoints.audit,
-        kind="audit",
-        trusted_root=certificate_from_pem(root_cert_pem.encode("ascii")),
+        http, endpoints.audit, kind="audit", trusted_root=trusted_root
+    )
+    home_recipient = fetch_share_recipient(
+        http, endpoints.authority_net, kind="authority", trusted_root=trusted_root
     )
 
     for rec in dataset.records:
         emergency_key = generate_emergency_key()
         shares = split_emergency_key(emergency_key)
-        share1, share2, share3 = shares[0], shares[1], shares[2]
+        (share1,) = holder_shares(shares, CLINICIAN_SHARE_XS)
+        (share2,) = holder_shares(shares, HOME_AUTHORITY_SHARE_XS)
+        share3, share4 = holder_shares(shares, AUDIT_SHARE_XS)
 
         audit_deposit_res = http.post(
             f"{endpoints.audit}/breakglass/shares",
             json={
                 "share_key": rec.record_id,
-                "sealed_share": sealed_json(
-                    share3, record_id=rec.record_id, recipient=audit_recipient
-                ),
+                "sealed_shares": [
+                    sealed_json(
+                        share, record_id=rec.record_id, recipient=audit_recipient
+                    )
+                    for share in (share3, share4)
+                ],
             },
         )
         audit_deposit_res.raise_for_status()
+        http.post(
+            f"{endpoints.authority_net}/breakglass/shares",
+            json={
+                "share_key": rec.record_id,
+                "sealed_shares": [
+                    sealed_json(
+                        share2, record_id=rec.record_id, recipient=home_recipient
+                    )
+                ],
+            },
+        ).raise_for_status()
 
         record_keyring_b64 = {
             k: base64.b64encode(v).decode("ascii") for k, v in attribute_keys.items()
@@ -705,6 +732,7 @@ def seed_synthetic_data(
             "share1": share1,
             "share2": share2,
             "share3": share3,
+            "share4": share4,
             "policy_id": ingest_data["policy_id"],
             "wrapping_id": ingest_data["wrapping_id"],
             "search_terms_indexed": ingest_data["search_terms_indexed"],

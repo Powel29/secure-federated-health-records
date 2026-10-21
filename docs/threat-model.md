@@ -26,7 +26,7 @@ What an adversary wants, in priority order:
   exists to keep this confidential.
 - **Data-encryption keys (DEKs)** — one per record, AES-256-GCM; unwrapping one
   yields a record's plaintext.
-- **The emergency key** — reconstructed from the 2-of-3 Shamir gate; unlocks
+- **The emergency key** — reconstructed from the weighted 3-of-4 Shamir gate (ADR-0089); unlocks
   break-glass and emergency search for a patient.
 - **Attribute keys** — issued by authorities; enough of them satisfy a policy
   tree and reconstruct a DEK's wrapping key.
@@ -90,8 +90,8 @@ requests; try to act for patients or records outside its remit.
 **What it cannot get.** It cannot decrypt a record whose policy its held attribute
 keys do not satisfy — the cryptographic layer is the backstop
 (`ARCHITECTURE.md` §8). It cannot forge a break-glass alone: break-glass needs
-the clinician custody share and the audit service's share (2-of-3 split, share 2
-not deposited, ADR-0074), and the audit service's share is released only *after*
+three of the four points of a weighted 3-of-4 split, two of which only the audit
+service holds (ADR-0089), and the audit service's shares are released only *after*
 a log commit, so a rogue node cannot both stay silent and open a record. Replay is
 blocked by one-time IDs on assertions, share requests, and transition events
 (consumed-ID store, `ARCHITECTURE.md` §8 "Replay protection"). A forged Emergency
@@ -116,16 +116,18 @@ should not grant.
 
 **Capabilities.** Mints attribute keys for attributes **it owns**; signs under its
 authority certificate; participates in cross-facility flows as the patient's home
-authority. Share 2 of the break-glass gate is reserved for it but not deposited
-in this build (ADR-0074), so it holds no break-glass share.
+authority. As a patient's home authority it holds share 2 of that patient's
+records' break-glass gate (ADR-0089), and releases it only against an emergency
+assertion it has validated itself.
 
 **What it cannot get.** It can only mint the attributes **it is the authority
 for.** A policy tree draws leaves from *multiple independent authorities*
 (`ARCHITECTURE.md` §3), so a single rogue authority cannot satisfy a tree that
 requires attributes owned by others — this is the multi-authority property doing
-its job. It holds no break-glass share in this build (ADR-0074); were share 2
-deposited, it would still hold only **one** of three and could not reconstruct the
-emergency key alone (the tested no-single-party property, `PROJECT.md` §5 item 3).
+its job. Share 2 is **one** point of a threshold of three: alone, or with the
+custodian's share 1, it cannot reconstruct the emergency key; only with the audit
+service's two shares, which are released after a log commit (the tested
+no-single-party property, `PROJECT.md` §5 item 3).
 
 **Residual risk.** For records whose policy is satisfiable *entirely* by attributes
 this authority owns, a rogue authority can mint its way in — an inherent property

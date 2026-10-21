@@ -8,7 +8,7 @@ hash and signature is actually computed.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from breakglass.share_sealing import SealedShare, ShareKeyStatement
 from contracts import AuditEntry, EmergencyAssertion
@@ -64,16 +64,17 @@ class AppendEntryResponse(BaseModel):
 
 
 class RegisterShareRequest(BaseModel):
-    """Hand this service custody of one break-glass share (share 3).
+    """Hand this service custody of its break-glass shares (shares 3 and 4).
 
     Normally called once per record at seed/ingest time by whoever performed
-    the 2-of-3 split (``breakglass.emergency_key.split_emergency_key``), to
-    give the audit service its own copy out of band.
+    the weighted 3-of-4 split (``breakglass.emergency_key.split_emergency_key``),
+    to give the audit service its own two points out of band (ADR-0089). The
+    service refuses any other set of share indices.
     """
 
     share_key: str = Field(..., description="Usually the record_id this share protects")
-    # Sealed to this service's share key (ADR-0079): no share bytes on the wire.
-    sealed_share: SealedShare
+    # Each sealed to this service's share key (ADR-0079): no share bytes on the wire.
+    sealed_shares: list[SealedShare] = Field(..., min_length=1, max_length=4)
 
 
 class RegisterShareResponse(BaseModel):
@@ -82,12 +83,12 @@ class RegisterShareResponse(BaseModel):
 
 
 class ReplaceShareRequest(BaseModel):
-    """Replace a held share with the next generation's (ADR-0069).
+    """Replace the held shares with the next generation's (ADR-0069).
 
     Sent by the facility that ran a record's forced rotation at expiry.
     """
 
-    sealed_share: SealedShare
+    sealed_shares: list[SealedShare] = Field(..., min_length=1, max_length=4)
     generation: int = Field(..., ge=1)
 
 
@@ -120,15 +121,20 @@ class ReleaseShareRequest(BaseModel):
     event_data: dict[str, Any] = Field(default_factory=dict)
     actor_id: str
     correlation_id: str
-    # The facility whose gate will combine the shares: share 3 is sealed to
-    # its key, so the caller forwarding it never sees it (ADR-0079).
+    # Which third point the caller presents with shares 3 and 4: the
+    # custodian's share 1, or the home authority's share 2 when share 1 is
+    # lost (ADR-0089). Recorded in the entry.
+    unlock_path: Literal["custodian", "home_authority"] = "custodian"
+    # The facility whose gate will combine the shares: shares 3 and 4 are
+    # sealed to its key, so the caller forwarding them never sees them
+    # (ADR-0079).
     recipient: ShareKeyStatement
 
 
 class ReleaseShareResponse(BaseModel):
-    """The released share and the audit entry committed immediately before it."""
+    """The released shares and the audit entry committed immediately before them."""
 
-    sealed_share: SealedShare
+    sealed_shares: list[SealedShare]
     entry: AuditEntry
 
 

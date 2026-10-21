@@ -5,7 +5,7 @@ Orchestrates the complete 8-Act cross-hospital emergency break-glass demonstrati
 2. Synthetic Data Seeding & Zero-Knowledge Verification (ADR-0016 owner leaves).
 3. Blind Cross-Hospital Discovery (Locating remote record without leaking content).
 4. Access Refusal Under Routine Clinical Policy (Strict policy enforcement, HTTP 403).
-5. Break-Glass Declaration & 2-of-3 Shamir Reconstruction (Log-before-release).
+5. Break-Glass Declaration & 3-of-4 Shamir Reconstruction (Log-before-release).
 6. Live Visual Countdown & Ephemeral Key Revocation (Dead-token verification).
 7. Tamper-Evident Audit Hash Chain Verification (SHA-256 genesis-to-head proof).
 8. Examiners' Cryptographic & Architectural Checklist.
@@ -353,27 +353,35 @@ def standalone_federation(
         facility_cas=trust.facility_cas,
         revoked_serials=trust.revoked_serials,
     )
-    app_med = create_authority_app(
-        "authority-med",
-        frozenset({"role"}),
-        service_root=root_cert,
-        subject_trust=subject_trust,
-    )
-    app_net = create_authority_app(
-        "authority-net",
-        frozenset({"specialty", "facility", "owner"}),
-        service_root=root_cert,
-        subject_trust=subject_trust,
-    )
-    app_fa = facility("facility-a", repo_fa, exp_mgr_a)
-    app_fb = facility("facility-b", repo_fb, exp_mgr_b)
-
     store_conn = psycopg.connect(db_url)
     store_conn.autocommit = True
 
     def state_of(record_id: str) -> LifecycleState | None:
         row = repo_mod.get_lifecycle_state(store_conn, record_id)
         return LifecycleState(row["state"]) if row else None
+
+    # Each authority is also its patients' home authority: it holds share 2
+    # and validates assertions before releasing it (ADR-0089).
+    app_med = create_authority_app(
+        "authority-med",
+        frozenset({"role"}),
+        service_root=root_cert,
+        subject_trust=subject_trust,
+        identity=identities["authority-med"],
+        trust=trust,
+        state_loader=state_of,
+    )
+    app_net = create_authority_app(
+        "authority-net",
+        frozenset({"specialty", "facility", "owner"}),
+        service_root=root_cert,
+        subject_trust=subject_trust,
+        identity=identities["authority-net"],
+        trust=trust,
+        state_loader=state_of,
+    )
+    app_fa = facility("facility-a", repo_fa, exp_mgr_a)
+    app_fb = facility("facility-b", repo_fb, exp_mgr_b)
 
     app_cust = create_custodian_app(
         endpoints=CustodianEndpoints(
@@ -590,7 +598,8 @@ def run_demo_scenario(
             f"     {s.DIM}Policy Tree:{s.RESET} Clinical AND Branch + "
             f"{s.YELLOW}ADR-0016 Owner Leaf (owner:{pat.patient_id}){s.RESET}\n"
             f"     {s.DIM}Search Index:{s.RESET} Blind HKDF tokens for [{terms}]\n"
-            f"     {s.DIM}Key Split:{s.RESET} 2-of-3 Shamir (Share 3 in Audit escrow)"
+            f"     {s.DIM}Key Split:{s.RESET} weighted 3-of-4 Shamir "
+            f"(Shares 3+4 in Audit escrow, Share 2 at home authority)"
         )
 
     print(
@@ -681,8 +690,8 @@ def run_demo_scenario(
     # ACT 5: Break-Glass Emergency Declaration & Shamir Reconstruction
     # =========================================================================
     _print_box_header(
-        "ACT 5: BREAK-GLASS DECLARATION & 2-OF-3 SHAMIR RECONSTRUCTION",
-        "Emergency assertion signed and Share 3 released via Log-Before-Release",
+        "ACT 5: BREAK-GLASS DECLARATION & 3-OF-4 SHAMIR RECONSTRUCTION",
+        "Emergency assertion signed and Shares 3+4 released via Log-Before-Release",
         s,
     )
     house_info = seeded_data["clinicians"]["doc-201"]
@@ -715,25 +724,25 @@ def run_demo_scenario(
         f"     • Signature: {_fingerprint(assertion.signature)}"
     )
 
-    # 2. Present Share 1 and request Share 3 from Audit Service
-    print("\n  2. Assembling 2-of-3 Shamir Threshold Shares:")
+    # 2. Present Share 1 and request Shares 3 and 4 from the Audit Service
+    print("\n  2. Assembling 3-of-4 Shamir Threshold Shares:")
     share1 = alice_rec_info["share1"]
     print(
         f"     [{s.GREEN}Share 1: Clinician Holding{s.RESET}] "
         f"x={share1[0]}, Fingerprint={_fingerprint(share1[1])}"
     )
     print(
-        f"     [{s.DIM}Share 2: Home Node Custody{s.RESET}]  "
-        f"x=2, [Simulated Remote Node / Offline]"
+        f"     [{s.DIM}Share 2: Home Authority Custody{s.RESET}]  "
+        f"x=2, [Backup -- asked only if Share 1 is lost]"
     )
 
     print(
-        "\n  3. Requesting Share 3 from Standalone Audit Service "
+        "\n  3. Requesting Shares 3 and 4 from Standalone Audit Service "
         "(Log-Before-Release):"
     )
     corr_id = "demo-corr-breakglass-001"
-    # Share 3 is sealed to Facility B's gate, whose key the audit service
-    # verifies against the federation root (ADR-0079).
+    # Shares 3 and 4 are sealed to Facility B's gate, whose key the audit
+    # service verifies against the federation root (ADR-0079).
     gate_statement = fetch_share_key(client, endpoints.facility_b)
     gate = verify_key_statement(
         gate_statement, trusted_root=_seed_root(seeded_data), kind="facility"
@@ -759,16 +768,18 @@ def run_demo_scenario(
     )
     release_res.raise_for_status()
     rel_data = release_res.json()
-    rel_sealed = rel_data["sealed_share"]
-    rel_x = rel_sealed["x"]
+    released = rel_data["sealed_shares"]
     new_seq = rel_data["entry"]["seq"]
 
     print(
         f"     {s.GREEN}[✓] AUDIT COMMIT SUCCESSFUL:{s.RESET} New hash chain entry "
-        f"committed at {s.BOLD}Seq #{new_seq}{s.RESET} BEFORE release.\n"
-        f"     [{s.GREEN}Share 3: Released Custody{s.RESET}]   "
-        f"x={rel_x}, sealed to Facility B's gate, "
-        f"Fingerprint={_fingerprint(rel_sealed['ciphertext_b64'])}"
+        f"committed at {s.BOLD}Seq #{new_seq}{s.RESET} BEFORE release."
+        + "".join(
+            f"\n     [{s.GREEN}Share {sealed['x']}: Released Custody{s.RESET}]   "
+            f"x={sealed['x']}, sealed to Facility B's gate, "
+            f"Fingerprint={_fingerprint(sealed['ciphertext_b64'])}"
+            for sealed in released
+        )
     )
 
     # 3. Unlock record at Facility B
@@ -779,7 +790,7 @@ def run_demo_scenario(
             "clinician_certificate_pem": house_info["certificate_pem"],
             "sealed_shares": [
                 sealed_json(share1, record_id="rec-001", recipient=gate),
-                rel_sealed,
+                *released,
             ],
             "pre_rewrap_key": house_info["pre_public_key"],
             "transition_event": transition_event.model_dump(mode="json"),
@@ -793,7 +804,7 @@ def run_demo_scenario(
 
     print(
         f"\n  4. Threshold gate reconstruction & Proxy Re-Encryption (PRE):\n"
-        f"     • 2-of-3 Threshold Reconstructed: {s.GREEN}SUCCESS (GF(p)){s.RESET}\n"
+        f"     • 3-of-4 Threshold Reconstructed: {s.GREEN}SUCCESS (GF(p)){s.RESET}\n"
         f"     • State Machine Transition: {s.BOLD}GRANTED → "
         f"{unlock_data['transition_event']['to_state']}{s.RESET}\n"
         f"     • Re-wrapped DEK package delivered via ElGamal PRE"
@@ -990,7 +1001,7 @@ def run_demo_scenario(
 
     checklist = [
         ("ADR-0001", "Zero plaintext keys in storage or API routes", "PASS"),
-        ("ADR-0002", "2-of-3 Shamir threshold secret reconstruction", "PASS"),
+        ("ADR-0089", "Weighted 3-of-4 Shamir threshold reconstruction", "PASS"),
         ("ADR-0003", "Simulated HSM/KMS timer with signed rotation", "PASS"),
         ("ADR-0004", "Proxy Re-Encryption (PRE) ElGamal key delivery", "PASS"),
         ("ADR-0016", "Owner leaf on every policy tree (owner:<pat_id>)", "PASS"),

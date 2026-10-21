@@ -129,11 +129,12 @@ def test_breakglass_share_not_released_when_log_commit_fails(
     # Disable the log-commit control at its exact point of use.
     monkeypatch.setattr(repo, "insert_audit_entry", _boom)
 
-    share = (2, b"share-bytes-must-never-escape")
+    # The audit service's holding: shares 3 and 4 (ADR-0089).
+    shares = ((3, b"share-bytes-must-never-escape"), (4, b"nor-may-these"))
     with pytest.raises(AuditCommitFailedError) as excinfo:
         release_share_after_commit(
             conn,
-            share=share,
+            shares=shares,
             event_type="breakglass_share_release",
             event_data={"assertion_id": "assn-fail"},
             actor_id="audit-service",
@@ -156,10 +157,10 @@ def test_share_released_only_after_successful_commit(conn, audit_keypair):
     priv, _pub = audit_keypair
     _seed_genesis(conn, priv)
 
-    share = (2, b"share-bytes")
-    released_share, entry = release_share_after_commit(
+    shares = ((3, b"share-bytes"), (4, b"more-share-bytes"))
+    released, entry = release_share_after_commit(
         conn,
-        share=share,
+        shares=shares,
         event_type="breakglass_share_release",
         event_data={"assertion_id": "assn-ok"},
         actor_id="audit-service",
@@ -167,6 +168,6 @@ def test_share_released_only_after_successful_commit(conn, audit_keypair):
         signing_key=priv,
     )
 
-    assert released_share == share
+    assert released == shares
     assert repo.get_chain_head(conn) == entry
     assert repo.get_audit_entry(conn, entry.seq) == entry

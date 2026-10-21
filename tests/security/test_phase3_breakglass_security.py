@@ -1,15 +1,18 @@
 """Negative security tests for P3-5 emergency unlock gate.
 
-Backs the P3-5 exit criteria: break-glass is a genuine 2-of-3 threshold, not
-a single custodian's decision, and every failure mode fails closed.
+Backs the P3-5 exit criteria: break-glass is a genuine threshold -- the
+weighted 3-of-4 split of ADR-0089 -- not a single custodian's decision, and
+every failure mode fails closed.
 
 Each test states the paper claim it backs and includes a positive control in
 the same fixture so a broken setup cannot masquerade as a passing test.
 
 Adversarial cases proved here:
 
-- A single share (any one custodian) is never enough to open a record.
-- The audit service's share alone cannot unilaterally open a record --
+- A single share (any one holder) is never enough to open a record.
+- Custodian + home authority -- every point outside the audit service -- is
+  two of three and opens nothing: there is no path around the audit service.
+- The audit service's two shares alone cannot unilaterally open a record --
   headline claim: audit participates, it does not decide.
 - Duplicate share IDs (the same x-coordinate presented twice) do not count
   as two distinct shares.
@@ -43,6 +46,7 @@ from records.exceptions import UnwrappingError
 from records.service import wrap_dek
 from shamir.exceptions import SecretSharingError
 
+from tests.shares import fallback_points, points, unlock_points
 from tests.transitions import open_event
 
 RECORD_ID = "rec-emergency-security-001"
@@ -55,11 +59,11 @@ RECORD_ID = "rec-emergency-security-001"
 
 @pytest.fixture()
 def scenario():
-    """One record's DEK wrapped under a fresh 2-of-3 emergency key, plus the
+    """One record's DEK wrapped under a fresh 3-of-4 emergency key, plus the
     signing/PRE key material a gate call needs."""
     dek = b"\x22" * 32
     emergency_key = generate_emergency_key()
-    shares = split_emergency_key(emergency_key)  # [(1, ...), (2, ...), (3, ...)]
+    shares = split_emergency_key(emergency_key)  # x = 1..4
 
     wrapping = wrap_dek(
         dek=dek,
@@ -75,11 +79,13 @@ def scenario():
         "dek": dek,
         "emergency_key": emergency_key,
         "shares": shares,
-        # Convention for these tests: shares[0]=facility, shares[1]=home
-        # authority, shares[2]=audit service.
-        "facility_share": shares[0],
-        "authority_share": shares[1],
-        "audit_share": shares[2],
+        # The holders of ADR-0089: x=1 the custodian (clinician custody), x=2
+        # the patient's home authority, x=3 and x=4 the audit service.
+        "facility_share": points(shares, {1})[0],
+        "authority_share": points(shares, {2})[0],
+        "audit_shares": points(shares, {3, 4}),
+        "unlock": unlock_points(shares),
+        "fallback": fallback_points(shares),
         "wrapping": wrapping,
         "lifecycle_priv": lifecycle_priv,
         "lifecycle_pub": lifecycle_pub,
@@ -118,11 +124,10 @@ def _open(scenario, shares_presented, **overrides):
 
 
 class TestSingleShareRejected:
-    """Paper claim: one share, from any single custodian, cannot open a record."""
+    """Paper claim: one share, from any single holder, cannot open a record."""
 
-    def test_positive_control_two_shares_unlock(self, scenario):
-        two = [scenario["facility_share"], scenario["authority_share"]]
-        result = _open(scenario, two)
+    def test_positive_control_three_shares_unlock(self, scenario):
+        result = _open(scenario, scenario["unlock"])
         assert result.emergency_key == scenario["emergency_key"]
 
     @pytest.mark.claim("C3", level="module")
@@ -137,6 +142,27 @@ class TestSingleShareRejected:
 
 
 # ---------------------------------------------------------------------------
+# No path around the audit service (ADR-0089)
+# ---------------------------------------------------------------------------
+
+
+class TestNoPairWithoutTheAuditServiceOpens:
+    """Paper claim (C3, headline): every reconstruction includes the audit
+    service. Custodian + home authority hold two points of a threshold of
+    three, so together they open nothing; the home authority's share stands
+    in for share 1 only alongside the audit service's two."""
+
+    def test_positive_control_fallback_set_unlocks(self, scenario):
+        result = _open(scenario, scenario["fallback"])
+        assert result.emergency_key == scenario["emergency_key"]
+
+    @pytest.mark.claim("C3", level="module")
+    def test_custodian_and_home_authority_together_rejected(self, scenario):
+        with pytest.raises(InsufficientSharesError):
+            _open(scenario, [scenario["facility_share"], scenario["authority_share"]])
+
+
+# ---------------------------------------------------------------------------
 # Audit service cannot unilaterally open (headline claim)
 # ---------------------------------------------------------------------------
 
@@ -144,21 +170,25 @@ class TestSingleShareRejected:
 class TestAuditShareAloneCannotOpen:
     """Paper claim: audit participates in break-glass, it does not decide.
 
-    The audit service holds one of three shares -- exactly like any other
-    custodian -- and its share alone is exactly as insufficient as anyone
-    else's lone share. This is the property that keeps break-glass a
-    threshold decision rather than a standing audit override.
+    The audit service holds two of four points, one short of the threshold,
+    so its shares alone are as insufficient as anyone else's. This is the
+    property that keeps break-glass a threshold decision rather than a
+    standing audit override.
     """
 
     def test_positive_control_audit_plus_one_more_unlocks(self, scenario):
-        """Audit's share IS useful as one of two -- just never alone."""
-        result = _open(scenario, [scenario["audit_share"], scenario["facility_share"]])
+        """Audit's shares ARE useful with one more -- just never alone."""
+        result = _open(
+            scenario, [*scenario["audit_shares"], scenario["facility_share"]]
+        )
         assert result.emergency_key == scenario["emergency_key"]
 
     @pytest.mark.claim("C3", level="module")
     def test_audit_share_alone_rejected(self, scenario):
         with pytest.raises(InsufficientSharesError):
-            _open(scenario, [scenario["audit_share"]])
+            _open(scenario, scenario["audit_shares"])
+        with pytest.raises(InsufficientSharesError):
+            _open(scenario, scenario["audit_shares"][:1])
 
 
 # ---------------------------------------------------------------------------
@@ -169,22 +199,27 @@ class TestAuditShareAloneCannotOpen:
 class TestDuplicateSharesDoNotCount:
     """Paper claim: presenting one share twice is not two shares."""
 
-    def test_positive_control_two_distinct_shares_unlock(self, scenario):
-        result = _open(scenario, [scenario["facility_share"], scenario["audit_share"]])
+    def test_positive_control_three_distinct_shares_unlock(self, scenario):
+        result = _open(scenario, scenario["unlock"])
         assert result.emergency_key == scenario["emergency_key"]
 
     def test_same_share_twice_rejected(self, scenario):
+        audit3 = scenario["audit_shares"][0]
         with pytest.raises(InsufficientSharesError):
-            _open(scenario, [scenario["facility_share"], scenario["facility_share"]])
+            _open(
+                scenario,
+                [scenario["facility_share"], scenario["facility_share"], audit3],
+            )
 
     def test_same_x_different_payload_rejected(self, scenario):
-        """Even a mutated copy of a share x-coordinate does not add a second
-        distinct share -- uniqueness is by x, and a duplicate x is discarded
-        before reconstruction is attempted at all."""
+        """Even a mutated copy of a share x-coordinate does not add a distinct
+        share -- uniqueness is by x, and a duplicate x is discarded before
+        reconstruction is attempted at all."""
         x, share_bytes = scenario["facility_share"]
         forged_same_x = (x, b"\x00" * len(share_bytes))
+        audit3 = scenario["audit_shares"][0]
         with pytest.raises(InsufficientSharesError):
-            _open(scenario, [scenario["facility_share"], forged_same_x])
+            _open(scenario, [scenario["facility_share"], forged_same_x, audit3])
 
 
 # ---------------------------------------------------------------------------
@@ -197,8 +232,7 @@ class TestTamperedShareBytes:
     wrong key is caught downstream rather than silently accepted."""
 
     def test_positive_control_untampered_shares_unlock(self, scenario):
-        two = [scenario["facility_share"], scenario["authority_share"]]
-        result = _open(scenario, two)
+        result = _open(scenario, scenario["unlock"])
         assert result.emergency_key == scenario["emergency_key"]
 
     def test_tampered_share_bytes_fail_downstream(self, scenario):
@@ -210,7 +244,7 @@ class TestTamperedShareBytes:
         # 32-byte key (caught when it fails to authenticate the DEK wrapping)
         # or fails structurally inside shamir -- both are "fails closed".
         with pytest.raises((SecretSharingError, UnwrappingError)):
-            _open(scenario, [tampered_share, scenario["authority_share"]])
+            _open(scenario, [tampered_share, *scenario["audit_shares"]])
 
 
 # ---------------------------------------------------------------------------
@@ -223,19 +257,16 @@ class TestEmittedTransitionEventIntegrity:
     legal artefact -- not an unsigned side effect of the gate."""
 
     def test_positive_control_unlock_succeeds(self, scenario):
-        two = [scenario["facility_share"], scenario["authority_share"]]
-        result = _open(scenario, two)
+        result = _open(scenario, scenario["unlock"])
         assert result.transition_event.to_state == LifecycleState.EMERGENCY_OPEN
 
     def test_transition_event_signature_verifies(self, scenario):
-        two = [scenario["facility_share"], scenario["authority_share"]]
-        result = _open(scenario, two)
+        result = _open(scenario, scenario["unlock"])
         # Should not raise.
         verify_transition_event(result.transition_event, scenario["lifecycle_pub"])
 
     def test_transition_event_is_legal_per_state_machine(self, scenario):
-        two = [scenario["facility_share"], scenario["authority_share"]]
-        result = _open(scenario, two)
+        result = _open(scenario, scenario["unlock"])
         machine = LifecycleStateMachine(ConsumedEventIds())
         new_state = machine.apply_transition(
             current_state=LifecycleState.GRANTED,
@@ -247,8 +278,7 @@ class TestEmittedTransitionEventIntegrity:
     def test_tampered_transition_event_signature_fails(self, scenario):
         from crypto_core import InvalidSignatureError
 
-        two = [scenario["facility_share"], scenario["authority_share"]]
-        result = _open(scenario, two)
+        result = _open(scenario, scenario["unlock"])
         tampered = result.transition_event.model_copy(update={"actor_id": "dr-evil"})
         with pytest.raises(InvalidSignatureError):
             verify_transition_event(tampered, scenario["lifecycle_pub"])
@@ -260,7 +290,7 @@ class TestGateRefusesAForeignTransition:
     combines a single share."""
 
     def _two(self, scenario):
-        return [scenario["facility_share"], scenario["authority_share"]]
+        return scenario["unlock"]
 
     def test_positive_control_clinicians_event_opens(self, scenario):
         assert _open(scenario, self._two(scenario)).rewrapped_dek

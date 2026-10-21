@@ -20,6 +20,7 @@ import psycopg
 import pytest
 from api.hospital import create_hospital_app
 from api.repository import InMemoryStorageRepository, PostgresStorageRepository
+from breakglass.emergency_key import THRESHOLD
 from contracts import Facility
 from contracts.enums import FacilityStatus, LifecycleState
 from crypto_core import generate_ec_keypair, public_key_to_pem
@@ -45,6 +46,7 @@ from tests.security.test_p51_system_claims import (
     _seed,
     _unlock_payload,
 )
+from tests.shares import deposited_unlock_points, unlock_points
 
 
 class FacilityProcess:
@@ -137,7 +139,7 @@ def _open(site) -> None:
 
 def _opens_with(repo, shares) -> bytes:
     emergency = repo.get_wrapping_for_record(RECORD, wrapped_for="emergency")
-    dek = unwrap_dek(emergency, combine_shares(list(shares), k=2))
+    dek = unwrap_dek(emergency, combine_shares(list(shares), k=THRESHOLD))
     return decrypt_record(repo.get_record(RECORD), dek)
 
 
@@ -165,12 +167,9 @@ def test_restart_mid_window_closes_the_record_with_a_rotation(site):
     assert repo.list_emergency_sessions("facility-a") == []
     deposit = site["rotation"].deposits[-1]
     assert deposit["generation"] == 1
-    assert (
-        _opens_with(repo, [deposit["clinician_share"], deposit["audit_share"]])
-        == PLAINTEXT
-    )
+    assert _opens_with(repo, deposited_unlock_points(deposit)) == PLAINTEXT
     with pytest.raises(UnwrappingError):
-        _opens_with(repo, site["shares"][:2])
+        _opens_with(repo, unlock_points(site["shares"]))
 
 
 @pytest.mark.claim("C4", level="system")
@@ -201,10 +200,7 @@ def test_crash_between_store_and_share_deposit_is_finished_at_restart(
     assert repo.get_lifecycle_state(RECORD) is LifecycleState.GRANTED
     deposit = rotation.deposits[-1]
     assert deposit["generation"] == 2
-    assert (
-        _opens_with(repo, [deposit["clinician_share"], deposit["audit_share"]])
-        == PLAINTEXT
-    )
+    assert _opens_with(repo, deposited_unlock_points(deposit)) == PLAINTEXT
     assert repo.list_emergency_sessions("facility-a") == []
 
 

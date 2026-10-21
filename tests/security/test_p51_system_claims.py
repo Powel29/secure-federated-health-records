@@ -57,6 +57,7 @@ from tests.api.conftest import (  # noqa: F401
 from tests.sealing import facility_statement, seal_all, seal_for
 from tests.security.conftest import skip_or_fail_without_postgres
 from tests.service_pki import PersonPKI, ServicePKI, release_body
+from tests.shares import deposited_unlock_points, unlock_points
 from tests.transitions import open_event
 
 RECORD = "rec-001"
@@ -136,7 +137,7 @@ def hospital(federation_pki, attribute_materials):  # noqa: F811
 @pytest.fixture()
 def audit_client(federation_pki):  # noqa: F811
     """A real audit service on Postgres (same pattern as tests/api), called
-    as the custodian, which deposits and requests share 3."""
+    as the custodian, which deposits and requests shares 3 and 4."""
     if not _DB_URL:
         skip_or_fail_without_postgres(
             "DATABASE_URL not set; audit service needs Postgres"
@@ -189,7 +190,8 @@ def _read(client: TestClient, requester: str, keyring: dict[str, str]):
 def _unlock_payload(h: dict, *, shares=None, target=None) -> dict:
     """Dr Alice's open: her assertion and her own signed transition (ADR-0068)."""
     pki = h["pki"]
-    shares = shares if shares is not None else h["shares"][:2]
+    # Share 1 plus the audit service's shares 3 and 4 (ADR-0089).
+    shares = shares if shares is not None else unlock_points(h["shares"])
     assertion = create_emergency_assertion(
         patient_id=PATIENT,
         clinician_id="dr-alice",
@@ -219,8 +221,7 @@ def _unlock_payload(h: dict, *, shares=None, target=None) -> dict:
 
 def _rotated_shares(h: dict) -> list:
     """The shares the latest expiry rotation handed to the holders (ADR-0069)."""
-    latest = h["rotation"].deposits[-1]
-    return [latest["clinician_share"], latest["audit_share"]]
+    return deposited_unlock_points(h["rotation"].deposits[-1])
 
 
 def _search(client: TestClient, term: str = "cardiac"):
@@ -294,19 +295,22 @@ def test_c1_revoked_clinician_cannot_read_after_revoke_endpoint(hospital):
 def test_c3_audit_service_releases_no_share_without_a_valid_assertion(
     audit_client, federation_pki  # noqa: F811
 ):
-    """C3: share 3 is not available to a caller presenting no emergency assertion.
+    """C3: shares 3 and 4 are not available to a caller presenting no assertion.
 
-    With share 1 held by the custodian, an unconditional share-3 release puts
-    both shares in one actor's hands -- a single party opens the record. The
-    audit service now validates the assertion itself (ADR-0067, D1-a): even
-    the custodian, a caller allowed to ask, gets nothing without one.
+    With share 1 held by the custodian, an unconditional release of shares 3
+    and 4 puts three points in one actor's hands -- a single party opens the
+    record. The audit service validates the assertion itself (ADR-0067,
+    D1-a): even the custodian, a caller allowed to ask, gets nothing without
+    one.
     """
     client, _conn = audit_client
     registered = client.post(
         "/breakglass/shares",
         json={
             "share_key": RECORD,
-            "sealed_share": seal_for(client, RECORD, (3, secrets.token_bytes(33))),
+            "sealed_shares": [
+                seal_for(client, RECORD, (x, secrets.token_bytes(33))) for x in (3, 4)
+            ],
         },
     )
     assert registered.status_code == 201
@@ -577,7 +581,7 @@ def test_c8_replayed_assertion_rejected_after_facility_restart(hospital):
     # replay check is what refuses, not the share opening (ADR-0079).
     replay_body = {
         **payload,
-        "sealed_shares": seal_all(restarted, RECORD, list(hospital["shares"][:2])),
+        "sealed_shares": seal_all(restarted, RECORD, unlock_points(hospital["shares"])),
     }
     replay = restarted.post(f"/records/{RECORD}/breakglass", json=replay_body)
     assert replay.status_code == 400

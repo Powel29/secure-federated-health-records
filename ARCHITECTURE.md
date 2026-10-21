@@ -79,14 +79,17 @@ generation and verification, and the rotation logic each transition triggers.
 
 **C10 — `audit`.** Hash-chained signed log — `h_i = SHA-256(h_{i-1} ‖ event ‖
 timestamp ‖ actor)` — append and full-chain verification. Runs as its own
-process. Also custodian of one break-glass share (see C11).
+process. Also custodian of two break-glass shares, 3 and 4 (see C11).
 
-**C11 — `breakglass`.** The threshold gate. The emergency key is split 2-of-3
-for the attending clinician (custody), the patient's home authority or its
-federated delegate, and the audit service; share 2 is reserved and not
-deposited in this build, so break-glass needs shares 1 and 3 (ADR-0074). The
-audit service's share is released **only after** its log entry is committed and
-the new chain head is returned. Reconstructs the time-boxed emergency key.
+**C11 — `breakglass`.** The threshold gate. The emergency key is a weighted
+Shamir **3-of-4** split (ADR-0089): share 1 to the attending clinician's
+custody, share 2 to the patient's home authority (the issuer of the patient's
+`owner` credential), and shares 3 and 4 to the audit service. Any three points
+reconstruct, so break-glass needs the audit service plus either the custodian
+or the home authority. Custodian + home authority (two points) cannot open a
+record, and neither can the audit service alone. The audit service's shares
+are released **only after** its log entry is committed and the new chain head
+is returned. Reconstructs the time-boxed emergency key.
 
 **C12 — `search`.** Encrypted inverted index over record contents, plus search
 token derivation. Tokens derive from the emergency key, so search capability
@@ -188,8 +191,8 @@ C9 lifecycle          <- C1, C4, C8        (transitions rotate real keys)
 
 C11 breakglass        <- C2, C9, C10, C6   (shares, a state to enter, an
                                             audit service to gate on; share 2
-                                            reserved for a home authority,
-                                            ADR-0074)
+                                            held by the home authority,
+                                            ADR-0089)
 C12 search            <- C1, C8, C11       (tokens derive from emergency key)
    cross-facility     <- C3, C5, C13       (PRE re-wrap to an out-of-network
    handoff                                  clinician at a discovered node)
@@ -271,26 +274,40 @@ contracts (T02) -> crypto_core -> records -> lifecycle -> breakglass -> search -
 3. Threshold collection begins (C11):
    - **Share 1** — attending clinician, released against a valid emergency
      assertion and a valid cross-certified identity.
-   - **Share 2** — reserved for the patient's home authority or its federated
-     delegate. **Not deposited in this build (ADR-0074):** a holder of share 2
-     would let shares 1 + 2 open a record with no log entry unless it also
-     validated the assertion and committed to the audit chain first.
+   - **Share 2** — the patient's home authority (the authority that issued the
+     patient's `owner` credential). Used only when share 1 is not available
+     (for example, lost in a custodian restart): the custodian then asks the
+     home authority before it asks the audit service. The home authority
+     releases share 2 only after it has validated the emergency assertion
+     itself, with the same five-point check and record binding as the audit
+     service, against its own trust anchors and its own consumed-assertion
+     store, and only sealed to a root-certified facility gate. It writes no
+     log entry: share 2 opens nothing without shares 3 and 4 (ADR-0089).
    - **In transit** every share is sealed to its recipient's share key,
      published at `GET /share-key` and signed by the recipient's
-     root-certified service identity; share 3 is sealed by the audit service
-     straight to the facility's gate, so the custodian forwarding it cannot
-     read it (ADR-0079).
-   - **Share 3** — audit service. **The audit service computes and commits
-     `h_i = SHA-256(h_{i-1} ‖ event ‖ timestamp ‖ actor)` first, and only then
-     returns its share along with the new chain head.** If the log write fails,
-     no share is returned and break-glass fails closed.
+     root-certified service identity; shares 3 and 4 (by the audit service)
+     and share 2 (by the home authority) are sealed straight to the
+     facility's gate, so the custodian forwarding them cannot read them
+     (ADR-0079).
+   - **Shares 3 and 4** — audit service. **The audit service computes and
+     commits `h_i = SHA-256(h_{i-1} ‖ event ‖ timestamp ‖ actor)` first, and
+     only then returns both shares along with the new chain head.** If the log
+     write fails, no share is returned and break-glass fails closed. The entry
+     records which share path was used (`custodian` or `home_authority`).
+   - **Each holder takes only its own shares.** A deposit or replacement whose
+     share indices are not exactly the holder's ({1}, {2} or {3, 4}) is
+     refused, so a misrouted share cannot give two non-audit holders three
+     points.
 
      Each share holder validates the emergency assertion itself before it
      releases anything: the audit service runs the same five-point check
      against its own trust anchors and requires the assertion's signed context
      digest to name this record (ADR-0067).
-4. Shares 1 and 3 reconstruct the emergency key (any 2 of the 3-way split;
-   only these two are held). `lifecycle` records the
+4. Shares 3 and 4 plus share 1 (or share 2) reconstruct the emergency key.
+   Any 3 of the 4 points would; the custodian and the home authority hold
+   only two between them, so every set of three contains a share only the
+   audit service releases, and it releases 3 and 4 together, after its log
+   commit. `lifecycle` records the
    Granted → Emergency-open transition, signed by the clinician's own key
    inside the custodian and verified against their certificate before any
    share is combined (C9, ADR-0068).
@@ -339,7 +356,7 @@ src/
   records/         C8   record + envelope encryption, re-wrap
   lifecycle/       C9   the state machine
   audit/           C10  hash-chained signed log + share custody
-  breakglass/      C11  threshold gate (2-of-3 split, shares 1+3 held)
+  breakglass/      C11  threshold gate (weighted 3-of-4 split, ADR-0089)
   search/          C12  encrypted index + emergency-only tokens
   federation/      C13  patient-indexed discovery
   api/             C14  FastAPI apps (facility, authority, audit)
@@ -375,9 +392,9 @@ Seven processes. The shared `store` holds the encrypted records; the five federa
 | `store`      | 8000 | Shared semi-trusted encrypted record store | All ciphertext records, wrapped keys, coded search index — **never plaintext, never unwrapped keys** |
 | `facility-a` | 8001 | Patient's home facility | Clinician certs + home-authority link; **holds no records** — reads them from `store` |
 | `facility-b` | 8002 | Out-of-network facility (the demo entry point) | Clinician certs only; must discover the patient in `store`, then break-glass |
-| `authority-med` | 8010 | Medical council attribute authority | Attribute keys for `role:*` |
-| `authority-net` | 8011 | Hospital network attribute authority | Attribute keys for `specialty:*`, `facility:*` |
-| `audit` | 8020 | Audit service — chain custodian + share 3 | Hash-chained log, break-glass share |
+| `authority-med` | 8010 | Medical council attribute authority | Attribute keys for `role:*`; share 2 of records whose patients it issued an `owner` credential |
+| `authority-net` | 8011 | Hospital network attribute authority | Attribute keys for `specialty:*`, `facility:*`; share 2 of records whose patients it issued an `owner` credential (ADR-0089) |
+| `audit` | 8020 | Audit service — chain custodian + shares 3 and 4 | Hash-chained log, break-glass shares |
 | `custodian` | 8030 | Key Custodian — every subject's key agent (ADR-0043) | Per-subject signing keys, certificates, PRE keypairs, issued credentials; clinician-custody share 1 per record. Signs and presents on request; **decides nothing** |
 
 The three Django portals (C16) run beside these (`portal/manage.py runserver`,
