@@ -31,7 +31,7 @@ Report median and p95 in the paper, never the mean alone.
 
 | Benchmark | Path exercised |
 |---|---|
-| `threshold_reconstruction` | `shamir.combine_shares`, 2-of-3 |
+| `threshold_reconstruction` | `shamir.combine_shares`, 3-of-4 (ADR-0089) |
 | `rewrap_cost` | AES-256-GCM unwrap + wrap of one DEK |
 | `revocation_latency` | `records.revocation.revoke_record_access` (DEK rotation, policy recompile, signed transition) |
 | `pre_reencryption_component` | ElGamal PRE `reencrypt` only |

@@ -58,7 +58,7 @@ person already decrypted and saved. Say so before you are asked.
 
 - **Consent** (patient says yes) is a gate in front of the Granted read path.
 - **Revocation** is Granted→Revoked plus a key rotation.
-- **Break-glass** is →Emergency-open, which only happens through the 2-of-3
+- **Break-glass** is →Emergency-open, which only happens through the 3-of-4
   threshold gate (file 3).
 - **Expiry** is Emergency-open→Expired→Granted, executed by a timer that signs
   both moves and re-keys the record in between. No administrator action.

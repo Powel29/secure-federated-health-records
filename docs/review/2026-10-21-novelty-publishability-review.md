@@ -19,9 +19,10 @@
 >
 > **Out of date. Do not repeat these as current:**
 > - *"2-of-3 lets clinician + home authority open a record without the audit
->   service."* Fixed by ADR-0074: share 2 is never deposited (it is discarded
->   at ingest and at every rotation, `src/api/rotation.py`), so every
->   break-glass needs the audit service's share.
+>   service."* Fixed, first by ADR-0074 (share 2 discarded), now by
+>   ADR-0089: a weighted 3-of-4 split where the clinician's custodian holds
+>   x=1, the home authority x=2 and the audit service x=3 and x=4. Shares 1
+>   and 2 are only two points, so every unlock still needs an audit share.
 > - *"The audit service does not verify the assertion."* Fixed by ADR-0067
 >   (claim C3).
 > - *"Expiry does not replace the emergency shares."* Fixed by ADR-0069 (C4).
