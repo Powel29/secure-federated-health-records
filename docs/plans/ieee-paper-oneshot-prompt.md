@@ -4,7 +4,7 @@
 **Covers:** deliverable D3 (`PROJECT.md` §2)
 **Skill:** `.claude/skills/ieee-paper/` (every drafting and verifying agent
 reads it)
-**Decision:** ADR-0087 (IEEEtran LaTeX, built locally with Tectonic)
+**Decision:** ADR-0087 (IEEEtran LaTeX, built locally with Tectonic); ADR-0088 (novelty restated as a combination)
 
 ## Readiness: what was fixed on 2026-10-21
 
@@ -16,7 +16,8 @@ reads it)
 | Claims table | `docs/test-evidence/claim-table.md` from 2026-10-09 said 5/11 | Live `python -m tests.security.claims --table` on `867d472`: **11/11 hold**. The doc is regenerated |
 | Wire evidence (course module) | The saved `plain.pcap` had no Postgres traffic, so check 2 failed in the live test | Plain and TLS captures re-recorded (TLS against the TLS-only store). `wire.analyze_traffic`: **checks 0–4 pass**, audit COMMIT 4.62 ms before the release. `bench/results/p55_*` regenerated |
 | Benchmarks | 2026-10-19 run, AMD 16-core, before the ADR-0086 dependency bump | Re-run on current code: Intel 12-core, Postgres in Docker Desktop. Crypto figures unchanged. HTTP is ~405 ms median against ~50 ms before, which is the DB path on this machine (~11 ms per new connection), not the code. Recorded in `WORKFLOW.md` P5-2 |
-| Limitations count | `WORKFLOW.md` said "four caveats" | Points to `PROJECT.md` §5 (twelve) |
+| Limitations count | `WORKFLOW.md` said "four caveats" | Points to `PROJECT.md` §5 (thirteen since ADR-0088) |
+| Novelty claim | `PROJECT.md` §4 claimed "no prior work makes logging a cryptographic precondition", and that 2511.17464 does rotation | Restated as a combination (ADR-0088) after the literature review, filed at `docs/review/2026-10-21-novelty-publishability-review.md` with a status note on its outdated findings. New caveat §5 item 13 (trusted audit service). The review's bibliography feeds F8 as leads to verify |
 
 ## Still needed before running the prompt
 
@@ -46,7 +47,7 @@ resume point if context is compacted.
 | Stage | Who | Output |
 |---|---|---|
 | 0. Setup | orchestrator | branch, skeleton, `STATUS.md` |
-| 1. Extraction | 7 read-only subagents, in parallel | `paper/notes/facts-F*.md`, each fact with `file:line` |
+| 1. Extraction | 8 read-only subagents, in parallel (F8 also verifies references online) | `paper/notes/facts-F*.md`, each fact with `file:line` or a verified url; `refs-verified.bib` |
 | 2. Live check | 1 subagent | `facts-live.md`: claims table and suite totals at `HEAD` |
 | 3. Drafting | 6 writer subagents, in parallel | `paper/sections/*.tex`, TikZ figures, `refs.bib` |
 | 4. Build | orchestrator | Tectonic build of `paper/main.tex` → page count |
@@ -92,8 +93,13 @@ you, the orchestrator, never run out of context.
    benchmarks.
 8. ADRs marked Proposed are design choices of this build, not ratified
    decisions.
-9. Citations: anchors and rivals from PROJECT.md §4, each verified with web
-   search (DOI/arXiv). If it can't be confirmed, drop it. Never invent one.
+9. Novelty and citations: the position is PROJECT.md §4 as restated by
+   ADR-0088, a combination, never "first to make logging a precondition".
+   Leads come from docs/review/2026-10-21-novelty-publishability-review.md:
+   read its status note first, and never repeat the findings it marks out of
+   date. Its bibliography is leads only. Every cited entry is checked on its
+   primary page (DOI / arXiv / ePrint / publisher). If it can't be confirmed,
+   drop it. Never invent one.
 10. Figures: TikZ/pgfplots only (ADR-0087), with plot data taken from the
     CSVs. No \includegraphics of the bench PNGs.
 11. Builds: full builds use Tectonic,
@@ -126,7 +132,7 @@ you, the orchestrator, never run out of context.
   (pending/running/done/blocked) | Open issues. Update it after every
   subagent returns. After a compaction, re-read it and carry on.
 
-## Stage 1 — Extraction (7 read-only subagents, in parallel)
+## Stage 1 — Extraction (8 read-only subagents, in parallel)
 
 Each one writes paper/notes/facts-<id>.md as numbered facts
 ("N. statement — source"). Each sheet ends with "Contradictions found"
@@ -165,12 +171,24 @@ F6 traffic — PROJECT.md §4A; ARCHITECTURE.md §7 (capture configuration);
    0070, 0071, 0073. Extract: capture scope (loopback/Docker bridge only),
    each wire check and its result, and the measured leakage with numbers and
    the date of each file.
-F7 context + evaluation (benchmark-methodology) — PROJECT.md §4, §4B;
-   docs/novelty-research-handoff.md; bench/README.md;
+F7 evaluation (benchmark-methodology) — PROJECT.md §4B; bench/README.md;
    bench/results/benchmark_summary.csv, benchmark_results.csv,
-   environment.json; the WORKFLOW.md P5-2 notes; docs/explainers/07. Write
-   paper/notes/refs-verified.bib, each entry checked by web search, with
-   unverifiable ones marked DROPPED.
+   environment.json; the WORKFLOW.md P5-2 notes; docs/explainers/07.
+F8 related work (ieee-paper skill, "Related work, novelty and citations") —
+   PROJECT.md §4; docs/adr/0088-*.md;
+   docs/review/2026-10-21-novelty-publishability-review.md (status note
+   first). For every paper in the skill's coverage table, plus the §4
+   anchors and rivals:
+   - Open its primary page with web search/fetch. Record the verified
+     authors, title, venue, year, pages and DOI/arXiv id in
+     paper/notes/refs-verified.bib, with a `% verified: <url>` comment. If
+     the review's metadata or source link was wrong, say so.
+   - Write facts-F8.md: one fact per paper ("what it does — our delta —
+     source url"), checked against the paper itself, not the review's
+     summary.
+   - Mark anything unreachable DROPPED.
+   - List the related-work matrix columns, and fill the "this work" row from
+     facts-live.md and F1–F6, never from the review.
 
 ## Stage 2 — Live check (1 subagent, after Stage 1)
 
@@ -195,8 +213,11 @@ your section and page budget; `% src:` on every technical sentence; TikZ/
 pgfplots only; write paper/sections/NN-name.tex (tables in
 paper/tables/*.tex, generated from the CSV or fact data, never retyped).
 
-W1 Abstract + IEEEkeywords + I Introduction + II Related Work (F7, F5) — 1.25 pp;
-   merges refs-verified.bib into paper/refs.bib
+W1 Abstract + IEEEkeywords + I Introduction + II Related Work (F8, F5,
+   live) — 1.5 pp. Contributions worded as a combination (ADR-0088), with
+   transparent decryption named as the primitive we instantiate and our
+   weaker log admitted. The related-work matrix goes in paper/tables/.
+   Merges the non-DROPPED entries of refs-verified.bib into paper/refs.bib.
 W2 III Threat Model and Goals + IV System Overview (F4, F5) — 1 p; TikZ
    component and trust-boundary figure
 W3 V Key-Lifecycle State Machine (F1, F3) — 1.5 pp; TikZ state diagram and the
@@ -235,10 +256,16 @@ V2 code-truth — re-derive state names, transitions, share counts, key sizes,
 V3 honesty — every PROJECT.md §5 caveat present and not watered down; the
    abstract's limitations sentence; nothing from §6; claim statuses exactly
    as facts-live.md; Proposed ADRs not presented as settled; rivals fair;
-   synthetic data stated.
+   synthetic data stated. Novelty: no "first to" claim about log-gated
+   decryption, break-glass or time-limited search; transparent decryption
+   cited and credited; "every transition rotates" absent; no out-of-date
+   review finding (2-of-3 bypass, unchecked assertion, 5/11 claims) stated
+   as current; 2511.17464 not cited for rotation.
 V4 numbers + citations — every number matches its CSV/JSON row (benchmarks,
    wire checks, leakage, test counts); the machine is named; every \cite
-   resolves and is real; no unused entries.
+   resolves to a refs-verified.bib entry that has a `% verified:` url; open a
+   sample of at least five of those urls yourself and check that the
+   authors, venue, year and the claim cited match; no unused entries.
 V5 format — build with Tectonic itself; zero errors; no undefined
    references or citations; no overfull hbox over 10pt; every \ref/\label resolves; IEEEkeywords present;
    8–10 pages; figures readable in one column.

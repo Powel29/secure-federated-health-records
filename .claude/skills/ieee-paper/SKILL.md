@@ -40,14 +40,23 @@ a ratified decision. Don't write "the team agreed" about one.
   table.
 - Proxy re-encryption gets no security proof. Say it is unproven
   (ADR-0076: bidirectional, and computing `rk` needs both secret keys).
+- Include a **security-properties table** in Section VII. For each primitive
+  or construction, give: the property claimed, the security model, whether
+  it's tested (which claim), and whether it's proven. Never claim IND-CPA,
+  unidirectionality or collusion resistance for a construction nobody has
+  analysed. Write "not proven", which for the hand-rolled PRE and the
+  Shamir-over-policy-tree structure is the only honest entry.
+- **Figures match the shipped code.** The state diagram and transition table
+  are derived from `src/lifecycle/` and `src/contracts/`, not from a doc.
+  When the code changes, the figure changes in the same PR.
 
 ## Required structure (IEEEtran conference, 8–10 pages + references)
 
 | # | Section | Must contain |
 |---|---|---|
 | — | Abstract + IEEEkeywords | Problem, contribution, the main result, **and one or two sentences of limitations** (see below) |
-| I | Introduction | The gap: consent, revocation, break-glass and audit are usually separate mechanisms and audit can be bypassed; our contributions as a list |
-| II | Related Work | The two anchors and the two rivals from `PROJECT.md` §4, each with the honest delta |
+| I | Introduction | The gap: consent, revocation and break-glass are usually separate mechanisms, and log-gated decryption (transparent decryption) has not been applied inside one EHR key lifecycle; our contributions as a list, worded as a combination (ADR-0088) |
+| II | Related Work | Every group in the coverage table below, each with its honest delta; a comparison matrix whose "this work" row comes from the live evidence, not from the review |
 | III | Threat Model and Goals | Adversaries, trust assumptions, assets (`docs/threat-model.md`), goals stated as C1–C11 |
 | IV | System Overview | Components, trust boundaries, what portals/Postgres may **not** do (ADR-0014) |
 | V | Key-Lifecycle State Machine | States, the transition table, the access structure (Shamir over a policy tree, ARCHITECTURE §3) |
@@ -65,13 +74,18 @@ don't trust a number written down somewhere else. Each item gets its own
 sentence or short paragraph in Section X. The abstract has to name at least
 these: revocation is forward-only, expiry is enforced by the server rather than
 by cryptography, the construction is not full CP-ABE (not collusion-resistant),
-break-glass is 2-of-2 in this build, and "no plaintext on the wire" holds under
-TLS only.
+break-glass is 2-of-2 in this build, "no plaintext on the wire" holds under
+TLS only, and the audit service is trusted (no proofs of presence or extension).
 
 Never claim out-of-scope work (`PROJECT.md` §6): ML anomaly detection, FHIR/HL7,
 real CP-ABE, or scalability curves over #patients/#facilities. Those curves
 were cut and get stated as a limitation. The paper uses no real patient data
 and says the dataset is synthetic.
+
+Say plainly that the federation is **simulated**: a few mock facilities with
+cross-certified PKI, run as local processes. Don't imply real HIE or FHIR
+interoperability. Overstating deployment reality is the easiest dishonesty to
+fall into and the easiest to catch.
 
 ## Quoting benchmark numbers
 
@@ -90,14 +104,61 @@ paper:
 - Tables are generated from the CSV (a small script or exact copy), never
   retyped by hand.
 
-## Related work and citations
+## Related work, novelty and citations
 
-- Every `\cite` must resolve to an entry in `paper/refs.bib` that has a DOI,
-  an arXiv id or a publisher URL, checked against the real source. If you
-  can't confirm a reference, drop it. Don't invent one.
-- Present the rivals fairly. arXiv 2511.17464 already does
-  revocation-as-key-rotation, so our delta is the *unification* with consent
-  and break-glass, not the rotation itself.
+The novelty position is `PROJECT.md` §4 as restated by ADR-0088. In short:
+
+- **Forbidden claim:** being first to make logging (or a log entry) a
+  cryptographic precondition of decryption or break-glass. It's prior art:
+  accountable and transparent decryption. Also never claim to be first to
+  offer break-glass over encrypted records, or time-limited search.
+- **The claim:** the combination, implemented. One signed key lifecycle for
+  consent, revocation, break-glass and expiry, plus transparent-decryption-style
+  log gating instantiated for federated break-glass (a mandatory audit share,
+  released only after assertion validation and commit), plus emergency-scoped
+  search, plus test and wire evidence. Present transparent decryption as the
+  primitive we instantiate, and say plainly that our log is weaker (trusted
+  hash chain, `PROJECT.md` §5 item 13).
+- **Grant is not a rotation.** Grant adds a key wrapping; Revoke and expiry
+  rotate. Don't write "every transition rotates the key".
+- **2511.17464** is cited for signed, time-bounded, audited grants. Never cite
+  it for revocation-as-key-rotation, which wasn't confirmed.
+
+**Where references come from.** The lead list is
+`docs/review/2026-10-21-novelty-publishability-review.md` (§2–§5, §8, and its
+Sources list). Read its status note first: it marks which findings are out of
+date (the 2-of-3 bypass, the assertion check, expiry shares, "5/11 claims").
+Never repeat those as current. Its bibliography is **leads, not references**.
+Some numbered sources point at the wrong paper (e.g. [12], [18], [33]), and
+§8 lists unverified ones. For every entry you cite:
+
+- Open the DOI, arXiv abstract, IACR ePrint page or publisher page, and check
+  the authors, title, venue, year and pages there, not in the review.
+- Check that the paper says what you cite it for. If you can't reach a
+  primary source, drop the citation. Don't invent or "fix up" an entry.
+- Record each check in `paper/notes/refs-verified.bib`, with a comment on
+  where it was verified, or mark the entry `DROPPED`.
+
+**Coverage.** The related-work section has to engage with at least these
+groups, using whichever of their papers survive verification. Each group gets
+one sentence on what it does and one on our delta:
+
+| Group | Leads in the review |
+|---|---|
+| Accountable / transparent decryption | Kroll et al. 2018; Ryan 2017; Cheval, Moreira & Ryan, EuroS&P 2023; Larch, OSDI 2023; PORTEX, TIFS 2025 |
+| Break-glass access control | Brucker & Petritsch, SACMAT 2009; Ferreira et al. 2006; Marinovic et al., Rumpole, SACMAT 2011 |
+| Cryptographic break-glass | Brucker, Petritsch & Weber 2010; Zhang, Chow & Sun, AsiaCCS 2016; Scafuro, PKC 2019; de Oliveira et al. 2019/2020; Yang, Liu & Deng (LiBAC) |
+| Encrypted PHR sharing | Li et al., TPDS 2013 (anchor) |
+| Time-limited search / PRE in e-health | Yang & Ma, TIFS 2016 |
+| Consent at the policy layer | arXiv 2603.07004 (anchor); arXiv 2511.17464 |
+
+Present the rivals fairly. Quote Kroll et al.'s hospital-emergency
+application yourself, before a reviewer does.
+
+While drafting, if a sentence needs a reference you don't have verified yet,
+write `\cite{TODO-topic}` instead of a plausible-looking entry. A verifier
+treats any `TODO-` key left in the final draft as a BLOCKER. Quote sparingly
+(paraphrase by default), and attribute precisely.
 
 ## Building: Tectonic for the paper, `compile_latex` for snippets
 
@@ -173,7 +234,10 @@ Paper source rules:
       source that says the same thing.
 - [ ] The security table matches a claims run on the commit being described,
       with its date and short sha in the caption.
-- [ ] All `PROJECT.md` §5 caveats are in Section X, and the five named above
+- [ ] All `PROJECT.md` §5 caveats are in Section X, and the six named above
       are in the abstract.
 - [ ] Benchmark numbers match the CSV, with the machine named.
 - [ ] Every citation is real and cited fairly, with no unused bib entries.
+- [ ] No "first to" claim about log-gated decryption, break-glass or
+      time-limited search; transparent decryption is cited as the primitive we
+      instantiate (ADR-0088).

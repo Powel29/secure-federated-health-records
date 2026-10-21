@@ -120,26 +120,82 @@ novelty revisit, and a new ADR superseding ADR-0010 before Phase 2.
 
 ## 4. Novelty claim
 
-Existing work treats consent, revocation, and break-glass as separate
-mechanisms, and treats audit logging as a bypassable policy-layer promise. No
-prior work unifies them under a single key-lifecycle state machine, makes
-logging a cryptographic precondition of break-glass, or provides search that
-exists only within a time-boxed emergency state.
+Restated 2026-10-21 (ADR-0088) after the literature review in
+`docs/review/2026-10-21-novelty-publishability-review.md`. That review's
+bibliography is a list of leads. Verify each entry before citing it.
+
+**Not new, and we say so.** Making decryption conditional on a log entry is
+published as *accountable* or *transparent decryption*:
+- Kroll et al., *Accountable Cryptographic Access Control*, a 2018
+  manuscript. It names hospital emergency access as an application.
+- Ryan, *Making Decryption Accountable*, LNCS 10476, 2017.
+- Cheval, Moreira and Ryan, IEEE EuroS&P 2023. The log is untrusted and gives
+  proofs; the protocol is verified in ProVerif.
+- Dauterman et al., *Larch*, USENIX OSDI 2023. The log itself holds a share
+  of the secret.
+- Li et al., *PORTEX*, IEEE TIFS 2025. Its motivation is break-glass.
+
+Break-glass over encrypted health records is also published:
+- Li et al. 2013, below: a single trusted escrow, no logging.
+- Brucker, Petritsch and Weber, ABE with break-glass, 2010.
+- Scafuro, *Break-glass Encryption*, PKC 2019.
+- de Oliveira et al., 2020: time-bounded, revocable break-glass across
+  institutions.
+
+Time-limited search and re-encryption for e-health is published too (Yang &
+Ma, IEEE TIFS 2016). So **never claim to be first to make logging a
+cryptographic precondition**, nor first to offer break-glass or time-limited
+search.
+
+**What we claim: the combination, implemented.**
+1. Consent, revocation, break-glass and expiry as **one signed, logged
+   key-lifecycle state machine** over per-record DEKs. This is a
+   cryptographic realisation of the lifecycle semantics arXiv 2603.07004
+   states at the policy layer. Not every transition is a rotation: Grant adds
+   a key wrapping, while Revoke and expiry rotate.
+2. **Transparent-decryption-style log gating instantiated for federated
+   break-glass.** The audit service holds a share of the emergency key that
+   every break-glass needs. It releases that share only after validating a
+   signed, one-time Emergency Assertion bound to the record, and committing a
+   hash-chained entry (ADR-0067, ADR-0074).
+3. **Emergency search derived from the emergency key**, so it ends with the
+   emergency state at the expiry rotation (ADR-0069).
+4. **Evidence**: negative-security tests for C1–C11, and passive wire captures
+   that check commit-before-release independently of the code.
+
+Where we are **weaker** than the prior art: our log is a trusted plain hash
+chain with no proofs of presence or extension (§5 item 13), and there is no
+formal model.
 
 **Anchors we extend:**
 
 - Li, Yu, Zheng, Ren, Lou. *Scalable and Secure Sharing of Personal Health
   Records in Cloud Computing Using Attribute-Based Encryption.* IEEE TPDS
-  24(1):131–143, 2013.
+  24(1):131–143, 2013. DOI 10.1109/TPDS.2012.97.
 - *An Extended Consent-Based Access Control Framework: Pre-Commit Validation and
   Emergency Access.* arXiv 2603.07004, 2026.
+- Transparent decryption (Cheval, Moreira, Ryan, IEEE EuroS&P 2023). It is the
+  primitive we instantiate.
 
 **Nearest rivals, to be cited honestly rather than ignored:**
 
-- arXiv 2603.07004 — consent plus emergency override, but at the XACML policy
-  layer, not cryptographic.
-- arXiv 2511.17464 — already does revocation-as-key-rotation. Our delta is the
-  unification with consent and break-glass, not rotation itself.
+- **arXiv 2603.07004.** Consent plus emergency override, at the XACML policy
+  layer, not cryptographic. Its "pre-commit validation" means committing a
+  policy, not a log entry.
+- **arXiv 2511.17464.** Encrypted off-chain records with patient-signed,
+  time-bounded, on-chain-audited permissions and per-grantee key wrapping.
+  The review did *not* confirm that it does revocation-as-key-rotation, so
+  don't cite it for that. Cite it for signed, time-bounded, audited grants.
+- **Kroll et al.** Generic exceptional access: an approver, threshold
+  decryption authorities and an auditor log, with hospital emergencies named.
+  Our delta: patient-centric consent and revocation, a time-boxed emergency
+  state, and emergency-scoped search.
+- **Transparent decryption (Ryan; Cheval, Moreira, Ryan).** Stronger log
+  guarantees than ours. Our delta: EHR-specific assertion binding, the
+  lifecycle integration, federation, and automatic expiry by rotation.
+- **de Oliveira et al. 2020.** Time-bounded, revocable break-glass across
+  institutions, with a formal analysis. Our delta: the log gate and the
+  explicit, signed lifecycle.
 
 ---
 
@@ -354,6 +410,15 @@ than this is the fastest way to lose credibility in the viva.
     when; only the portal DB links that id to a person. Hiding even that
     would need keyed pseudonyms across the store and the signed assertion,
     which is future work.
+13. **The audit service is trusted (ADR-0088).** The chain is a plain hash
+    chain held by the audit service (ADR-0034). Tampering with a stored entry
+    is detected (C5), and a facility refuses a truncated chain (ADR-0083).
+    But nothing stops a compromised audit service from releasing share 3
+    without a durable entry, or showing different chains to different
+    parties: there are no proofs of presence or extension, as there are in
+    transparent decryption. So "no log entry, no key" holds against everyone
+    except the audit service itself. A Merkle log with proofs that the
+    facility checks is future work.
 
 ---
 

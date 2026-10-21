@@ -596,7 +596,7 @@ positive control: `test_share_released_only_after_successful_commit`.)*
 **P6-4 · Paper: security analysis** *(was P6-4)* — Ojas — 14h
 *What:* Write the security analysis, threat model, limitations, and the security-properties table (with proxy re-encryption honestly marked unproven). Every claim maps to a passing test.
 *Needs first:* P5-1.
-*Done when:* every claim maps to a passing test and every honesty caveat in `PROJECT.md` §5 (twelve as of 2026-10-21) is stated up front.
+*Done when:* every claim maps to a passing test and every honesty caveat in `PROJECT.md` §5 (thirteen as of 2026-10-21, ADR-0088) is stated up front.
 
 **P6-5 · Paper: intro + related work** *(was P6-5)* — Avaneeth — 12h
 *What:* Write the introduction, problem statement, the gap, and related work — citing both anchor papers and both rivals honestly.
