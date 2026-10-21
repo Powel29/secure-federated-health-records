@@ -11,8 +11,13 @@ significant in a class file.
 Paths are resolved relative to the including file; a missing file is an
 error, not a silent gap.
 
-    python .claude/skills/ieee-paper/scripts/flatten_tex.py paper/main.tex paper/build/main-flat.tex \\
+    python .claude/skills/ieee-paper/scripts/flatten_tex.py \\
+        paper/main.tex paper/build/main-flat.tex \\
         --embed paper/IEEEtran.cls paper/IEEEtran.bst
+
+The IEEEtran files are not in the repo (Tectonic's bundle supplies them,
+ADR-0087); for this fallback, download them from CTAN into ``paper/``, where
+they are git-ignored.
 """
 
 from __future__ import annotations

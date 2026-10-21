@@ -67,3 +67,5 @@ graphify-out/
 
 # Paper build outputs (ADR-0087)
 paper/build/
+# IEEEtran comes from Tectonic's bundle (ADR-0087); local copies stay untracked.
+paper/IEEEtran.*

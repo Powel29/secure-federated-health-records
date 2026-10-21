@@ -168,13 +168,17 @@ treats any `TODO-` key left in the final draft as a BLOCKER. Quote sparingly
 repo root:
 
 ```bash
-/c/Users/user/AppData/Local/Programs/tectonic/tectonic.exe -X compile paper/main.tex --outdir paper/build --keep-logs
+mkdir -p paper/build && /c/Users/user/AppData/Local/Programs/tectonic/tectonic.exe -X compile paper/main.tex --outdir paper/build --keep-logs
 ```
 
-- `IEEEtran.cls` and `IEEEtran.bst` (V1.8b, from CTAN
-  `macros/latex/contrib/IEEEtran`, LPPL) are vendored in `paper/`, next to
-  `main.tex`, so the build uses those copies and not whatever Tectonic's
-  bundle ships. Never fake the class with `article`: then the page count and
+Tectonic refuses an `--outdir` that does not exist, and `paper/build/` is
+git-ignored, so a fresh clone has none: always create it first.
+
+- `IEEEtran.cls` and `IEEEtran.bst` come from Tectonic's own bundle: it
+  ships IEEEtran 2015/08/26 V1.8b and IEEEtran.bst 1.14, the current CTAN
+  release (checked 2026-10-21), and Overleaf ships the same. They are not in
+  the repo; `paper/IEEEtran.*` is git-ignored so a local copy is never
+  committed. Never fake the class with `article`: then the page count and
   layout mean nothing.
 - **Tectonic is XeTeX, so the preamble must set the Times fonts itself.**
   Otherwise IEEEtran's Times request falls back to Latin Modern. Put this
@@ -193,8 +197,9 @@ repo root:
   while the class loads. They're expected and harmless; any other font
   warning is not. `smoke/main.tex` in this skill folder is a working
   example (verified 2026-10-21). Build it with
-  `tectonic.exe -X compile .claude/skills/ieee-paper/smoke/main.tex -Z search-path=paper --outdir paper/build/smoke`
-  to check the toolchain on a new machine.
+  `mkdir -p paper/build/smoke && tectonic.exe -X compile .claude/skills/ieee-paper/smoke/main.tex --outdir paper/build/smoke`
+  to check the toolchain on a new machine; `main.log` should report
+  `IEEEtran 2015/08/26 V1.8b`.
 - Tectonic runs BibTeX and repeats passes by itself. Read
   `paper/build/main.log` for overfull boxes and undefined references. The page
   count is the `/Type /Page` count of `paper/build/main.pdf` (or what the log
@@ -210,7 +215,10 @@ line you don't understand. It takes source as text and can't read files, so
 sending the whole paper means retyping the IEEEtran class into every call
 (about 180 KB). Don't use it for full builds.
 `scripts/flatten_tex.py` (with `--embed`, which minifies) is kept only for
-the rare case where Tectonic is unavailable.
+the rare case where Tectonic is unavailable. That path needs local copies of
+`IEEEtran.cls` and `IEEEtran.bst`: download them from CTAN
+(`macros/latex/contrib/IEEEtran`) into `paper/`, where they stay
+untracked.
 
 Paper source rules:
 
