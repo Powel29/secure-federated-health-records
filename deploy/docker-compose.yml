@@ -85,6 +85,11 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     depends_on:
+      # The store's lifecycle state gates share-2 replacement (ADR-0089).
+      store:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       pki:
         condition: service_completed_successfully
     environment:
@@ -92,6 +97,9 @@ services:
       SERVICE_ROLE: authority
       PORT: "8010"
       AUTHORITY_ID: authority-med
+      # Read-only use: share 2 is replaced only while the record rotates.
+      DATABASE_URL: postgresql://postgres@store:5432/ehr
+      PGPASSWORD: "${POSTGRES_PASSWORD}"
       OWNED_ATTRIBUTES: role
       # Signed requests only; authoring keys go to facilities, the custodian
       # and bootstrap (ADR-0066, replacing the F14 address allowlist).
@@ -120,6 +128,11 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     depends_on:
+      # The store's lifecycle state gates share-2 replacement (ADR-0089).
+      store:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       pki:
         condition: service_completed_successfully
     environment:
@@ -127,6 +140,9 @@ services:
       SERVICE_ROLE: authority
       PORT: "8011"
       AUTHORITY_ID: authority-net
+      # Read-only use: share 2 is replaced only while the record rotates.
+      DATABASE_URL: postgresql://postgres@store:5432/ehr
+      PGPASSWORD: "${POSTGRES_PASSWORD}"
       OWNED_ATTRIBUTES: "specialty,facility,owner"
       # Signed requests only; authoring keys go to facilities, the custodian
       # and bootstrap (ADR-0066, replacing the F14 address allowlist).

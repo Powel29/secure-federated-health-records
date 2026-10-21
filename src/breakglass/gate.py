@@ -7,9 +7,10 @@ It performs, in order:
 
 1. Reject fewer than :data:`breakglass.emergency_key.THRESHOLD` *unique*
    shares (:class:`~breakglass.exceptions.InsufficientSharesError`) -- this is
-   what makes break-glass a 2-of-3 threshold rather than a single custodian's
-   decision, and is why the audit service's share alone cannot open a record
-   (see ``tests/security/test_phase3_breakglass_security.py``).
+   what makes break-glass a weighted 3-of-4 threshold rather than a single
+   custodian's decision, and is why the audit service's two shares alone, or
+   the custodian's and home authority's together, cannot open a record
+   (ADR-0089; see ``tests/security/test_phase3_breakglass_security.py``).
 2. Reconstruct the emergency key via ``shamir.combine_shares``.
 3. Unwrap the record's DEK, which is AES-256-GCM wrapped under the emergency
    key (``contracts.records.DEKWrapping`` / ``records.service.unwrap_dek``).

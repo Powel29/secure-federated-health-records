@@ -1,7 +1,7 @@
 """Standalone Audit Service (P4-2, C10/C11, ARCHITECTURE.md §5 step 3, §7).
 
-Runs the hash-chained audit log and break-glass share-3 custody as their own
-process, separate from any facility node:
+Runs the hash-chained audit log and break-glass custody of shares 3 and 4
+(ADR-0089) as their own process, separate from any facility node:
 
     "The audit service must be a separate process. If it shares memory with
     a facility node, 'the audit service releases its share only after
@@ -19,8 +19,11 @@ Invariants:
   ``audit.share_custody``.
 - Every write takes only a signed request from a federation service whose
   kind the route allows (ADR-0066); chain reads and the public key are open.
-- Share 3 is released only against an emergency assertion this service has
-  validated itself, against its own configured trust anchors (ADR-0067).
+- Shares 3 and 4 are released only against an emergency assertion this
+  service has validated itself, against its own configured trust anchors
+  (ADR-0067), with the check every share holder runs (``api.share_release``).
+- The service holds exactly shares 3 and 4 of a record and refuses any other
+  set of share indices (ADR-0089).
 - The signing key never leaves this process; only its public key
   (``GET /public-key``) is ever returned.
 - Every request that appends to the chain is serialized behind one
@@ -47,29 +50,16 @@ from audit.exceptions import (
     EmptyChainError,
     TamperedEntryError,
 )
-from audit.share_custody import release_share_after_commit
+from audit.share_custody import Holding, release_share_after_commit
 from audit.share_registry import (
     ShareAlreadyHeldError,
     ShareGenerationError,
     ShareNotFoundError,
     ShareRegistry,
 )
-from breakglass import (
-    ConsumedAssertionIds,
-    ConsumedRequestIds,
-    validate_emergency_assertion,
-)
-from breakglass.assertion import validate_clinical_context
-from breakglass.emergency_key import Share
-from breakglass.exceptions import (
-    AssertionExpiredError,
-    AssertionLifetimeError,
-    CertificateRevokedError,
-    ClinicianMismatchError,
-    FacilityMismatchError,
-    ReplayedAssertionError,
-    SealedShareError,
-)
+from breakglass import ConsumedAssertionIds, ConsumedRequestIds
+from breakglass.emergency_key import AUDIT_SHARE_XS, check_holding
+from breakglass.exceptions import SealedShareError, ShareHoldingError
 from breakglass.share_sealing import (
     SealedShare,
     ShareRecipient,
@@ -77,19 +67,13 @@ from breakglass.share_sealing import (
     make_key_statement,
     open_sealed_share,
     seal_share,
-    verify_key_statement,
 )
 from contracts.enums import LifecycleState
-from crypto_core import certificate_from_pem, generate_ec_keypair, public_key_to_pem
-from crypto_core.exceptions import (
-    CertificateExpiredError,
-    InvalidSignatureError,
-    KeyFormatError,
-)
+from crypto_core import generate_ec_keypair, public_key_to_pem
+from crypto_core.exceptions import InvalidSignatureError
 from crypto_core.types import ECPrivateKey, ECPublicKey
 from cryptography.x509 import Certificate
 from fastapi import Depends, FastAPI, HTTPException, Request, status
-from identity.exceptions import ChainValidationError
 from storage.repositories import (
     ConsumedIdTable,
     get_chain_head,
@@ -116,6 +100,7 @@ from api.service_auth import (
     ServiceIdentity,
     install_service_auth,
 )
+from api.share_release import check_release_assertion, verify_gate_recipient
 from api.share_transport import serve_share_key
 
 AUDIT_SERVICE_ID = "audit-service"
@@ -193,10 +178,11 @@ def create_audit_app(
             chain to (ADR-0066).
         trust: The root, facility CAs and revoked clinician serials this
             service validates emergency assertions against before releasing
-            share 3 (ADR-0067). Without them every release is refused (503).
+            shares 3 and 4 (ADR-0067). Without them every release is refused
+            (503).
         identity: This service's root-issued identity (ADR-0066): its id is
             the recipient every envelope names, and its key signs the
-            share-key statement senders seal share 3 to (ADR-0079).
+            share-key statement senders seal shares 3 and 4 to (ADR-0079).
         share_key: The key sealed shares are opened with; fresh by default.
 
     Returns:
@@ -230,7 +216,7 @@ def create_audit_app(
         title="Audit Service",
         description=(
             "Federated Break-Glass EHR -- hash-chained audit log and "
-            "break-glass share-3 custody"
+            "break-glass custody of shares 3 and 4"
         ),
         version="1.0.0",
     )
@@ -317,16 +303,25 @@ def create_audit_app(
 
     # --- Break-glass share custody (P3-4, headline precondition) -----------
 
-    def open_share(share_key: str, sealed: SealedShare) -> Share:
-        """A deposited share, opened with this service's key (ADR-0079)."""
+    def open_holding(share_key: str, sealed: list[SealedShare]) -> Holding:
+        """Deposited shares, opened with this service's key (ADR-0079).
+
+        Refused unless they are exactly shares 3 and 4 (ADR-0089).
+        """
         try:
-            return open_sealed_share(
-                sealed, record_id=share_key, service_id=service_id, key=sealing_key
-            )
-        except SealedShareError as exc:
+            opened = [
+                open_sealed_share(
+                    s, record_id=share_key, service_id=service_id, key=sealing_key
+                )
+                for s in sealed
+            ]
+            holding = tuple(sorted(opened, key=lambda share: share[0]))
+            check_holding(holding, AUDIT_SHARE_XS)
+        except (SealedShareError, ShareHoldingError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
             ) from exc
+        return holding
 
     @app.post(
         "/breakglass/shares",
@@ -336,10 +331,10 @@ def create_audit_app(
     def register_share(
         payload: RegisterShareRequest, shares: SharesDep
     ) -> RegisterShareResponse:
-        """Hand this service custody of one break-glass share (share 3)."""
-        share = open_share(payload.share_key, payload.sealed_share)
+        """Hand this service custody of its break-glass shares (3 and 4)."""
+        holding = open_holding(payload.share_key, payload.sealed_shares)
         try:
-            shares.put(payload.share_key, share)
+            shares.put(payload.share_key, holding)
         except ShareAlreadyHeldError as exc:
             # Never overwrite a live record's share (review F4).
             raise HTTPException(
@@ -351,7 +346,7 @@ def create_audit_app(
     def replace_share(
         share_key: str, payload: ReplaceShareRequest, conn: ConnDep, shares: SharesDep
     ) -> RegisterShareResponse:
-        """Take the next generation's share from a record's rotation (ADR-0069).
+        """Take the next generation's shares from a record's rotation (ADR-0069).
 
         Only a facility may call this, only while the record is ``expired``
         (its forced rotation at expiry) or ``revoked`` (the rotation a
@@ -368,9 +363,9 @@ def create_audit_app(
                 detail="a share is replaced only by its record's expiry or "
                 "revocation rotation",
             )
-        share = open_share(share_key, payload.sealed_share)
+        holding = open_holding(share_key, payload.sealed_shares)
         try:
-            shares.replace(share_key, share, payload.generation)
+            shares.replace(share_key, holding, payload.generation)
         except ShareNotFoundError as exc:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
@@ -381,88 +376,6 @@ def create_audit_app(
             ) from exc
         return RegisterShareResponse(status="replaced", share_key=share_key)
 
-    def check_assertion(payload: ReleaseShareRequest) -> None:
-        """Validate the emergency assertion before any share moves (ADR-0067).
-
-        The same five-point check a facility runs (ARCHITECTURE.md §8), against
-        this service's own trust anchors, plus the record binding: the
-        assertion's signed context digest must name this ``share_key``.
-        """
-        if trust is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="no trust anchors configured; share 3 is not released",
-            )
-        assertion = payload.assertion
-        try:
-            certificate = certificate_from_pem(
-                payload.clinician_certificate_pem.encode("utf-8")
-            )
-        except KeyFormatError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"clinician certificate does not parse: {exc}",
-            ) from exc
-        issuer = trust.issuing_ca(certificate)
-        if issuer is None:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="clinician certificate was not issued by a federation CA",
-            )
-        if assertion.facility_id not in trust.facility_cas:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="assertion names a facility outside the federation",
-            )
-        if not assertion.clinical_context_digest:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="assertion is not bound to a record",
-            )
-        try:
-            validate_clinical_context(
-                assertion,
-                payload.share_key,
-                payload.justification,
-                payload.sensitive_justification,
-            )
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"assertion is not for this record: {exc}",
-            ) from exc
-        try:
-            validate_emergency_assertion(
-                assertion=assertion,
-                clinician_certificate=certificate,
-                facility_ca_certificate=issuer[1],
-                trusted_root=trust.root,
-                expected_facility_id=assertion.facility_id,
-                consumed_store=release_assertions,
-                revoked_serials=trust.revoked_serials,
-            )
-        except (
-            ChainValidationError,
-            CertificateExpiredError,
-            CertificateRevokedError,
-        ) as exc:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"clinician certificate refused: {exc}",
-            ) from exc
-        except (
-            AssertionExpiredError,
-            AssertionLifetimeError,
-            ClinicianMismatchError,
-            FacilityMismatchError,
-            InvalidSignatureError,
-            ReplayedAssertionError,
-        ) as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"emergency assertion invalid ({exc.__class__.__name__}): {exc}",
-            ) from exc
-
     @app.post("/breakglass/release", response_model=ReleaseShareResponse)
     def release_share(
         payload: ReleaseShareRequest,
@@ -470,25 +383,26 @@ def create_audit_app(
         shares: SharesDep,
         lock: LockDep,
     ) -> ReleaseShareResponse:
-        """Commit a log entry, then release the held share -- never the reverse.
+        """Commit a log entry, then release the held shares -- never the reverse.
 
-        This is ARCHITECTURE.md §5 step 3's "share 3" made an actual network
-        boundary: the response body's ``entry`` is only ever populated
+        This is ARCHITECTURE.md §5 step 3's "shares 3 and 4" made an actual
+        network boundary: the response body's ``entry`` is only ever populated
         because the commit already succeeded (fail-closed, P3-4). And nothing
         is committed or released until the emergency assertion validates here
         (ADR-0067).
         """
-        check_assertion(payload)
-        # Share 3 goes only to a root-certified facility's gate (ADR-0079).
-        try:
-            recipient = verify_key_statement(
-                payload.recipient, trusted_root=service_root, kind="facility"
-            )
-        except SealedShareError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"share recipient refused: {exc}",
-            ) from exc
+        check_release_assertion(
+            trust=trust,
+            consumed_store=release_assertions,
+            share_key=payload.share_key,
+            assertion=payload.assertion,
+            clinician_certificate_pem=payload.clinician_certificate_pem,
+            justification=payload.justification,
+            sensitive_justification=payload.sensitive_justification,
+            what="shares 3 and 4",
+        )
+        # Shares 3 and 4 go only to a root-certified facility's gate (ADR-0079).
+        recipient = verify_gate_recipient(payload.recipient, service_root=service_root)
         assertion = payload.assertion
         # The entry records what was validated, not what the caller said.
         event_data = {
@@ -499,9 +413,10 @@ def create_audit_app(
             "clinician_id": assertion.clinician_id,
             "facility_id": assertion.facility_id,
             "reason_code": assertion.reason_code.value,
+            "unlock_path": payload.unlock_path,
         }
         try:
-            held_share = shares.get(payload.share_key)
+            held = shares.get(payload.share_key)
         except ShareNotFoundError as exc:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
@@ -509,9 +424,9 @@ def create_audit_app(
 
         with lock:
             try:
-                share, entry = release_share_after_commit(
+                released, entry = release_share_after_commit(
                     conn,
-                    share=held_share,
+                    shares=held,
                     event_type=payload.event_type,
                     event_data=event_data,
                     actor_id=payload.actor_id,
@@ -524,8 +439,11 @@ def create_audit_app(
                     detail=f"log commit failed; share was not released: {exc}",
                 ) from exc
 
-        sealed = seal_share(share, record_id=payload.share_key, recipient=recipient)
-        return ReleaseShareResponse(sealed_share=sealed, entry=entry)
+        sealed = [
+            seal_share(share, record_id=payload.share_key, recipient=recipient)
+            for share in released
+        ]
+        return ReleaseShareResponse(sealed_shares=sealed, entry=entry)
 
     install_service_auth(
         app,

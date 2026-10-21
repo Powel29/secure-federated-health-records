@@ -11,10 +11,15 @@ from breakglass.assertion import (
     verify_emergency_assertion_signature,
 )
 from breakglass.emergency_key import (
+    AUDIT_SHARE_XS,
+    CLINICIAN_SHARE_XS,
     EMERGENCY_KEY_BYTES,
+    HOME_AUTHORITY_SHARE_XS,
     THRESHOLD,
     TOTAL_SHARES,
+    check_holding,
     generate_emergency_key,
+    holder_shares,
     split_emergency_key,
 )
 from breakglass.envelopes import (
@@ -31,6 +36,7 @@ from breakglass.exceptions import (
     InsufficientSharesError,
     ReplayedAssertionError,
     ReplayedRequestError,
+    ShareHoldingError,
 )
 from breakglass.gate import (
     EmergencyUnlockResult,
@@ -48,9 +54,14 @@ __all__ = [
     "validate_emergency_assertion",
     "verify_emergency_assertion_signature",
     # Emergency key + gate (P3-5)
+    "AUDIT_SHARE_XS",
+    "CLINICIAN_SHARE_XS",
     "EMERGENCY_KEY_BYTES",
+    "HOME_AUTHORITY_SHARE_XS",
     "THRESHOLD",
     "TOTAL_SHARES",
+    "check_holding",
+    "holder_shares",
     "EmergencyUnlockResult",
     "generate_emergency_key",
     "join_emergency_access",
@@ -72,4 +83,5 @@ __all__ = [
     "InsufficientSharesError",
     "ReplayedAssertionError",
     "ReplayedRequestError",
+    "ShareHoldingError",
 ]

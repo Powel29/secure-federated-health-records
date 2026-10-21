@@ -131,13 +131,16 @@ class RecordingRotationPorts:
     def author_keys(self, leaves):
         return {leaf: self.keyring[leaf] for leaf in leaves}
 
-    def deposit_shares(self, record_id, generation, clinician_share, audit_share):
+    def deposit_shares(self, record_id, generation, distribution):
+        # Every holder's new shares of the 3-of-4 split (ADR-0089).
         self.deposits.append(
             {
                 "record_id": record_id,
                 "generation": generation,
-                "clinician_share": clinician_share,
-                "audit_share": audit_share,
+                "clinician_share": distribution.clinician,
+                "home_authority_id": distribution.home_authority_id,
+                "home_authority_share": distribution.home_authority,
+                "audit_shares": distribution.audit,
             }
         )
 

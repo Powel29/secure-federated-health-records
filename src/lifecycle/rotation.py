@@ -12,9 +12,9 @@ session is open:
    compiled policy and compiled again under a fresh root secret with the
    authorities' authoring keys (``policy.engine``), and the new DEK is wrapped
    under it. The old root secret -- and every unwrap it allowed -- is dead.
-3. **New emergency key.** A fresh key is split 2-of-3
-   (``breakglass.emergency_key``) and the new DEK is wrapped under it. The old
-   shares no longer open anything.
+3. **New emergency key.** A fresh key is split weighted 3-of-4
+   (``breakglass.emergency_key``, ADR-0089) and the new DEK is wrapped under
+   it. The old shares no longer open anything.
 4. **New search tokens.** The record's term list, sealed under its DEK at
    ingest (``search.service.seal_search_terms``), is opened with the old DEK,
    re-derived under the new emergency key, and sealed again under the new DEK.
@@ -33,7 +33,12 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from breakglass.emergency_key import Share, generate_emergency_key, split_emergency_key
+from breakglass.emergency_key import (
+    Share,
+    generate_emergency_key,
+    holder_shares,
+    split_emergency_key,
+)
 from contracts.policy import PolicyTree
 from contracts.records import DEKWrapping, Record
 from crypto_core.symmetric import generate_key
@@ -67,7 +72,8 @@ class RotationPlan:
         baseline_wrapping: The fresh DEK under the fresh root secret.
         emergency_wrapping: The fresh DEK under the fresh emergency key, one
             generation after the wrapping it replaces.
-        shares: The fresh emergency key's 2-of-3 split, ``(x, bytes)`` each.
+        shares: The fresh emergency key's weighted 3-of-4 split, ``(x, bytes)``
+            each; :meth:`holding` routes them to their holders (ADR-0089).
         search_tokens: The record's search index under the fresh emergency key.
         sealed_search_terms: The term list sealed under the fresh DEK, or
             ``None`` if the record was ingested without one.
@@ -93,6 +99,14 @@ class RotationPlan:
             if share[0] == x:
                 return share
         raise KeyError(f"no share at x={x}")
+
+    def holding(self, holder_xs: frozenset[int]) -> tuple[Share, ...]:
+        """The new shares one holder takes, e.g. ``AUDIT_SHARE_XS`` (ADR-0089).
+
+        Raises:
+            ShareHoldingError: The plan lacks one of the holder's shares.
+        """
+        return holder_shares(self.shares, holder_xs)
 
 
 def plan_rotation(

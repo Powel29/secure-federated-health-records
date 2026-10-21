@@ -139,7 +139,7 @@ class RevokeRecordResponse(BaseModel):
 
 
 class BreakglassUnlockRequest(BaseModel):
-    """Request payload for 2-of-3 threshold break-glass emergency unlock.
+    """Request payload for the 3-of-4 threshold break-glass unlock (ADR-0089).
 
     Trust anchors are facility configuration, never request data (F1). Extra
     fields are forbidden so a caller still sending its own root or CA gets a

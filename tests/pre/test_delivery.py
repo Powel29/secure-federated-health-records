@@ -12,6 +12,7 @@ from pre import generate_keypair, open_delivery_package
 from pre.exceptions import PREDecryptionError
 from records.service import wrap_dek
 
+from tests.shares import unlock_points
 from tests.transitions import open_event
 
 
@@ -25,7 +26,7 @@ def _delivery_package(record_id: str, pre_pub: int) -> tuple[bytes, bytes]:
     )
     life_priv, _ = generate_ec_keypair()
     result = open_emergency_access(
-        shares_presented=shares[:2],
+        shares_presented=unlock_points(shares),
         dek_wrapping=wrapping,
         transition_source_state=LifecycleState.GRANTED,
         record_id=record_id,

@@ -15,11 +15,12 @@ transition between states is a signed key-rotation event.
 
 The headline novelty is that tamper-evident logging becomes a **cryptographic
 precondition** of emergency access rather than a policy promise: break-glass
-requires reconstructing an emergency key from a Shamir threshold gate whose
-two held shares belong to the attending clinician's key agent and the audit
-service (a 2-of-3 split whose home-authority share is reserved, not deposited:
-2-of-2 in this build, ADR-0074), and the audit service releases its share only
-after it has committed a hash-chained log entry. No log entry, no key, no
+requires reconstructing an emergency key from a weighted Shamir 3-of-4 gate:
+one share each for the attending clinician's key agent and the patient's home
+authority, and two for the audit service. The other two holders have only two
+points between them, so every reconstruction needs a share only the audit
+service releases (ADR-0089). The audit service releases its shares only after it
+has committed a hash-chained log entry. No log entry, no key, no
 access. A second contribution is
 **emergency-only searchable encryption**: the capability to search encrypted
 records is unlocked by entry into the Emergency-open state and dies when that
@@ -376,14 +377,18 @@ than this is the fastest way to lose credibility in the viva.
    the encounter; nothing is guessed or merged. In a real emergency department
    this is a common case, so the paper must say the scenario assumes
    identification.
-8. **Break-glass is 2-of-2 in this build (ADR-0074).** The emergency key is
-   split 2-of-3, but share 2 (the patient's home authority or its delegate) is
-   not deposited anywhere, so break-glass needs both the clinician's share and
-   the audit service's. That keeps "no log entry, no key" unconditional; the
-   cost is that there is no fallback when either holder is unreachable. A home
-   authority holding share 2 would have to validate the assertion and commit
-   an audit entry before releasing, or shares 1 + 2 would open a record with
-   no log entry. That is future work.
+8. **The audit service is a single point of availability; the fallback
+   covers share 1 only (ADR-0089).** The emergency key is a weighted 3-of-4
+   split: share 1 to the custodian, share 2 to the patient's home authority,
+   shares 3 and 4 to the audit service. Break-glass needs the audit service
+   plus either other holder, so "no log entry, no key" stays unconditional, and
+   the home authority stands in when share 1 is lost (e.g. a custodian
+   restart, since share 1 is kept in memory). It does **not** help when the
+   custodian is down, because the custodian is also the clinician's key agent
+   (item 5). It does not help when the audit service is down, or after an
+   audit restart, which loses shares 3 and 4 for every record until re-keyed.
+   A real any-two-of-three fallback would need the home authority to log as
+   well. That is future work.
 9. **Revoking a credential does not revoke a key already released
    (ADR-0075).** There is one attribute key per (authority, attribute) value,
    shared by every holder and never rotated. Credential revocation stops the

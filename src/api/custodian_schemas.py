@@ -9,7 +9,7 @@ cipher call actually happens.
 The one place private material crosses the wire is the bootstrap deposit
 (:class:`DepositMaterialRequest`): the seed step hands each synthetic
 persona's key material to the custodian once, the same way it hands the
-audit service its share 3 (``POST /breakglass/shares``). Nothing below ever
+audit service its shares 3 and 4 (``POST /breakglass/shares``). Nothing below ever
 *returns* a private key.
 """
 
@@ -84,13 +84,12 @@ class DepositMaterialResponse(BaseModel):
 class DepositShareRequest(BaseModel):
     """Deposit the attending-clinician break-glass share (share 1) for a record.
 
-    The 2-of-3 split happens at seed/ingest time (``breakglass.emergency_key``);
-    share 3 goes to the audit service, share 1 to clinician custody -- which,
-    in this deployment, is the custodian acting as every clinician's key
-    agent (ADR-0043). Share 2 (home authority) is not deposited anywhere: the
-    demo threshold is satisfied by shares 1 + 3, exactly as ``deploy/run_scenario``
-    and ``demo/driver`` present it. The share arrives sealed to this service's
-    share key (ADR-0079).
+    The weighted 3-of-4 split happens at seed/ingest time
+    (``breakglass.emergency_key``, ADR-0089): shares 3 and 4 go to the audit
+    service, share 2 to the patient's home authority, share 1 to clinician
+    custody -- which, in this deployment, is the custodian acting as every
+    clinician's key agent (ADR-0043). This service takes share 1 only. The
+    share arrives sealed to this service's share key (ADR-0079).
     """
 
     sealed_share: SealedShare
@@ -264,8 +263,9 @@ class IngestPayload(BaseModel):
     """A patient uploads a record of their own through their key agent (P3-14).
 
     The custodian does what ``demo/seed_data.py`` does for the synthetic
-    dataset: mints and 2-of-3-splits the record's emergency key (share 3 to
-    the audit service, share 1 to clinician custody here), obtains the
+    dataset: mints and 3-of-4-splits the record's emergency key (shares 3 and
+    4 to the audit service, share 2 to the patient's home authority, share 1
+    to clinician custody here, ADR-0089), obtains the
     authoring attribute keys the ``clinical_policy`` leaves reference plus the
     patient's own ``owner:<patient_id>`` key, and hands the bytes to the
     facility's ``/records/ingest``, which encrypts, compiles the policy with

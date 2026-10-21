@@ -677,35 +677,41 @@ def _case_ctx(request: Any, case: BreakglassCase) -> dict[str, Any]:
 
 
 def _share_cards(case: BreakglassCase) -> list[dict[str, Any]]:
-    held = {s.get("holder"): s for s in (case.shares or [])}
+    """The weighted 3-of-4 threshold as the custodian reported it (ADR-0089)."""
+    shares = case.shares or []
+
+    def xs(holder: str) -> list[int]:
+        return [s["x"] for s in shares if s.get("holder") == holder and "x" in s]
+
+    audit = [s for s in shares if s.get("holder") == "audit-service"]
     return [
         {
-            "kicker": "Share 1 of 3",
+            "kicker": "Share 1 of 4",
             "who": "Attending clinician",
-            "note": "Released against the validated assertion and a certificate that cross-certifies back to the federation root.",
-            "state": "PRESENTED" if "clinician" in held else "NOT PRESENTED",
-            "held": "clinician" in held,
-            "x": held.get("clinician", {}).get("x"),
+            "note": "Held in clinician custody and released against the validated assertion and a certificate that cross-certifies back to the federation root.",
+            "state": "PRESENTED" if xs("clinician") else "NOT PRESENTED",
+            "held": bool(xs("clinician")),
+            "x": ", ".join(map(str, xs("clinician"))) or None,
         },
         {
-            "kicker": "Share 2 of 3",
+            "kicker": "Share 2 of 4",
             "who": "Home authority",
-            "note": "The patient's own authority, or a federated delegate when it is unreachable. Not requested: the threshold was met without it.",
-            "state": "NOT REQUESTED",
-            "held": False,
-            "x": None,
+            "note": "The patient's home authority, which issued their owner credential. Asked only when share 1 is not available; it checks the assertion itself before releasing.",
+            "state": "PRESENTED" if xs("home-authority") else "NOT REQUESTED",
+            "held": bool(xs("home-authority")),
+            "x": ", ".join(map(str, xs("home-authority"))) or None,
         },
         {
-            "kicker": "Share 3 of 3",
+            "kicker": "Shares 3 and 4 of 4",
             "who": "Audit service",
-            "note": "Held back until a chain entry is committed and its new head returned. No commit, no share.",
+            "note": "Held back until a chain entry is committed and its new head returned. No commit, no share; every opening needs one of them.",
             "state": (
-                f"RELEASED AFTER SEQ {held['audit-service'].get('audit_entry_seq')}"
-                if "audit-service" in held
+                f"RELEASED AFTER SEQ {audit[0].get('audit_entry_seq')}"
+                if audit
                 else "WITHHELD"
             ),
-            "held": "audit-service" in held,
-            "x": held.get("audit-service", {}).get("x"),
+            "held": bool(audit),
+            "x": ", ".join(map(str, xs("audit-service"))) or None,
         },
     ]
 

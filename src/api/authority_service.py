@@ -24,16 +24,29 @@ Invariants:
   at startup rather than loading one from disk (ADR-0039). Issued
   credentials and minted attribute keys likewise live only for this
   process's lifetime.
+- As a patient's home authority it holds share 2 of the weighted 3-of-4
+  break-glass split (ADR-0089) and releases it only against an emergency
+  assertion it has validated itself (``api.share_release``, the check the
+  audit service runs), sealed to a root-certified facility gate. It holds
+  exactly share 2 of a record and refuses any other share index. Shares and
+  consumed assertion ids live in memory, like everything else here.
 """
 
 from __future__ import annotations
 
 import base64
 import datetime
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Annotated
 
+from audit.share_registry import (
+    Holding,
+    ShareAlreadyHeldError,
+    ShareGenerationError,
+    ShareNotFoundError,
+    ShareRegistry,
+)
 from authority.exceptions import (
     CredentialExpiredError,
     CredentialNotYetValidError,
@@ -51,8 +64,18 @@ from authority.issuance import (
     verify_credential,
 )
 from authority.possession import verify_key_release_possession
-from breakglass import ConsumedRequestIds
-from breakglass.exceptions import BreakglassError
+from breakglass import ConsumedAssertionIds, ConsumedRequestIds
+from breakglass.emergency_key import HOME_AUTHORITY_SHARE_XS, check_holding
+from breakglass.exceptions import BreakglassError, SealedShareError, ShareHoldingError
+from breakglass.share_sealing import (
+    SealedShare,
+    ShareRecipient,
+    ShareSealingKey,
+    make_key_statement,
+    open_sealed_share,
+    seal_share,
+)
+from contracts.enums import LifecycleState
 from crypto_core import certificate_from_pem, certificate_public_key, public_key_to_pem
 from crypto_core.exceptions import (
     CertificateExpiredError,
@@ -68,6 +91,11 @@ from identity import (
     validate_subject_certificate,
 )
 
+from api.audit_schemas import (
+    RegisterShareRequest,
+    RegisterShareResponse,
+    ReplaceShareRequest,
+)
 from api.authority_schemas import (
     AttributeKeyReleaseRequest,
     AttributeKeyResponse,
@@ -76,6 +104,8 @@ from api.authority_schemas import (
     CredentialStatusRequest,
     CredentialStatusResponse,
     HealthResponse,
+    HomeShareReleaseRequest,
+    HomeShareReleaseResponse,
     IssueCredentialRequest,
     IssueCredentialResponse,
     PublicKeyResponse,
@@ -84,7 +114,10 @@ from api.authority_schemas import (
     VerifyCredentialRequest,
     VerifyCredentialResponse,
 )
-from api.service_auth import ServiceAuthConfig, install_service_auth
+from api.hospital import FacilityTrust
+from api.service_auth import ServiceAuthConfig, ServiceIdentity, install_service_auth
+from api.share_release import check_release_assertion, verify_gate_recipient
+from api.share_transport import serve_share_key
 
 
 def get_authority(request: Request) -> AttributeAuthority:
@@ -120,7 +153,17 @@ AUTHORITY_PERMISSIONS: dict[tuple[str, str], frozenset[str]] = {
     ("POST", "/attribute-keys/author"): frozenset(
         {"custodian", "facility", "bootstrap"}
     ),
+    # Share 2 custody (ADR-0089): deposited at ingest, replaced by a
+    # facility's rotation, released to the clinician's key agent.
+    ("POST", "/breakglass/shares"): frozenset({"custodian", "bootstrap"}),
+    ("PUT", "/breakglass/shares/{share_key}"): frozenset({"facility"}),
+    ("POST", "/breakglass/release"): frozenset({"custodian", "bootstrap"}),
 }
+
+# Reads a record's lifecycle state from the shared store (ADR-0069).
+StateLoader = Callable[[str], LifecycleState | None]
+# A holder takes a rotation's new share only while the record rotates.
+ROTATING_STATES = frozenset({LifecycleState.EXPIRED, LifecycleState.REVOKED})
 AUTHORITY_PUBLIC_ROUTES = frozenset(
     {("GET", "/health"), ("GET", "/public-key"), ("GET", "/certificate")}
 )
@@ -156,6 +199,10 @@ def create_authority_app(
     *,
     service_root: Certificate,
     subject_trust: SubjectTrust | None = None,
+    identity: ServiceIdentity | None = None,
+    trust: FacilityTrust | None = None,
+    state_loader: StateLoader | None = None,
+    share_key: ShareSealingKey | None = None,
 ) -> FastAPI:
     """Create and configure the standalone Attribute Authority Service application.
 
@@ -172,13 +219,36 @@ def create_authority_app(
         subject_trust: The facility CAs subjects' certificates chain through.
             Without them no key is released (503): a release must prove the
             credential's subject is asking (ADR-0082).
+        identity: This service's root-issued identity (ADR-0066). Its key
+            signs the share-key statement senders seal share 2 to (ADR-0079);
+            without it this authority holds no break-glass share (503).
+        trust: The root, facility CAs and revoked clinician serials emergency
+            assertions are validated against before share 2 is released.
+            Without them every release is refused (503).
+        state_loader: Reads a record's lifecycle state from the shared store.
+            A facility may replace share 2 only while the record is
+            ``expired`` or ``revoked`` there (ADR-0069, ADR-0080); without a
+            loader it may not at all.
+        share_key: The key deposited shares are opened with; fresh by default.
 
     Returns:
         A configured FastAPI application.
+
+    Raises:
+        ValueError: ``identity`` names another service than ``authority_id``.
     """
+    if identity is not None and identity.service_id != authority_id:
+        raise ValueError(
+            f"service identity is {identity.service_id!r}, not {authority_id!r}"
+        )
     auth = authority or generate_authority(authority_id, owned_attribute_names)
     # One-time ids of possession envelopes already used here (ADR-0082).
     release_replay = ConsumedRequestIds()
+    # Share 2 of each record whose patient this authority certified as owner
+    # (ADR-0089), and the assertion ids it has released share 2 against.
+    shares = ShareRegistry()
+    share_assertions = ConsumedAssertionIds()
+    sealing_key = share_key or ShareSealingKey.generate()
 
     app = FastAPI(
         title=f"Attribute Authority Service ({authority_id})",
@@ -388,6 +458,124 @@ def create_authority_app(
             key_b64=base64.b64encode(key).decode("ascii"),
         )
 
+    # --- Break-glass share 2 custody (ADR-0089) ---------------------------
+
+    def require_custody() -> None:
+        if identity is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="no service identity configured; this authority holds "
+                "no break-glass share",
+            )
+
+    def open_holding(record_id: str, sealed: list[SealedShare]) -> Holding:
+        """Deposited shares, opened with this service's key (ADR-0079).
+
+        Refused unless they are exactly share 2 (ADR-0089).
+        """
+        try:
+            opened = [
+                open_sealed_share(
+                    s, record_id=record_id, service_id=authority_id, key=sealing_key
+                )
+                for s in sealed
+            ]
+            holding = tuple(sorted(opened, key=lambda share: share[0]))
+            check_holding(holding, HOME_AUTHORITY_SHARE_XS)
+        except (SealedShareError, ShareHoldingError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
+        return holding
+
+    @app.post(
+        "/breakglass/shares",
+        response_model=RegisterShareResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def register_share(payload: RegisterShareRequest) -> RegisterShareResponse:
+        """Hand this home authority custody of a record's share 2."""
+        require_custody()
+        holding = open_holding(payload.share_key, payload.sealed_shares)
+        try:
+            shares.put(payload.share_key, holding)
+        except ShareAlreadyHeldError as exc:
+            # Never overwrite a live record's share (review F4).
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+            ) from exc
+        return RegisterShareResponse(share_key=payload.share_key)
+
+    @app.put("/breakglass/shares/{share_key}", response_model=RegisterShareResponse)
+    def replace_share(
+        share_key: str, payload: ReplaceShareRequest
+    ) -> RegisterShareResponse:
+        """Take share 2 of a record's new emergency key after rotation.
+
+        Only a facility may call this, only while the shared store shows the
+        record ``expired`` (its forced rotation at expiry, ADR-0069) or
+        ``revoked`` (the rotation a patient's revocation runs, ADR-0080), and
+        only for a later generation than the one held.
+        """
+        require_custody()
+        if state_loader is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="no store access; share 2 cannot be replaced",
+            )
+        if state_loader(share_key) not in ROTATING_STATES:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="a share is replaced only by its record's expiry or "
+                "revocation rotation",
+            )
+        holding = open_holding(share_key, payload.sealed_shares)
+        try:
+            shares.replace(share_key, holding, payload.generation)
+        except ShareNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+            ) from exc
+        except ShareGenerationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+            ) from exc
+        return RegisterShareResponse(status="replaced", share_key=share_key)
+
+    @app.post("/breakglass/release", response_model=HomeShareReleaseResponse)
+    def release_share(payload: HomeShareReleaseRequest) -> HomeShareReleaseResponse:
+        """Release share 2 against an assertion validated here (ADR-0089).
+
+        The same check the audit service runs before it commits and releases
+        shares 3 and 4. Share 2 is one point of a threshold of three: it opens
+        nothing without the audit service's two, so no log entry is written
+        here.
+        """
+        require_custody()
+        check_release_assertion(
+            trust=trust,
+            consumed_store=share_assertions,
+            share_key=payload.share_key,
+            assertion=payload.assertion,
+            clinician_certificate_pem=payload.clinician_certificate_pem,
+            justification=payload.justification,
+            sensitive_justification=payload.sensitive_justification,
+            what="share 2",
+        )
+        recipient = verify_gate_recipient(payload.recipient, service_root=service_root)
+        try:
+            held = shares.get(payload.share_key)
+        except ShareNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+            ) from exc
+        return HomeShareReleaseResponse(
+            sealed_shares=[
+                seal_share(share, record_id=payload.share_key, recipient=recipient)
+                for share in held
+            ]
+        )
+
     install_service_auth(
         app,
         ServiceAuthConfig(
@@ -398,4 +586,17 @@ def create_authority_app(
             replay=ConsumedRequestIds(),
         ),
     )
+    app.state.shares = shares
+    app.state.share_key = sealing_key
+    app.state.share_recipient = ShareRecipient(authority_id, sealing_key.public_key)
+    if identity is not None:
+        statement = make_key_statement(
+            sealing_key,
+            service_id=identity.service_id,
+            kind=identity.kind,
+            signing_key=identity.signing_key,
+            certificate_pem=identity.certificate_pem,
+        )
+        app.state.share_key_statement = statement
+        serve_share_key(app, statement)
     return app

@@ -14,7 +14,15 @@ from dataclasses import dataclass, field
 
 from authority.issuance import KEY_RELEASE_OPERATION, credential_binding
 from breakglass import create_emergency_assertion
-from breakglass.emergency_key import Share, generate_emergency_key, split_emergency_key
+from breakglass.emergency_key import (
+    AUDIT_SHARE_XS,
+    CLINICIAN_SHARE_XS,
+    HOME_AUTHORITY_SHARE_XS,
+    Share,
+    generate_emergency_key,
+    holder_shares,
+    split_emergency_key,
+)
 from breakglass.envelopes import create_request_envelope
 from contracts import (
     AttributeCredential,
@@ -33,22 +41,30 @@ from records.service import decrypt_record
 
 @dataclass(frozen=True)
 class EmergencyProvision:
-    """A new record's 2-of-3 emergency key and the two shares that are held.
+    """A new record's weighted 3-of-4 emergency key, routed to its holders.
 
-    Share 1 stays in clinician custody here, share 3 goes to the audit
-    service; share 2 (home authority) is reserved, not deposited (ADR-0074).
+    Share 1 stays in clinician custody here, share 2 goes to the patient's
+    home authority, shares 3 and 4 to the audit service (ADR-0089).
     """
 
     key: bytes = field(repr=False)
     clinician_share: Share = field(repr=False)
-    audit_share: Share = field(repr=False)
+    home_authority_share: Share = field(repr=False)
+    audit_shares: tuple[Share, ...] = field(repr=False)
 
 
 def provision_emergency_key() -> EmergencyProvision:
     """Generate and split the emergency key for a record being uploaded."""
     key = generate_emergency_key()
-    clinician_share, _home_share, audit_share = split_emergency_key(key)
-    return EmergencyProvision(key, clinician_share, audit_share)
+    shares = split_emergency_key(key)
+    (clinician_share,) = holder_shares(shares, CLINICIAN_SHARE_XS)
+    (home_authority_share,) = holder_shares(shares, HOME_AUTHORITY_SHARE_XS)
+    return EmergencyProvision(
+        key,
+        clinician_share,
+        home_authority_share,
+        holder_shares(shares, AUDIT_SHARE_XS),
+    )
 
 
 @dataclass(frozen=True)

@@ -4,7 +4,8 @@ Orchestrates facility node workflows:
 - Read (under policy or patient consent gate)
 - Consent (request issuance, grant submission, grant revocation)
 - Revocation (cryptographic DEK rotation and policy rebuild)
-- Break-glass (emergency assertion validation and 2-of-3 threshold gate)
+- Break-glass (emergency assertion validation and weighted 3-of-4 threshold
+  gate, ADR-0089)
 - Search (federated discovery, encrypted index search, emergency search)
 - Ingest (record encryption, owner-leaf addition, and indexing)
 
@@ -1230,7 +1231,7 @@ def create_hospital_app(
         provisioned = True
         try:
             rotator.deposit(plan)
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, RotationError) as exc:
             provisioned = False
             _logger.error(
                 "revocation of %s stored, but its new emergency shares were not "
@@ -1261,7 +1262,7 @@ def create_hospital_app(
         audit_key: AuditKeyDep,
         audit_url: AuditUrlDep,
     ) -> BreakglassUnlockResponse:
-        """Execute 2-of-3 threshold emergency unlock for a record (P3-5).
+        """Execute the 3-of-4 threshold emergency unlock for a record (P3-5).
 
         Order (review F7): parse and validate everything the caller sent,
         claim the lifecycle state with a compare-and-set, run the gate, log
@@ -1659,7 +1660,7 @@ def create_hospital_app(
                     f"Transition event replayed: {exc}",
                 ) from exc
 
-            # 6. Open emergency access via 2-of-3 threshold gate
+            # 6. Open emergency access via the 3-of-4 threshold gate
             unlock_result = gate(
                 lambda: open_emergency_access(
                     shares_presented=shares_list,

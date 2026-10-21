@@ -1,6 +1,6 @@
 # ADR-0074: Break-glass is 2-of-2 in this build; share 2 is reserved
 
-- **Status:** Proposed
+- **Status:** Superseded by ADR-0089
 - **Date:** 2026-10-15
 - **Deciders:** Avaneeth (proposal) → Powel (breakglass), Ojas (custodian, authority) → all four (claim change)
 - **Task / source:** Review decision D2, option (b); finding F3

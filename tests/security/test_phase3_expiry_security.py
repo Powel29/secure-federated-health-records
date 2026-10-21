@@ -31,6 +31,7 @@ from __future__ import annotations
 import datetime
 
 import pytest
+from breakglass.emergency_key import THRESHOLD
 from contracts.enums import LifecycleState
 from crypto_core import InvalidSignatureError, generate_ec_keypair
 from lifecycle.exceptions import (
@@ -51,6 +52,7 @@ from tests.rotation_support import (
     build_rotation_scenario,
     rotated_dek,
 )
+from tests.shares import unlock_points
 
 FAKE_START = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
 
@@ -372,7 +374,7 @@ class TestRotationReplacesEveryKey:
         self, scenario, signing_keys, clock
     ) -> None:
         result, plan = self._expire(scenario, signing_keys, clock)
-        new_key = combine_shares([plan.share(1), plan.share(3)], k=2)
+        new_key = combine_shares(unlock_points(plan.shares), k=THRESHOLD)
         assert unwrap_dek(result.emergency_wrapping, new_key) == rotated_dek(
             scenario, result
         )
@@ -382,7 +384,7 @@ class TestRotationReplacesEveryKey:
     ) -> None:
         result, _ = self._expire(scenario, signing_keys, clock)
         old_shares = scenario["shares"]
-        old_key = combine_shares([old_shares[0], old_shares[2]], k=2)
+        old_key = combine_shares(unlock_points(old_shares), k=THRESHOLD)
         assert old_key == scenario["emergency_key"]  # they still combine...
         with pytest.raises(UnwrappingError):  # ...to a key that opens nothing
             unwrap_dek(result.emergency_wrapping, old_key)
