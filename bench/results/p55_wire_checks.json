@@ -80,15 +80,15 @@
     "claim": "2-commit-before-release",
     "passed": true,
     "strength": "strong",
-    "summary": "audit COMMIT acknowledged 1.79 ms before the release response; sealed share 3 first appears inside that response",
+    "summary": "audit COMMIT acknowledged 4.62 ms before the release response; sealed share 3 first appears inside that response",
     "evidence": {
-      "release_response_frame": 400,
+      "release_response_frame": 406,
       "release_entry_seq": 4,
-      "first_share3_frame": 402,
-      "db_port": 55432,
-      "db_insert_ts": 1792410253.893298,
-      "db_commit_ts": 1792410253.8963234,
-      "commit_lead_ms": 1.7948150634765625
+      "first_share3_frame": 408,
+      "db_port": 55433,
+      "db_insert_ts": 1792566250.7033186,
+      "db_commit_ts": 1792566250.71205,
+      "commit_lead_ms": 4.622936248779297
     }
   },
   {
@@ -122,8 +122,8 @@
       "repeated_queries": {},
       "rows": [
         {
-          "frame": 487,
-          "timestamp": 1792410253.9658566,
+          "frame": 493,
+          "timestamp": 1792566251.3037288,
           "path": "/records/rec-001/emergency-search",
           "query_id": "q1",
           "request_bytes": 53,
@@ -138,17 +138,17 @@
     "claim": "4-breakglass-metadata-only",
     "passed": true,
     "strength": "strong",
-    "summary": "break-glass visible as metadata (/records/rec-001/breakglass in plain; a 4011-byte unlock burst under TLS) with no share, emergency key or DEK readable",
+    "summary": "break-glass visible as metadata (/records/rec-001/breakglass in plain; a 4010-byte unlock burst under TLS) with no share, emergency key or DEK readable",
     "evidence": {
       "scope": "tls",
       "plain_breakglass_uri": "/records/rec-001/breakglass",
       "metadata_pick_validated_on_plain": true,
       "tls_unlock_burst": {
-        "frame": 479,
-        "bytes": 4011
+        "frame": 475,
+        "bytes": 4010
       },
       "breakglass_content_hits": {},
-      "plain_unlock_request_bytes": 3965
+      "plain_unlock_request_bytes": 3966
     }
   }
 ]

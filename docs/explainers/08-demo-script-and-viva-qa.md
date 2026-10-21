@@ -69,13 +69,20 @@ Phase 6).
 
 **Concept**
 
-1. **What is novel here?** Consent, revocation and emergency access unified as
-   one signed key-lifecycle state machine; logging as a cryptographic
-   precondition of break-glass; search that exists only during an emergency.
-2. **Isn't revocation-by-key-rotation already published?** Yes (arXiv
-   2511.17464). Our delta is unifying it with consent and break-glass.
-3. **Why 2-of-3?** One party alone (even the audit service) must not be able to
-   open a record; two of three keeps emergencies possible if one is unavailable.
+1. **What is novel here?** The combination, built and tested: consent,
+   revocation, break-glass and expiry as one signed key-lifecycle state
+   machine; log-gated release of the emergency key applied to federated
+   break-glass; and search that exists only during an emergency. Not the log
+   gate on its own (ADR-0088).
+2. **Isn't "no log, no key" already published?** Yes, as accountable or
+   transparent decryption (Kroll et al.; Ryan 2017; Cheval, Moreira & Ryan,
+   EuroS&P 2023). We instantiate it for health-record break-glass, inside the
+   lifecycle. Their log is stronger than ours: ours is a trusted hash chain
+   (PROJECT.md §5 item 13).
+3. **Why 2-of-3?** One party alone (even the audit service) must not be able
+   to open a record. In this build share 2 is reserved, not deposited, so
+   break-glass needs the clinician's share *and* the audit service's share:
+   2-of-2 in practice, with no fallback if either is down (ADR-0074).
 4. **What if the audit service is down?** Break-glass fails closed. That is the
    point: no log, no key.
 5. **Why not just use CP-ABE?** Install risk (ADR-0001). We built a policy tree

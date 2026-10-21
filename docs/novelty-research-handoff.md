@@ -1,5 +1,11 @@
 # Handoff to Claude chat — deep novelty and publishability research
 
+> **Done (2026-10-21).** The result is filed at
+> `docs/review/2026-10-21-novelty-publishability-review.md`, and what it
+> changed is ADR-0088. The beliefs stated below (e.g. that arXiv 2511.17464
+> does revocation-as-key-rotation) are what we *asked* the reviewer to test.
+> They aren't current positions.
+
 > **How to use:** open a new Claude chat, turn on **Research** (web search),
 > and paste everything below the line. It is self-contained; Claude chat has no
 > access to our repo.

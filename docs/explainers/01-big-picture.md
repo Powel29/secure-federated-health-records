@@ -76,8 +76,10 @@ process stands in, ADR-0003). Only synthetic data, ever.
 
 ## If asked "what is the contribution, honestly?"
 
-Rotating keys on revoke is not new (another paper already does it). The
-contribution is **unifying consent, revocation and emergency access in one
-state machine**, making the **audit log a precondition of emergency access**,
-and **emergency-only searchable encryption**, all demonstrated across a
+Rotating keys on revoke is not new, and neither is gating key release on a log
+entry (published as accountable or transparent decryption, ADR-0088). The
+contribution is **combining them**: consent, revocation and emergency access in
+**one signed state machine**, a **log-gated emergency key** applied to
+federated break-glass, and **emergency-only searchable encryption**, all
+demonstrated across a
 simulated multi-facility federation.
