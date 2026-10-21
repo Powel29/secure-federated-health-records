@@ -11,7 +11,7 @@ reads it)
 | Item | Before | Now |
 |---|---|---|
 | `ieee-paper` skill | Named in `CLAUDE.md` but missing | `.claude/skills/ieee-paper/SKILL.md`: structure, claim-to-evidence rules, limitations, how numbers are quoted, the build |
-| IEEE class | None | `paper/IEEEtran.cls` and `paper/IEEEtran.bst` V1.8b from CTAN |
+| IEEE class | None | IEEEtran V1.8b and IEEEtran.bst 1.14 from Tectonic's bundle (not committed; `paper/IEEEtran.*` is git-ignored) |
 | LaTeX build | No toolchain | **Tectonic 0.17.0** at `C:\Users\user\AppData\Local\Programs\tectonic\tectonic.exe` (hash checked against GitHub's digest) builds `paper/main.tex` directly. The `compile_latex` tool is kept for snippet checks and `explain_latex_error`. It can't do full builds cheaply: no IEEEtran, and every call would have to retype the class, about 180 KB |
 | Claims table | `docs/test-evidence/claim-table.md` from 2026-10-09 said 5/11 | Live `python -m tests.security.claims --table` on `867d472`: **11/11 hold**. The doc is regenerated |
 | Wire evidence (course module) | The saved `plain.pcap` had no Postgres traffic, so check 2 failed in the live test | Plain and TLS captures re-recorded (TLS against the TLS-only store). `wire.analyze_traffic`: **checks 0–4 pass**, audit COMMIT 4.62 ms before the release. `bench/results/p55_*` regenerated |
@@ -103,8 +103,9 @@ you, the orchestrator, never run out of context.
 10. Figures: TikZ/pgfplots only (ADR-0087), with plot data taken from the
     CSVs. No \includegraphics of the bench PNGs.
 11. Builds: full builds use Tectonic,
-    `/c/Users/user/AppData/Local/Programs/tectonic/tectonic.exe -X compile
-    paper/main.tex --outdir paper/build --keep-logs`. Use the compile_latex
+    `mkdir -p paper/build && /c/Users/user/AppData/Local/Programs/tectonic/tectonic.exe
+    -X compile paper/main.tex --outdir paper/build --keep-logs` (Tectonic
+    refuses an --outdir that does not exist). Use the compile_latex
     tool only to try a single figure/table/snippet, and explain_latex_error
     for a log line you don't understand. Never send the whole paper to it.
 12. Git: branch `paper/ieee-draft` from the current branch. ONE commit at the
@@ -114,15 +115,16 @@ you, the orchestrator, never run out of context.
 
 ## Stage 0 — Setup (you)
 
-- Check that paper/IEEEtran.cls and paper/IEEEtran.bst exist and that the
-  Tectonic binary runs (`tectonic.exe --version`). If either is missing,
-  STOP and ask me.
+- Check that the Tectonic binary runs (`tectonic.exe --version`). If it
+  doesn't, STOP and ask me.
 - Check the toolchain by building the smoke test:
-  `tectonic.exe -X compile .claude/skills/ieee-paper/smoke/main.tex
-  -Z search-path=paper --outdir paper/build/smoke` (seconds when the cache is
-  warm; run it in the background in case packages need fetching). If it fails
-  on network errors, retry once. If it fails again, STOP and tell me
-  (Stages 1–3 can still run; only the build waits).
+  `mkdir -p paper/build/smoke && tectonic.exe -X compile
+  .claude/skills/ieee-paper/smoke/main.tex --outdir paper/build/smoke`
+  (seconds when the cache is warm; run it in the
+  background in case packages need fetching). Its log must report
+  `IEEEtran 2015/08/26 V1.8b`. If it fails on network errors, retry once.
+  If it fails again, STOP and tell me (Stages 1–3 can still run; only the
+  build waits).
 - Create the branch and paper/main.tex: IEEEtran conference, the XeTeX font
   preamble from the ieee-paper skill (copy it from the smoke test), \input
   per section, \bibliographystyle{IEEEtran}, \bibliography{refs}. Also

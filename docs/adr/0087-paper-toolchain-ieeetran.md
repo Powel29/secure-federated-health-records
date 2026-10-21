@@ -26,14 +26,19 @@ a verifier can check.
 - The paper is LaTeX with the IEEEtran conference class. Each section is its
   own file under `paper/sections/`, pulled in by `paper/main.tex` with
   `\input`.
-- `IEEEtran.cls` and `IEEEtran.bst` (V1.8b) are vendored in `paper/` from
-  CTAN (LPPL).
+- `IEEEtran.cls` (V1.8b) and `IEEEtran.bst` (1.14) come from Tectonic's
+  bundle, which ships the current CTAN release (checked 2026-10-21: the
+  smoke test's log reports `IEEEtran 2015/08/26 V1.8b`). They are not
+  committed; `paper/IEEEtran.*` is git-ignored. (They were vendored in
+  `paper/` at first; that added about 8,750 lines to review and nothing the
+  bundle lacks, so they were removed.)
 - Full builds run locally with **Tectonic 0.17.0**, taken from its official
   GitHub release, with its SHA-256 checked against the digest GitHub
   publishes. It sits at
   `C:\Users\user\AppData\Local\Programs\tectonic\tectonic.exe`.
   `tectonic -X compile paper/main.tex --outdir paper/build` reads the files
-  directly and runs BibTeX by itself. `paper/build/` is git-ignored.
+  directly and runs BibTeX by itself. `paper/build/` is git-ignored, and
+  Tectonic will not create it, so the build command makes it first.
 - The `compile_latex` tool stays for small checks (one figure, table or
   section) and for `explain_latex_error`.
 - Diagrams are TikZ and plots are pgfplots, with plot data taken from the
@@ -61,8 +66,10 @@ The same source builds unchanged on Overleaf.
   skill.
 - The SVG diagrams in `docs/diagrams/` aren't reused. They get redrawn in
   TikZ, which takes more effort but means no SVG→PDF converter is needed.
-- The vendored class has to stay in step with CTAN, which is unlikely to
-  matter (V1.8b has been current since 2015).
+- The class version is whatever Tectonic's bundle pins. Today that is V1.8b,
+  current since 2015; a future bundle could change it, and the smoke test's
+  log shows which one a build used. The `compile_latex` fallback needs local
+  copies downloaded into `paper/` (untracked).
 - `% src:` comments make the source longer, but nothing strips them: LaTeX
   and Overleaf just ignore them.
 
