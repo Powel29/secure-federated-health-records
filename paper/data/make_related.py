@@ -116,15 +116,7 @@ def main() -> None:
         "% (rival rows) and facts-live/F1/F2/F3/F8 (this-work row). Do not edit by hand.",
         r"\begin{table}[t]",
         r"\centering",
-        r"\caption{Comparison with related work. CE: keys, not a policy check,",
-        r"decide access; LG: key release gated on a log entry; BG: break-glass;",
-        r"LC: consent and revocation in one lifecycle; TB: time-boxed expiry;",
-        r"ES: emergency-scoped or time-limited search; FP: formal proof or model;",
-        r"IMP: implementation. $\checkmark$ yes, $\circ$ partial, -- no, ? not",
-        r"determined from what we read. Our row: live run on \texttt{57a1a8c}.",
-        r"$^{a}$Trusted hash chain, no log proofs. $^{b}$Revocation is a transition;",
-        r"consent is a signed grant checked at read time when presented, outside",
-        r"the lifecycle. $^{c}$Server-enforced, not cryptographic.}",
+        r"\caption{Comparison with related work (legend and notes below the table).}",
         r"\label{tab:related}",
         r"\footnotesize",
         r"\setlength{\tabcolsep}{2.4pt}",
@@ -147,7 +139,27 @@ def main() -> None:
         + r" \\ % src: facts-live#12, facts-F1#11, facts-F1#35, facts-F1#54, facts-F1#77, facts-F1#78,"
         + " facts-F2#50, facts-F2#59, facts-F3#53, facts-F8#3"
     )
-    lines += [r"\bottomrule", r"\end{tabular}", r"\end{table}", ""]
+    lines += [
+        r"\bottomrule",
+        r"\end{tabular}",
+        r"\par\vspace{3pt}",
+        r"{\raggedright CE: keys, not a policy check, decide access; LG: key release",
+        r"gated on a log entry; BG: break-glass; LC: consent and revocation in one",
+        r"lifecycle; TB: time-boxed expiry; ES: emergency-scoped or time-limited",
+        r"search; FP: formal proof or model; IMP: implementation. $\checkmark$ yes,",
+        r"$\circ$ partial, -- no, ? not determined from what we read. Our row: live",
+        r"run on \texttt{57a1a8c}.",
+        "% src: facts-live#12",
+        r"$^{a}$Trusted hash chain, no log proofs.",
+        "% src: facts-F2#59, facts-F8#3",
+        r"$^{b}$Revocation is a transition; consent is a signed grant checked at",
+        r"read time when presented, outside the lifecycle.",
+        "% src: facts-F1#11, facts-F1#35, facts-F1#77, facts-F1#78",
+        r"$^{c}$Server-enforced, not cryptographic.\par}",
+        "% src: facts-F1#54",
+        r"\end{table}",
+        "",
+    ]
     OUT.write_text("\n".join(lines), encoding="utf-8")
     print(f"wrote {OUT} ({len(ROWS) + 1} rows)")
 

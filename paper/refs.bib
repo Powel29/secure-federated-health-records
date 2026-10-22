@@ -98,11 +98,11 @@
 
 % verified: https://api.crossref.org/works?query.bibliographic=How+to+Break+Access+Control+in+a+Controlled+Manner+Ferreira
 %   (DOI 10.1109/CBMS.2006.95, CBMS'06, pp. 847-854)
-% caution: abstract content seen only via a search-engine snippet of the Univ. of Kent
-%   listing (cs.kent.ac.uk/pubs/2006/2415, connection refused when fetched directly);
-%   IEEE Xplore and Semantic Scholar have no abstract. Cite only for "BTG policy in a
-%   hospital EMR access-control model". Kent listing pages "182-196" disagree with Crossref;
-%   Crossref used.
+% verified: https://api.openalex.org/works/doi:10.1109/CBMS.2006.95 (publisher abstract via
+%   OpenAlex index, re-checked 2026-10-22): BTG policy implemented to override access control
+%   in the access-control model of a university-hospital Virtual EMR used by >500 doctors,
+%   "whilst providing for non-repudiation mechanisms for its usage"; pp. 847-854 agree with
+%   Crossref. Full text not opened. Kent listing pages "182-196" disagree; Crossref used.
 @inproceedings{ferreira2006break,
   author    = {A. Ferreira and R. Cruz-Correia and L. Antunes and P. Farinha and E. Oliveira-Palhares and D. W. Chadwick and A. Costa-Pereira},
   title     = {How to Break Access Control in a Controlled Manner},
@@ -114,9 +114,11 @@
 
 % verified: https://api.crossref.org/works?query.bibliographic=Rumpole+a+flexible+break-glass+access+control+model+Marinovic
 %   (DOI 10.1145/1998441.1998453, SACMAT '11, pp. 73-82; full title via Semantic Scholar record)
-% caution: SACMAT abstract unavailable (ACM 403; publisher-elided in indexes). Cite only as
-%   "a break-glass access-control model" (supported by the title). The longer journal
-%   version is a different paper (TISSEC 2014, DOI 10.1145/2629502) -- not verified for use.
+% verified: https://api.openalex.org/works/doi:10.1145/1998441.1998453 (publisher abstract via
+%   OpenAlex index, re-checked 2026-10-22): Rumpole is a break-glass access-control model that
+%   establishes why access was denied, uses Belnap four-valued logic for conflicting/missing
+%   information, and gives a declarative query language for the override procedure. Full text
+%   not opened. The TISSEC 2014 journal version (DOI 10.1145/2629502) is a different paper.
 @inproceedings{marinovic2011rumpole,
   author    = {Srdjan Marinovic and Robert Craven and Jiefei Ma and Naranker Dulay},
   title     = {Rumpole: A Flexible Break-Glass Access Control Model},
@@ -145,8 +147,11 @@
 % verified: https://api.crossref.org/works?query.bibliographic=Password-Controlled+Encryption+with+Accountable+Break-Glass+Access
 %   (DOI 10.1145/2897845.2897869, AsiaCCS '16, pp. 235-246)
 % verified: https://crypto.ie.cuhk.edu.hk/TZhang (author publication list)
-% caution: abstract content seen only as the search-engine rendering of the ACM DL page
-%   (dl.acm.org returns 403 to direct fetch). Full text not opened.
+% verified: https://api.openalex.org/works/doi:10.1145/2897845.2897869 (publisher abstract via
+%   OpenAlex index, re-checked 2026-10-22): two-factor password + KGC master key; anyone holding
+%   the password (e.g. an emergency contact) obtains a decryption key from the KGC without
+%   revealing the password; KGC accountable for misused key generation; pitched for medical
+%   records, no key-escrow server or trusted hardware. dl.acm.org still 403; full text not opened.
 % note: review source [18] for this paper points at de Oliveira's ResearchGate page (wrong).
 @inproceedings{zhang2016password,
   author    = {Tao Zhang and Sherman S. M. Chow and Jinyuan Sun},
@@ -176,7 +181,12 @@
 % verified: https://api.crossref.org/works/10.1109/HealthCom46333.2019.9009598 (pp. 1-7, Oct. 2019; full names)
 % verified: https://api.semanticscholar.org/graph/v1/paper/search?query=Red%20Alert... (abstract cross-check)
 % note: review source [12] for de Oliveira et al. is "Sharing in the Rain" (wrong paper).
-% caution: IEEE Xplore and TU Delft repository pages were unreachable; abstract via indexing record only.
+% verified: https://pure.amsterdamumc.nl/ws/files/178264175/Red-alert-break-glass-protocol-to-access-encrypted-medical-records-in-the-cloud.pdf
+%   (version of record, full text read 2026-10-22): CP-ABE emergency key plus MA-signed team
+%   access tokens with default expiry; MA revokes tokens via the CSP when a team's task ends
+%   (e.g. ambulance after hospital arrival), no re-encryption; multi-team, cross-institution;
+%   informal security analysis of malicious behaviours; no audit log gating, no implementation
+%   reported. Abstract also at https://researchportal.tuni.fi/en/publications/red-alert-break-glass-protocol-to-access-encrypted-medical-record/
 @inproceedings{deoliveira2019redalert,
   author    = {Marcela Tuler de Oliveira and Antonis Michalas and Adrien E. D. Groot and Henk A. Marquering and Silvia Delgado Olabarriaga},
   title     = {Red Alert: Break-Glass Protocol to Access Encrypted Medical Records in the Cloud},
@@ -237,8 +247,11 @@
 
 % verified: https://api.crossref.org/works/10.1109/TIFS.2015.2509912 (vol. 11, no. 4, pp. 746-759, Apr. 2016)
 % note: review source [33] for this paper is an unrelated consortium-blockchain EHR paper (wrong).
-% caution: abstract content (Re-dtPECK; time-limited delegated search+decrypt) seen via
-%   search-indexed abstract text only; IEEE Xplore page and full text not opened.
+% verified: https://api.openalex.org/works/doi:10.1109/TIFS.2015.2509912 (publisher abstract via
+%   OpenAlex index, re-checked 2026-10-22): Re-dtPECK -- conjunctive keyword search, designated
+%   tester, timed PRE; patients delegate search and decryption rights for a set period that then
+%   expires; resists keyword guessing; proven secure in the standard model; simulation results.
+%   Full text not opened. (OpenAlex year 2015 = online-first; Crossref issue date Apr. 2016 used.)
 @article{yang2016timing,
   author  = {Yang Yang and Maode Ma},
   title   = {Conjunctive Keyword Search With Designated Tester and Timing Enabled Proxy Re-Encryption Function for E-Health Clouds},

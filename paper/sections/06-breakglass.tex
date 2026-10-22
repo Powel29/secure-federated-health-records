@@ -11,9 +11,9 @@ to the clinician (Fig.~\ref{fig:sequence}); opening rotates no key.
 
 \subsection{Emergency Assertion and Replay}
 
-An Emergency Assertion $A$ carries a one-time \texttt{assertion\_id};
+An Emergency Assertion $A$ carries a one-time identifier \texttt{assertion\_\allowbreak id};
 patient, clinician and facility identifiers; a reason code from a closed
-enumeration; \texttt{issued\_at}, \texttt{expires\_at}; a nonce of at least
+enumeration; \texttt{issued\_\allowbreak at}, \texttt{expires\_\allowbreak at}; a nonce of at least
 128 bits; an optional digest binding the record and justification texts,
 which the share holders require; and an ECDSA P-256 signature over all other
 fields by the clinician's key, which never leaves the custodian.
@@ -21,8 +21,8 @@ fields by the clinician's key, which never leaves the custodian.
 Validation fails closed at the first failing check, in order: signature;
 certificate chain via a facility CA to the trusted root; clinician
 identifier against the certificate CN; certificate not revoked; facility
-identifier (at the holders, only federation membership); not expired; lifetime $\le 15$\,min and \texttt{issued\_at} at
-most 30\,s in the future; then consumption of \texttt{assertion\_id}.
+identifier (at the holders, only federation membership); not expired; lifetime $\le 15$\,min and \texttt{issued\_\allowbreak at} at
+most 30\,s in the future; then consumption of \texttt{assertion\_\allowbreak id}.
 % src: facts-F2#7, facts-F2#18, facts-F2#46
 Consumption runs last, so an invalid assertion cannot burn a legitimate
 identifier, and the consumed store is a required argument that cannot be
@@ -90,9 +90,9 @@ startup chain check.
 
 \subsection{Hash Chain}
 
-Each entry holds \texttt{seq}, \texttt{prev\_hash}, \texttt{entry\_hash},
-event type and metadata, actor, correlation identifier, timestamp and an
-ECDSA signature, with
+Each entry holds \texttt{seq}, \texttt{prev\_\allowbreak hash} and \texttt{entry\_\allowbreak hash},
+the event type and metadata, the actor, a correlation identifier, a timestamp
+and an ECDSA signature, with
 $h_i=\mathrm{SHA\text{-}256}(\mathrm{enc}(h_{i-1},\mathit{event},t,\mathit{actor}))$
 from a zero-hash genesis (Fig.~\ref{fig:chain}b).
 % src: facts-F2#71, facts-F2#72, facts-F2#73, facts-F2#74
@@ -107,7 +107,7 @@ entry signature.
 
 The deployed window is 4\,h, which a caller may only shorten.
 % src: facts-F2#20, facts-F2#21
-At expiry a monitor signs \textsc{Emergency\_Open}$\to$\textsc{Expired},
+At expiry a monitor signs \textsc{Emergency\_Open}$\to$\allowbreak\textsc{Expired},
 runs a full rotation (new DEK, policy root and $K_E$, with a fresh 3-of-4
 split to the same holders), and signs the return to the prior state
 (Section~\ref{sec:lifecycle-expiry}); old shares then open nothing (C4).

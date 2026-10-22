@@ -81,7 +81,9 @@ def main() -> None:
         "% src: " + ", ".join(f"facts-F6#{i}" for i in range(34, 54))
         + ", facts-F6#90, facts-F6#93",
         r"\label{tab:wire}",
-        r"\begin{tabular}{@{}l p{0.19\columnwidth} p{0.29\columnwidth} p{0.27\columnwidth} l@{}}",
+        r"\begin{tabular}{@{}l >{\raggedright\arraybackslash}p{0.19\columnwidth} "
+        r">{\raggedright\arraybackslash}p{0.29\columnwidth} "
+        r">{\raggedright\arraybackslash}p{0.27\columnwidth} l@{}}",
         r"\toprule",
         r"\# & Property & Plain capture & TLS capture & Result \\",
         r"\midrule",

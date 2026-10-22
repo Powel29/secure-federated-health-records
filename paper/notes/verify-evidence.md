@@ -100,3 +100,17 @@ Re-scan: 868 tag references across the paper, 0 dangling, 0 Contradictions-entry
 [MINOR] paper/sections/00-abstract.tex:3 — "the health-record break-glass schemes do not gate key release on a committed log entry" states as fact what the matrix marks "?" for three of them (Marinovic, Brucker et al. 2010, de Oliveira 2019 have LG = ? in tables/related.tex:29,31,34; F8#8, #9, #12 say only "no logging precondition"/unreachable abstract). — Fix: "…and the health-record break-glass schemes are not described as gating key release on a committed log entry" (the intro's wording).
 
 Prior round-2 MINORs 1 (F2/F8 Contradictions numbering) and 2 (states.tex tag placement) are outside this round's file scope and were not re-checked.
+
+## Round 4
+
+**Summary (round 4): 0 BLOCKER, 0 MINOR in scope.** Scope: sections/05-lifecycle.tex, 06-breakglass.tex, figures/states.tex, tables/related.tex, tables/wire.tex; facts-F2/F8 renumbering; updated facts-F8 #7, #8, #10, #12, #16 and matrix rows.
+
+Re-scan (whole paper): 876 tag references, 0 dangling, 0 tags on Contradictions entries, **0 numbering collisions**.
+
+- Round-2 MINOR 1 (Contradictions numbering in facts-F2/F8) — RESOLVED: facts-F2.md:132ff and facts-F8.md Contradictions are now `C1…`; no `facts-F2#n` / `facts-F8#n` tag is ambiguous.
+- Round-2 MINOR 2 (states.tex tag placement) — RESOLVED: every tag now follows its `\node`/`\draw` block (lines 22, 26, 29, 32, 34, 39) and the caption (46); tags unchanged in content (F1#1/9/11, #32/#37, #35, #30/#36, #33/#53, #39/#63/#64/#73, caption F1#11/35/36/46/47/73).
+- 05 and 06 rewording: re-read every chunk against its facts. All sentences tagged; tags identical to round 2 (Fig./Table inputs moved to 05:35, no tag lost). Wording changes ("An illegal transition fails closed … first calls", hash-chain field list, `\allowbreak` in identifiers) do not change meaning; no strengthening found.
+- related.tex: every row tagged (rows → F8#1…#18 in order). The legend and footnotes now sit below the tabular, each tagged (legend → facts-live#12; a → F2#59, F8#3; b → F1#11/35/77/78; c → F1#54). Matrix cells checked: de Oliveira 2019 row (line 26) = ✓ – ✓ ∘ ✓ – – –, which matches the F8 matrix and F8#12 (no audit logging, informal analysis, no implementation). Yang & Ma row (line 32) = ✓ – – ∘ ✓ ✓ ✓ ∘, which matches the matrix and F8#16 (standard-model proof, simulations).
+- wire.tex: unchanged; caption tag after caption covers the table (F6#34-53, #90, #93); row values re-checked against p55_wire_checks.json in round 1.
+- Updated facts F8#7, #8, #10, #16 only add provenance or detail ("content confirmed" via OpenAlex/publisher abstract); F8#8's added description does not change any sentence that cites it (related-work.tex:27-29 still says only "build break-glass into access-control models"). The external pages were not re-fetched by V1.
+- Side effect on the round-3 residual MINOR (00-abstract.tex:3, outside this round's scope): de Oliveira 2019's LG is now ✗, so only Marinovic and Brucker et al. 2010 remain "?". The round-3 fix ("are not described as gating") still applies if the abstract has not been changed.

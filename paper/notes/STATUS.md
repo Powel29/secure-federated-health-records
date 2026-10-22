@@ -87,3 +87,12 @@ PROJECT.md §5 has **13** caveats (counted 2026-10-21). Note: PROJECT.md §1 lin
   - Several F8 sources carry caution flags (Zhang–Chow–Sun, Ferreira, Rumpole, Yang & Ma, Red Alert): only partly verified on content.
   - Underfull \vbox at 04:64 (float-dependent).
 - Not done here, needs the team: docs that are stale vs code (ARCHITECTURE §5/§7, federation-topology.md, threat-model.md, several ADRs saying 2-of-3 or "unidirectional", PROJECT.md §1 "every transition rotates", "Grant adds a key wrapping" in PROJECT §4/skill) — see "Contradictions found" in each fact sheet.
+
+## Minor clean-up pass (2026-10-22)
+
+- Contradictions entries in facts-F2/F8 renumbered C1… (tags now unambiguous).
+- Layout: §V–§VI badness-10000 lines removed (\allowbreak on identifiers, light rewording, same tags); Fig. 2/Table II moved below §V's first paragraph; Table I caption one sentence, legend/notes below the tabular; Table V ragged-right; states.tex tags moved after their elements.
+- References: zhang2016password, ferreira2006break, marinovic2011rumpole, yang2016timing, deoliveira2019redalert content CONFIRMED (OpenAlex publisher abstracts; Red Alert full text); caution notes replaced with `% verified:` lines. Matrix sharpened: de Oliveira 2019 LG/FP/IMP → ✗ (none described / informal analysis / none reported), Yang & Ma IMP → ~ (simulations only).
+- Re-verified: V1 round 4 0/0; V5 round 3 0 BLOCKER, 2 MINOR.
+- Build: 0 errors/undefined/overfull; 4 underfull \hbox (none at 10000), 2 underfull \vbox; 10 pages, references end p10.
+- Left, by choice: the two \vbox stretches (gap above §VI-B on p6, smaller near §VII-C on p7). \raggedbottom removes them but leaves p6's left column ~3 lines short; kept the balanced columns.

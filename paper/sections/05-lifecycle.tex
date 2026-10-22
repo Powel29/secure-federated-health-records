@@ -5,9 +5,6 @@ a signed, replay-protected event checked by one state machine in
 \texttt{src/lifecycle/} (Fig.~\ref{fig:states}, Table~\ref{tab:transitions}).
 % src: facts-F1#1, facts-F1#3, facts-F1#11, facts-F1#21, facts-F1#46, facts-F1#75
 
-\input{figures/states}
-\input{tables/transitions}
-
 \subsection{States and Transitions}\label{sec:lifecycle-states}
 
 The machine has exactly four states: \textsc{Granted}, \textsc{Revoked},
@@ -34,6 +31,9 @@ emits it.
 \textsc{Revoked}, and such an event must carry a reason code from a closed
 enumeration.
 % src: facts-F1#14, facts-F1#2
+
+\input{figures/states}
+\input{tables/transitions}
 
 Not every transition rotates keys.
 % src: facts-F1#47
@@ -84,9 +84,9 @@ clinician's or the audit service's key, though a patient may also revoke a
 record left in \textsc{Expired}; each facility process makes a fresh timer key.
 % src: facts-F1#33, facts-F1#34, facts-F1#73
 
-Illegal transitions fail closed before anything is signed:
-\texttt{create\_\allowbreak transition\_\allowbreak event} calls
-\texttt{validate\_\allowbreak transition} first,
+An illegal transition fails closed before anything is signed:
+\texttt{create\_\allowbreak transition\_\allowbreak event} first calls
+\texttt{validate\_\allowbreak transition},
 which raises \texttt{Illegal\-Transition\-Error} for any pair outside the legal
 set, so no event id, nonce or signature is produced.
 % src: facts-F1#17, facts-F1#19
@@ -122,7 +122,7 @@ administrator action is needed.
 The sweep first claims the session, so concurrent expirers cannot rotate
 twice.
 % src: facts-F1#57
-It then signs \textsc{Emergency\_Open}$\to$\textsc{Expired} with the timer
+It then signs \textsc{Emergency\_Open}$\to$\allowbreak\textsc{Expired} with the timer
 key, runs the full rotation, and only after the rotation is stored and the new
 shares are deposited signs the return to \textsc{Granted} or
 \textsc{Revoked}.

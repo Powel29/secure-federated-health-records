@@ -94,3 +94,31 @@ Not issues: the 4 `TU/ptm` font warnings are expected. The Fig. 4 float carries 
 [MINOR] paper/main.tex:39-40 — Refs [20]–[21] spill onto page 11, which holds only those two entries, about 9 lines. An eleven-page PDF with a nearly empty last page looks unfinished, and a reader may count it as 11 pages. — Fix: add `\IEEEtriggeratref{12}` (or a nearby value) before `\bibliographystyle{IEEEtran}`, or trim about 10 lines of body text so the references fit on page 10 and the PDF returns to 10 pages.
 
 [MINOR] paper/tables/related.tex:47, paper/sections/02-related-work.tex:32, paper/sections/03-threat-model.tex:6 — New underfull \vbox warnings while \output is active (badness 10000, 2951 and 4205), caused by Table I and the heading at the top of page 3. The paragraph gaps in page 2's columns stretch. — Fix: `\raggedbottom` in the preamble, or shorten the Table I caption, which also addresses the open item above.
+
+## Round 3
+
+**Summary: 0 BLOCKER, 2 MINOR (both new and cosmetic). Every round-2 item is RESOLVED, and the PDF is back to 10 pages.**
+
+### Build stats (rebuilt into paper/build/v5 with `--keep-logs --keep-intermediates`; pages re-rendered to p1–p10.png)
+
+- Errors: 0. Undefined references or citations: 0. Multiply-defined labels: 0. Overfull boxes: 0. No "??" in the PDF.
+- Underfull: 4 \hbox, all at badness ≤ 4291 (none at 10000), and 2 \vbox (badness 2126 and 3746). Font: only the expected `TU/ptm` warnings.
+- Labels and citations: everything resolves; no uncited bib entries. References were renumbered by citation order, which is consistent with IEEEtran.
+- PDF: **10 pages**. The body ends on page 10, left column, about 75% down ("…and the scalability runs we cut."). REFERENCES follows in the same column and **ends on page 10, right column** ([21]). Body length is about 9.7 pages, inside the 8–10 limit.
+- Structure: unchanged and correct.
+
+### Round-2 items
+
+- RESOLVED: stretched lines in sections/05-lifecycle.tex and sections/06-breakglass.tex. No badness-10000 lines remain, and pages 4–6 show normal spacing. `\texttt` identifiers now break after `_` (for example "validate_ / transition" and "assertion_ / id"), which is acceptable.
+- RESOLVED: Fig. 2 and Table II now float to the top of page 4, after the §V heading (page 3, right column).
+- RESOLVED: Table I has a one-line caption, with the legend and notes a–c set in `\footnotesize` below the table (page 2). The changed rows for de Oliveira [17] and Yang and Ma [18] render cleanly and align.
+- RESOLVED: Table V columns are ragged-right, with no rivers (page 8).
+- RESOLVED: the underfull \vbox warnings at 02/03/04 and tables/related are gone.
+- RESOLVED: page 11 no longer exists, and the references end on page 10.
+- No regressions. Fig. 3 and Fig. 4 have no overlaps. The Fig. 2 tags ([T]★ and [T]/[P]★) sit clear of the arcs. The Fig. 1 labels are legible. Caption hashes print in lowercase.
+
+### New issues
+
+[MINOR] paper/sections/06-breakglass.tex:78 (underfull \vbox, badness 2126) — Page 6's left column has a visibly enlarged gap, about 2 lines, above "B. The Weighted 3-of-4 Gate", because the column is stretched to the bottom. — Fix: add `\raggedbottom` to the main.tex preamble, or accept it as cosmetic.
+
+[MINOR] paper/sections/07-security-analysis.tex:85 (underfull \vbox, badness 3746) — The same kind of vertical stretch on page 7 near "C. What Is Proven". It is less visible than the page 6 gap. — Fix: same as above.

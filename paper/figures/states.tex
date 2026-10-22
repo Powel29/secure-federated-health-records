@@ -14,29 +14,29 @@
     plain/.style={->, thin},
     lbl/.style={font=\footnotesize, inner sep=1.5pt},
   ]
-  % src: facts-F1#1, facts-F1#9, facts-F1#11
   \node[st, initial, initial text={ingest}, initial where=left]
     (G) at (0,1.05) {Granted};
   \node[st] (R) at (0,-1.05) {Revoked};
   \node[st] (E) at (2.9,0) {Emergency\\open};
   \node[st] (X) at (5.9,0) {Expired};
+  % src: facts-F1#1, facts-F1#9, facts-F1#11
 
-  % src: facts-F1#32, facts-F1#37
   \draw[rot] ([xshift=-3mm]G.south) -- node[lbl, left] {revoke [P]$^{\star}$}
     ([xshift=-3mm]R.north);
-  % src: facts-F1#35
+  % src: facts-F1#32, facts-F1#37
   \draw[plain, dashed] ([xshift=3mm]R.north) -- node[lbl, right] {no emitter}
     ([xshift=3mm]G.south);
-  % src: facts-F1#30, facts-F1#36
+  % src: facts-F1#35
   \draw[plain] (G) -- node[lbl, pos=0.45, above right] {open [C]} (E);
   \draw[plain] (R) -- node[lbl, pos=0.45, below right] {open [C]} (E);
-  % src: facts-F1#33, facts-F1#53
+  % src: facts-F1#30, facts-F1#36
   \draw[plain] (E) -- node[lbl, above] {timer [T]} (X);
-  % src: facts-F1#39, facts-F1#63, facts-F1#64, facts-F1#73
+  % src: facts-F1#33, facts-F1#53
   \draw[rot] (X.north) to[out=90, in=0] node[lbl, pos=0.35, above right]
     {[T]$^{\star}$} (G.east);
   \draw[rot] (X.south) to[out=-90, in=0] node[lbl, pos=0.35, below right]
     {[T]/[P]$^{\star}$} (R.east);
+  % src: facts-F1#39, facts-F1#63, facts-F1#64, facts-F1#73
 \end{tikzpicture}
 \caption{Key-lifecycle states and the seven legal transitions. Signer:
 [P]~patient, [C]~clinician, [T]~timer key; ``open'' is the break-glass unlock. Thick arrows ($\star$) carry a
