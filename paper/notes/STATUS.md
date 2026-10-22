@@ -109,3 +109,12 @@ PROJECT.md §5 has **13** caveats (counted 2026-10-21). Note: PROJECT.md §1 lin
 - Four authors in two rows of two (Ojas Thakurela 240911282, Powel Lawrence Lewis 240911458; Avaneeth Gowda L 240911368, Nandini Taldar 240911356), each with School of Computer Engineering, MIT, Manipal, India. IEEEtran wraps after three per row, so a `\linebreakand` macro forces the 2×2 layout.
 - The taller title block pushes references [16]–[21] onto page 11: 11 pages total, body still ends in p10's left column (within "8–10 pages plus references"). Build otherwise clean (0 errors/undefined/overfull, 6 underfull).
 - Changed to all four authors in one row (2026-10-22): "School of Computer Engineering" breaks after "Computer" so four blocks fit the page width; the 2×2 macro is gone. Title block is shorter, so only references [20]–[21] now spill onto page 11 (11 pages; body ends p10). Build clean, 4 underfull.
+
+## Trim to 10 pages (2026-10-22)
+
+- Wording-only trims (no fact or tag changed) so references [20]–[21] fit on page 10 again:
+  01 (gap sentence; search-token sentence), 02 (weaker-log sentence), 05 (return-to-claimed-state; monitor sentence),
+  06 ("old shares open nothing"), 08 (DEK canary; "there is no padding"), 10 Further limits (scaling runs, formal model,
+  truncation check "not signatures", payload AAD, ElGamal group), 11 conclusion (Assertion/commit clause, "prior art",
+  "C1--C11 all hold", "under a millisecond", future-work list).
+- Build: 10 pages, references end on p10; 0 errors/undefined/overfull; 5 underfull.

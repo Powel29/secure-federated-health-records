@@ -25,7 +25,7 @@ exposing record plaintext, the emergency key and four attribute keys, and a
 clean TLS result is not trusted unless that control fires.
 % src: facts-F6#35, facts-F6#36, facts-F6#37
 Even on the plain wire no share or signing key appears, since shares travel
-sealed; the DEK canary also had no plain hit in this run.
+sealed; the DEK canary had no plain hit either.
 % src: facts-F6#6, facts-F6#37
 
 \emph{Commit before release.} The analyser matches the audit service's
@@ -67,5 +67,5 @@ is the term length plus 63\,B.
 % src: facts-F6#68, facts-F6#69, facts-F6#71, facts-F6#72
 Timing showed no hit/miss signal at this sample size (medians 66.1\,ms
 over 11 hits and 66.7\,ms over 4 misses, on a 16-core AMD host, not that of
-Table~\ref{tab:bench}), and no padding is implemented.
+Table~\ref{tab:bench}); there is no padding.
 % src: facts-F6#74, facts-F6#75, facts-F6#77, facts-F6#92

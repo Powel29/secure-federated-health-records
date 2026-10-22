@@ -50,8 +50,8 @@ Break-glass open instead reconstructs the emergency key from three of four
 shares, unwraps the DEK and delivers it to the clinician; nothing in the store
 is re-keyed (Section~\ref{sec:breakglass}).
 % src: facts-F1#36, facts-F3#46
-When the emergency ends, the record returns to the state it was claimed from,
-so an emergency cannot undo a revocation.
+When the emergency ends, the record returns to the state it was claimed
+from, so it cannot undo a revocation.
 % src: facts-F1#52, facts-F1#64
 
 \subsection{Signed Transitions}\label{sec:lifecycle-signing}
@@ -116,7 +116,7 @@ the emergency key or admit a new join, even before the sweep runs
 (Section~\ref{sec:limits}).
 % src: facts-F1#53, facts-F1#54
 A background monitor checks for due sessions every 0.5\,s, so no
-administrator action is needed.
+administrator acts.
 % src: facts-F1#55
 
 The sweep first claims the session, so concurrent expirers cannot rotate

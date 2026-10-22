@@ -10,7 +10,7 @@ Log-gated decryption is established: in accountable and transparent decryption a
 % src: facts-F8#1, facts-F8#2, facts-F8#3
 Break-glass for health records is established too, at the policy layer, where consent gets a lifecycle but is enforced in software~\cite{muslim2026consent}, and with keys~\cite{brucker2010abe,deoliveira2020breakglass,yang2018libac,romel2025patient}, but none of these schemes is described as gating key release on a log entry.
 % src: facts-F8#17, facts-F8#9, facts-F8#13, facts-F8#14, facts-F8#18
-In the works we compare (Table~\ref{tab:related}), the log-gated schemes carry no patient revocation lifecycle, so none combines log-gated key release with consent and revocation.
+In the works we compare (Table~\ref{tab:related}), the log-gated schemes have no patient revocation lifecycle, so none joins log-gated release to consent and revocation.
 % src: facts-F8#23
 
 This paper builds that combination and tests it.
@@ -33,7 +33,7 @@ Revocation and expiry rotate the DEK, the policy root, the emergency key with it
 The audit service releases its two shares only after validating a signed, one-time Emergency Assertion bound to the record and committing a hash-chained log entry (Section~\ref{sec:breakglass}).
 % src: facts-F2#6, facts-F2#45, facts-F2#50, facts-F2#51, facts-F8#3
 \item \emph{Emergency-scoped search.}
-Search tokens are derived from the emergency key, so search works only while an emergency session is live, and old tokens stop matching after the expiry rotation.
+Search tokens derive from the emergency key, so search works only during a live emergency session, and old tokens stop matching after expiry rotation.
 % src: facts-F3#51, facts-F3#53, facts-F3#54
 \item \emph{Evidence.}
 Negative security tests back eleven claims, C1--C11, all of which hold in a live test run on the evaluated version of our code, git commit \texttt{57a1a8c} of the project repository (Section~\ref{sec:security}).

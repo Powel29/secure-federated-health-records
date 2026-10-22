@@ -75,16 +75,16 @@ decryption~\cite{ryan2017accountable,cheval2023transparency}, so ``no log
 entry, no key'' holds against everyone but the audit
 service. % src: facts-F9#13, facts-F2#49, facts-F5#9, facts-F8#2, facts-F8#3
 
-\textit{Further limits.} We did not measure scaling with the number of
-patients or facilities; those runs were cut. % src: facts-F9#17, facts-F7#35, facts-F7#36
+\textit{Further limits.} We cut the scaling runs over numbers of
+patients or facilities. % src: facts-F9#17, facts-F7#35, facts-F7#36
 The federation is simulated on one machine, with no real health-information
-exchange or FHIR/HL7, and all data is synthetic. % src: facts-F9#14, facts-F9#15, facts-F4#1, facts-F5#8
-There is no formal model or proof of the protocol. % src: facts-F8#3
+exchange or FHIR/HL7; all data is synthetic. % src: facts-F9#14, facts-F9#15, facts-F4#1, facts-F5#8
+There is no formal model or proof. % src: facts-F8#3
 Federation services use the PostgreSQL superuser; only the portal is
 confined by database roles. % src: facts-F4#26, facts-F4#22
-The facility's truncation check compares sequence numbers only, without
-verifying entry signatures. % src: facts-F2#81
-The record payload is encrypted with no associated data; only the DEK
+The facility's truncation check compares sequence numbers, not
+signatures. % src: facts-F2#81
+The record payload is encrypted without associated data; only the DEK
 wrapping binds record, policy and generation. % src: facts-F3#27, facts-F3#29
-The ElGamal group behind the PRE, the KEM and share sealing is a 256-bit
-demonstration parameter. % src: facts-F3#18, facts-F3#19
+The PRE, KEM and share sealing use a 256-bit demonstration ElGamal
+group. % src: facts-F3#18, facts-F3#19
