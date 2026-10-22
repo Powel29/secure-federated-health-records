@@ -1,0 +1,90 @@
+\section{Limitations}\label{sec:limits}
+
+Items (1)--(13) are our design's honesty caveats, in order; further limits
+follow.
+
+\textit{(1) Revocation is forward-only.} Rotation denies future reads but
+cannot retract plaintext already decrypted and kept, and only the patient
+can revoke: home-authority revocation is not
+wired. % src: facts-F9#1, facts-F2#87, facts-F4#41
+\textit{(2) Expiry is server-enforced, not cryptographic.} A trusted timer
+process stands in for an HSM and could decline to expire a key; we reduce
+this only to tamper evidence, since expiry is a forced rotation between two
+timer-signed, audited transitions. % src: facts-F9#2, facts-F5#6, facts-F1#33, facts-F2#84
+\textit{(3) No single shareholder, including the audit service, can open a
+record.} This is claimed and tested (C3), not assumed; it rests on share
+placement, as the gate checks no holder, only that three distinct
+$x$ are present. % src: facts-F9#3, facts-live#3, facts-F2#37
+\textit{(4) The access structure is not full CP-ABE.} Shamir sharing over an
+AND/OR tree with symmetric attribute keys is \emph{not collusion-resistant}
+as pairing-based CP-ABE~\cite{bethencourt2007cpabe} is: two users could pool
+attribute keys to satisfy a policy neither satisfies alone, and it has no
+proof. % src: facts-F9#4, facts-F3#32, facts-F3#36, facts-F3#41, facts-F8#20
+\textit{(5) One shared process is every user's key agent.} A single
+custodian holds every synthetic persona's signing key, PRE key and
+credentials, plus share~1 of every record, in memory, and signs for them
+after portal login; in reality each agent would be the person's own device or
+enclave. % src: facts-F9#5, facts-F4#14
+The threshold is not weakened, as the custodian holds share~1 only and the
+audit service still commits before releasing shares 3 and
+4. % src: facts-F9#5, facts-F4#12
+\textit{(6) Expiry rotation is finished after a crash or restart, not
+before.} Sessions are stored without their key, so a facility that restarts
+mid-window or crashes mid-rotation closes them at startup with a fresh full
+rotation; until then the record stays closed. % src: facts-F9#6, facts-F1#40, facts-F1#66, facts-F1#68
+A revocation runs the same rotation; if a shareholder is unreachable, the
+revocation holds but break-glass stays closed until
+re-keying. % src: facts-F9#6, facts-F1#37
+\textit{(7) Unidentified patients get no history.} Break-glass is bound to a
+patient identifier chosen by a logged name lookup; an unidentified patient
+gets only a temporary encounter identifier until staff confirm identity,
+so the scenario assumes identification, which a real emergency department
+often lacks. % src: facts-F9#7, facts-F2#12
+\textit{(8) The audit service is a single point of availability.} Every
+qualifying share set contains an audit share, and the home authority's
+share~2 covers only a lost share~1 (kept in custodian
+memory). % src: facts-F9#8, facts-F2#36, facts-F2#62
+It does not help when the custodian (also the clinician's key agent) or the
+audit service is down; an audit restart loses shares 3 and 4 of every record
+until re-keyed, and from the code (not observed) a restarted audit service
+gets a new signing key and would refuse a non-empty
+chain. % src: facts-F9#8, facts-F2#63, facts-F2#64
+\textit{(9) Revoking a credential does not revoke a released key.} One
+attribute key per authority and value is shared by all holders and never
+rotated, and rotation re-seals under the same keys, so a revoked holder who
+kept a key still satisfies its leaves. % src: facts-F9#9, facts-F3#37
+\textit{(10) The PRE is bidirectional, and the gate decrypts.}
+$rk = sk_a \cdot sk_b^{-1}$ inverts to the reverse key, needs both secret
+keys and is unproven; break-glass skips re-encryption: the facility unwraps the DEK and
+sends it to the clinician by a KEM. % src: facts-F9#10, facts-F3#43, facts-F3#44, facts-F3#46, facts-F3#50
+\textit{(11) ``No plaintext on the wire'' holds under TLS only.} On the
+plain profile, record plaintext and attribute keys cross in the clear, as
+the facility encrypts and decrypts server-side; our design caveat also lists
+DEKs, but our plain capture found none (it found the emergency key at
+ingest). % src: facts-F9#11, facts-F6#6, facts-F6#37
+TLS certificates are self-signed and server-only, with no pinned version or
+cipher. % src: facts-F9#11, facts-F4#34
+\textit{(12) The audit chain is pseudonymous, not anonymous.} It names
+patients by store identifier, so a reader learns which pseudonymous patient
+was accessed, by whom and when. % src: facts-F9#12, facts-F4#42
+\textit{(13) The audit service is trusted.} Stored-entry tampering is
+detected (C5), but a compromised audit service could release shares 3 and 4
+without a durable entry or show different chains to different parties: there
+are no proofs of presence or extension as in transparent
+decryption~\cite{ryan2017accountable,cheval2023transparency}, so ``no log
+entry, no key'' holds against everyone but the audit
+service. % src: facts-F9#13, facts-F2#49, facts-F5#9, facts-F8#2, facts-F8#3
+
+\textit{Further limits.} We did not measure scaling with the number of
+patients or facilities; those runs were cut. % src: facts-F9#17, facts-F7#35, facts-F7#36
+The federation is simulated on one machine, with no real health-information
+exchange or FHIR/HL7, and all data is synthetic. % src: facts-F9#14, facts-F9#15, facts-F4#1, facts-F5#8
+There is no formal model or proof of the protocol. % src: facts-F8#3
+Federation services use the PostgreSQL superuser; only the portal is
+confined by database roles. % src: facts-F4#26, facts-F4#22
+The facility's truncation check compares sequence numbers only, without
+verifying entry signatures. % src: facts-F2#81
+The record payload is encrypted with no associated data; only the DEK
+wrapping binds record, policy and generation. % src: facts-F3#27, facts-F3#29
+The ElGamal group behind the PRE, the KEM and share sealing is a 256-bit
+demonstration parameter. % src: facts-F3#18, facts-F3#19

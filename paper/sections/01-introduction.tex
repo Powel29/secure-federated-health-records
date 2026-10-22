@@ -1,0 +1,47 @@
+% Section I (W1). Every technical sentence ends with its source tag.
+\section{Introduction}\label{sec:intro}
+
+In an emergency a clinician may need records that the normal access policy does not grant, and static access control handles this poorly in health care, where break-glass is often bolted on ad hoc~\cite{brucker2009extending}.
+% src: facts-F8#6
+Hospital systems add a break-the-glass override and record its use for later review~\cite{ferreira2006break}; once records are encrypted, the override must also release a key~\cite{brucker2010abe,li2013phr}.
+% src: facts-F8#7, facts-F8#9, facts-F8#15
+
+Log-gated decryption is established: in accountable and transparent decryption a key, or a share of one, is used only once the request is in a log~\cite{ryan2017accountable,kroll2018accountable,cheval2023transparency}, and Kroll et al.\ name hospital emergencies as an application~\cite{kroll2018accountable}.
+% src: facts-F8#1, facts-F8#2, facts-F8#3
+Break-glass for health records is established too, at the policy layer, where consent gets a lifecycle but is enforced in software~\cite{muslim2026consent}, and with keys~\cite{brucker2010abe,deoliveira2020breakglass,yang2018libac,romel2025patient}, but none of these schemes is described as gating key release on a log entry.
+% src: facts-F8#17, facts-F8#9, facts-F8#13, facts-F8#14, facts-F8#18
+In the works we compare (Table~\ref{tab:related}), the log-gated schemes carry no patient revocation lifecycle, so none combines log-gated key release with consent and revocation.
+% src: facts-F8#23
+
+This paper builds that combination and tests it.
+% src: facts-F8#24
+Each record is encrypted under its own data-encryption key (DEK) and moves among four lifecycle states (\texttt{GRANTED}, \texttt{REVOKED}, \texttt{EMERGENCY\_OPEN}, \texttt{EXPIRED}) by seven legal transitions, each an ECDSA-signed event.
+% src: facts-F3#25, facts-F1#1, facts-F1#11, facts-F1#3, facts-F1#28
+Break-glass reconstructs a per-record emergency key from three of four Shamir shares, two of which belong to the audit service, so every unlock needs the audit service.
+% src: facts-F2#33, facts-F2#34, facts-F2#36
+The federation is simulated: two facilities, two attribute authorities, an audit service and a key custodian on one machine, with synthetic data.
+% src: facts-F4#1, facts-F5#8
+We claim the combination, implemented, and not any of its parts:
+% src: facts-F8#24
+\begin{itemize}
+\item \emph{One signed, logged key lifecycle.}
+Patient revocation, break-glass and expiry are signed transitions of one state machine over per-record DEKs; consent is a patient-signed grant checked at read time when one is presented (status, window, signature), separate from the lifecycle state, which it does not move.
+% src: facts-F1#9, facts-F1#11, facts-F1#35, facts-F1#46, facts-F1#77, facts-F1#78
+Revocation and expiry rotate the DEK, the policy root, the emergency key with its shares and the search index; opening break-glass rotates nothing (Section~\ref{sec:lifecycle}).
+% src: facts-F1#36, facts-F1#40, facts-F1#47
+\item \emph{Transparent-decryption-style log gating for federated break-glass.}
+The audit service releases its two shares only after validating a signed, one-time Emergency Assertion bound to the record and committing a hash-chained log entry (Section~\ref{sec:breakglass}).
+% src: facts-F2#6, facts-F2#45, facts-F2#50, facts-F2#51, facts-F8#3
+\item \emph{Emergency-scoped search.}
+Search tokens are derived from the emergency key, so search works only while an emergency session is live, and old tokens stop matching after the expiry rotation.
+% src: facts-F3#51, facts-F3#53, facts-F3#54
+\item \emph{Evidence.}
+Negative security tests back eleven claims, C1--C11, all of which hold in a live run on commit \texttt{57a1a8c} (Section~\ref{sec:security}).
+% src: facts-live#12, facts-F5#22
+PyShark wire checks see the audit service's database commit before the release response that carries the shares (Section~\ref{sec:traffic}).
+% src: facts-F6#43, facts-F6#47, facts-F6#49
+\end{itemize}
+We are weaker than the transparent-decryption literature in two ways: our log is a plain hash chain held by a trusted audit service, with no proofs of presence or extension, and we give no formal model (Section~\ref{sec:limits}).
+% src: facts-F8#3, facts-F8#24, facts-F2#59
+
+Sections~\ref{sec:related}--\ref{sec:overview} give related work, the threat model and the system; Sections~\ref{sec:lifecycle}--\ref{sec:traffic} the lifecycle, break-glass, security and traffic analysis; Sections~\ref{sec:eval}--\ref{sec:conclusion} evaluation, limitations and conclusion.

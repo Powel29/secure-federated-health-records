@@ -1,0 +1,27 @@
+% Security-properties table (Section VII). Hand-written from the fact sheets; it
+% carries no run numbers. Each row is tagged with its sources.
+\begin{table*}[!t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3.5pt}
+\caption{Security properties per primitive and construction. ``Assumed'' means
+the standard notion is taken from the library or the literature and is not
+proven by us; ``Tested'' names the claims (Table~\ref{tab:claims}) or wire
+checks (Table~\ref{tab:wire}) that exercise it.}
+\label{tab:secprops}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.205\textwidth} >{\raggedright\arraybackslash}p{0.285\textwidth} >{\raggedright\arraybackslash}p{0.26\textwidth} >{\raggedright\arraybackslash}p{0.08\textwidth} >{\raggedright\arraybackslash}p{0.11\textwidth}@{}}
+\toprule
+Primitive / construction & Property claimed & Security model & Tested & Proven \\
+\midrule
+AES-256-GCM (payload, DEK wrapping, leaves) & Confidentiality and integrity; wrapping bound to record, policy, generation; payload has no AAD & Standard AEAD notion, assumed (pyca) & C1, C11 & Assumed \\ % src: facts-F3#1, facts-F3#4, facts-F3#5, facts-F3#6, facts-F3#25, facts-F3#26, facts-F3#27, facts-F3#28, facts-F3#29, facts-F5#5
+HKDF-SHA-256 & Derived keys and search tokens indistinguishable from random & Standard KDF notion, assumed (pyca) & C4 & Assumed \\ % src: facts-F3#8, facts-F3#9, facts-F3#45, facts-F3#51, facts-F5#5
+ECDSA P-256 / SHA-256 & Events, assertions, requests and audit entries cannot be forged & Standard EUF-CMA notion, assumed (pyca) & C5, C7--C10 & Assumed \\ % src: facts-F3#11, facts-F1#28, facts-F2#3, facts-F2#30, facts-F2#73, facts-F5#5
+SHA-256 hash chain, signed entries & A modified stored entry is detected & Trusted audit service; no proofs of presence or extension & C5 & Not proven \\ % src: facts-F2#71, facts-F2#72, facts-F2#73, facts-F2#77, facts-F2#59, facts-F5#9
+Shamir 3-of-4 over GF($2^{256}{+}297$) & Under 3 shares reveal nothing; every 3-set holds an audit share (placement, not a gate check) & Threshold secrecy of Shamir sharing~\cite{shamir1979share} assumed; shares unauthenticated & C3 & Scheme assumed; code not proven \\ % src: facts-F2#33, facts-F2#34, facts-F2#35, facts-F2#36, facts-F2#37, facts-F3#17, facts-F3#24, facts-F5#5
+Shamir over AND/OR policy tree & Only a key set satisfying the tree recovers the root secret & None; not collusion-resistant (attribute keys can be pooled) & C1, C11 & Not proven \\ % src: facts-F3#32, facts-F3#33, facts-F3#34, facts-F3#35, facts-F3#36, facts-F3#37, facts-F3#38, facts-F3#39, facts-F3#40, facts-F3#41
+ElGamal PRE, $rk=sk_a\cdot sk_b^{-1}$ & Re-encryption only; bidirectional, $rk$ needs both secret keys & None; 256-bit demonstration group & Unused & Not proven \\ % src: facts-F3#18, facts-F3#19, facts-F3#42, facts-F3#43, facts-F3#44, facts-F3#50
+ElGamal KEM + AES-GCM (DEK delivery, share sealing) & Only the recipient's key opens the DEK or share & None; 256-bit demonstration group & Wire 1, 4 & Not proven \\ % src: facts-F3#19, facts-F3#45, facts-F3#46, facts-F3#47, facts-F3#48, facts-F6#37, facts-F6#40
+Deterministic search tokens & Equality search only while emergency-open; re-keyed at expiry & None; leaks search and access pattern (measured, Section~\ref{sec:traffic}) & C4 & Not proven \\ % src: facts-F3#51, facts-F3#52, facts-F3#53, facts-F3#54, facts-F3#55, facts-F3#56, facts-F6#64, facts-F6#65
+\bottomrule
+\end{tabular}
+\end{table*}

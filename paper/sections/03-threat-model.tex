@@ -1,0 +1,62 @@
+\section{Threat Model and Goals}\label{sec:threat}
+
+\textbf{Assets.} In priority order: PHI plaintext, per-record data-encryption
+keys (DEKs), each record's emergency key, attribute keys, audit-chain
+integrity, and metadata, which we do not claim to hide. % src: facts-F5#4
+
+\textbf{Adversaries.} Each of four adversaries is modelled separately. % src: facts-F5#2
+\emph{(A) The shared store}, honest-but-curious or fully dumped, sees all
+ciphertext, wrapped keys and the coded search index, but never plaintext or an
+unwrapped key; it learns access patterns, sizes and metadata (e.g., that a
+break-glass occurred), never content. % src: facts-F5#13, facts-F5#14, facts-F4#25
+\emph{(B) A compromised facility} can forge requests, present the
+certificates it holds and replay captured messages; it reads what its own keys
+authorize, but cannot break glass alone, since reconstruction needs three of
+four shares and two are held only by the audit service. % src: facts-F5#15, facts-F5#16, facts-F2#36
+\emph{(C) A rogue attribute authority} mints keys for its own namespace and,
+as a patient's home authority, holds share~2, which with the custodian's
+share~1 reconstructs nothing; it can, however, mint that patient's
+\texttt{owner} key, so protection is partial. % src: facts-F5#17, facts-F5#18, facts-F5#12
+\emph{(D) Colluding clinicians} who pool attribute keys are \emph{not}
+stopped: our Shamir-over-policy-tree structure is not collusion-resistant
+CP-ABE. % src: facts-F5#19
+No adversary is an on-path network attacker; ``no plaintext on the wire'' is
+a goal of the TLS profile only (Section~\ref{sec:traffic}). % src: facts-F5#21, facts-F6#5, facts-F4#33
+
+\textbf{Trust assumptions.} AES-256-GCM, ECDSA, SHA-256, HKDF and Shamir
+sharing are assumed sound. % src: facts-F5#5
+Four parties are trusted, not modelled as adversaries. % src: facts-F5#21, facts-F5#6, facts-F4#31
+\emph{The audit service} holds its own plain hash chain: tampering with stored
+entries is detected, but a compromised audit service could release its shares
+without a durable entry or show different chains to different parties, so
+``no log entry, no key'' holds against everyone except the audit service
+itself. % src: facts-F5#9, facts-F2#59
+\emph{The Key Custodian} is one shared process acting as every subject's key
+agent: it holds every synthetic persona's signing key, PRE key, credentials
+and share~1, and signs on their behalf (ADR-0043). % src: facts-F4#14, facts-F5#10
+\emph{The emergency timer}, a simulated HSM realized as a per-facility
+signing key and monitor thread, could decline to expire a key; because expiry
+is a signed, logged rotation, this is tamper-evident, not
+prevented. % src: facts-F5#6, facts-F1#34, facts-F2#83
+\emph{The PKI root} key, held only at bootstrap, is a single point of
+trust. % src: facts-F4#31
+Rate limiting, MFA and session threats are out of scope. % src: facts-F5#8
+
+\textbf{Goals.} The goals are eleven claims, quoted as the claim registry
+prints them; system-level tests decide each claim's status, reported in
+Section~\ref{sec:security}. % src: facts-F5#22, facts-F5#26, facts-live#13
+\textbf{C1}~A revoked user cannot decrypt after re-wrap. % src: facts-live#13
+\textbf{C2}~Break-glass fails closed when the audit service cannot commit. % src: facts-live#13
+\textbf{C3}~A single share, including the audit service's, cannot open a record. % src: facts-live#13
+\textbf{C4}~Search capability does not survive the emergency's expiry. % src: facts-live#13
+\textbf{C5}~A tampered audit entry is detected by chain verification. % src: facts-live#13
+\textbf{C6}~An illegal state transition is rejected. % src: facts-live#13
+\textbf{C7}~A transition event with an invalid signature is rejected. % src: facts-live#13
+\textbf{C8}~A replayed emergency assertion is rejected, not re-executed. % src: facts-live#13
+\textbf{C9}~An authenticated but unauthorised caller is denied before any
+crypto or DB work (BOLA). % src: facts-live#13
+\textbf{C10}~An expired or revoked credential fails validation and releases no
+key. % src: facts-live#13
+\textbf{C11}~A patient login alone never releases a DEK (ADR-0016). % src: facts-live#13
+In C1, re-wrap is a full rotation; in C3, the audit service's two shares
+together are one short of the threshold. % src: facts-F1#37, facts-F2#36, facts-live#13

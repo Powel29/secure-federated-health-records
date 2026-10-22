@@ -1,0 +1,63 @@
+% Section II (W1). Every technical sentence ends with its source tag.
+% Rival descriptions come from facts-F8 only; the "this work" row of
+% Table tab:related comes from facts-live/F1/F2/F3 (see paper/data/make_related.py).
+\section{Related Work}\label{sec:related}
+
+Table~\ref{tab:related} compares the closest work with ours, group by group.
+% src: facts-F8#23
+
+\input{tables/related}
+
+\textit{Accountable and transparent decryption.}
+Ryan~\cite{ryan2017accountable} proposes accountable decryption, in which a trusted hardware device decrypts only after the request is entered in a log whose untrusted maintainer gives proofs of presence and extension.
+% src: facts-F8#2
+Cheval, Moreira and Ryan~\cite{cheval2023transparency} formally verify transparent decryption in ProVerif: trustees hold shares of the decryption key and use them only if the Merkle-tree log proofs verify.
+% src: facts-F8#3
+Kroll et al.~\cite{kroll2018accountable} mediate every access through an approver and a threshold of decryption authorities, and the other parties do not proceed until an auditor certifies that the access is in its publicly verifiable log.
+% src: facts-F8#1
+They name hospital emergencies as an application: an unpredictable set of staff may suddenly need a patient's records, and the audit record lets internal reviewers check afterwards that the access was not abused~\cite{kroll2018accountable}.
+% src: facts-F8#1
+Larch~\cite{dauterman2023larch} applies the log-as-secret-holder pattern to authentication, and Li et al.~\cite{li2025accountable} give formal definitions of accountable decryption and a TEE-assisted construction.
+% src: facts-F8#4, facts-F8#5
+Transparent decryption is the primitive we instantiate: our logger holds two of four emergency-key shares, checks a signed Emergency Assertion before it commits, and sits inside a revocation and expiry lifecycle.
+% src: facts-F8#1, facts-F8#3, facts-F2#34, facts-F2#36, facts-F2#45, facts-F1#47
+Our log is weaker than all of these: a trusted hash chain, not publicly verifiable, with no proofs and no formal model.
+% src: facts-F8#1, facts-F8#3, facts-F2#59
+
+\textit{Break-glass access control.}
+Ferreira et al.~\cite{ferreira2006break} add a break-the-glass policy with non-repudiation of its use to the access-control model of a hospital EMR, while Brucker and Petritsch~\cite{brucker2009extending} and Marinovic et al.~\cite{marinovic2011rumpole} build break-glass into access-control models.
+% src: facts-F8#6, facts-F8#7, facts-F8#8
+These are policy checks in software; in ours, keys and the threshold gate decide access, and the log entry precedes key release.
+% src: facts-F8#6, facts-F8#7, facts-F4#19, facts-F2#51
+
+\textit{Cryptographic break-glass.}
+Brucker et al.~\cite{brucker2010abe} add break-glass to ABE-based information sharing, LiBAC~\cite{yang2018libac} lets an emergency override a file's ABE policy in healthcare IoT, and Zhang et al.~\cite{zhang2016password} let a password holder obtain a decryption key from a key generation centre that is held accountable for abuse.
+% src: facts-F8#9, facts-F8#14, facts-F8#10
+Scafuro~\cite{scafuro2019breakglass} builds encryption breakable exactly once, detectably, from hardware tokens, as a feasibility result.
+% src: facts-F8#11
+De Oliveira et al.\ limit emergency access to the task at hand~\cite{deoliveira2019redalert}, or to each team's period of care across institutions using signed access tokens and revocation by a trusted master authority and storage provider, without re-encrypting data~\cite{deoliveira2020breakglass}.
+% src: facts-F8#12, facts-F8#13
+None gates key release on a committed log entry (Scafuro's break is detectable, not log-gated), and our expiry re-keys the record instead of trusting a provider to block access; several, however, have formal analyses we lack.
+% src: facts-F8#9, facts-F8#10, facts-F8#11, facts-F8#12, facts-F8#13, facts-F8#14, facts-F1#39
+
+\textit{Encrypted PHR sharing.}
+Li et al.~\cite{li2013phr} share personal health records on semi-trusted servers with multi-authority ABE, with multiple security domains, on-demand user and attribute revocation, and break-glass access in emergencies.
+% src: facts-F8#15
+We keep their patient-centric, multi-authority setting, but release the emergency key only through an audit-logged threshold, and the emergency ends with a rotation.
+% src: facts-F8#15, facts-F2#36, facts-F1#55
+
+\textit{Time-limited search.}
+Yang and Ma~\cite{yang2016timing} let patients delegate keyword search and decryption rights over their records for a controlled period.
+% src: facts-F8#16
+This is prior art; we only derive emergency search tokens from the emergency key, so search ends at the expiry rotation, an engineering choice.
+% src: facts-F8#16, facts-F3#51, facts-F3#54
+
+\textit{Consent at the policy layer.}
+Muslim and Gr\'egoire~\cite{muslim2026consent} validate consent directives before activation in XACML, add bounded break-the-glass access logged for post-hoc review, and argue that consent needs a lifecycle of creation, activation, revocation and expiration; their enforcement is ``logical rather than cryptographic''.
+% src: facts-F8#17
+We realise revocation and expiration by re-keying, while consent stays a patient-signed grant checked at read time; their ``pre-commit'' commits a policy, not a log entry.
+% src: facts-F8#17, facts-F1#47, facts-F1#77, facts-F1#78
+Romel et al.~\cite{romel2025patient} keep encrypted records off-chain, with patient-signed, time-bounded permissions on a public chain and keys distributed by public-key wrapping; revocation flips an on-chain flag, and re-keying is a separate, optional workflow.
+% src: facts-F8#18
+They also support emergency access: two registered emergency physicians co-sign a request that expires after two hours and is emitted as an on-chain event; that grant is logged, but key release goes through a separate, design-only HSM-backed guardian, not gated on the log, whereas ours needs the audit service's shares.
+% src: facts-F8#18, facts-F2#36

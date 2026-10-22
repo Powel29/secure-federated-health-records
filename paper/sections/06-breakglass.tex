@@ -1,0 +1,114 @@
+\section{Break-Glass Protocol}\label{sec:breakglass}
+
+\input{figures/breakglass-sequence}
+\input{figures/gate-chain}
+
+Break-glass moves a record from \textsc{Granted} or \textsc{Revoked} to
+\textsc{Emergency\_Open}: a gate at the record's facility rebuilds the
+record's emergency key from three of four Shamir shares and re-wraps the DEK
+to the clinician (Fig.~\ref{fig:sequence}); opening rotates no key.
+% src: facts-F1#14, facts-F1#36, facts-F2#16, facts-F2#65
+
+\subsection{Emergency Assertion and Replay}
+
+An Emergency Assertion $A$ carries a one-time \texttt{assertion\_id};
+patient, clinician and facility identifiers; a reason code from a closed
+enumeration; \texttt{issued\_at}, \texttt{expires\_at}; a nonce of at least
+128 bits; an optional digest binding the record and justification texts,
+which the share holders require; and an ECDSA P-256 signature over all other
+fields by the clinician's key, which never leaves the custodian.
+% src: facts-F2#1, facts-F2#2, facts-F2#4, facts-F2#5, facts-F2#6, facts-F2#45, facts-F2#91
+Validation fails closed at the first failing check, in order: signature;
+certificate chain via a facility CA to the trusted root; clinician
+identifier against the certificate CN; certificate not revoked; facility
+identifier (at the holders, only federation membership); not expired; lifetime $\le 15$\,min and \texttt{issued\_at} at
+most 30\,s in the future; then consumption of \texttt{assertion\_id}.
+% src: facts-F2#7, facts-F2#18, facts-F2#46
+Consumption runs last, so an invalid assertion cannot burn a legitimate
+identifier, and the consumed store is a required argument that cannot be
+omitted.
+% src: facts-F2#9, facts-F2#10
+The facility, the audit service and the home authority each validate $A$
+against their own trust anchors and consume its identifier in their own
+store (durable at the facility and audit service, in memory at the
+authority), so a reused $A$ gets no shares 3 and 4 even after an authority
+restart.
+% src: facts-F2#14, facts-F2#26, facts-F2#27, facts-F2#45
+No share holder checks that the record belongs to $A$'s patient; the
+facility does, as does the custodian when it can load the record.
+% src: facts-F2#12, facts-F2#47, facts-F2#92
+The transition event and every signed service request also carry one-time
+identifiers, and replay rejection (C8) holds in the live run.
+% src: facts-F2#29, facts-F2#30, facts-live#8
+
+\subsection{The Weighted 3-of-4 Gate}
+
+The 256-bit emergency key $K_E$ wraps the DEK and is split with $k=3$,
+$n=4$ over $\mathrm{GF}(p)$, $p=2^{256}+297$ (257 bits): the custodian holds
+$x=1$, the home authority $x=2$, and the audit service $x=3,4$
+(Fig.~\ref{fig:gate}a).
+% src: facts-F2#32, facts-F2#33, facts-F2#34, facts-F2#38, facts-F3#30
+The gate checks no share holder, only that three shares have distinct $x$;
+that every qualifying set contains an audit share follows from the
+distribution, since the two other holders have only two points between them.
+% src: facts-F2#36, facts-F2#37
+This build seals shares in transit (ADR-0079, Proposed): a KEM to the gate's
+ElGamal key, whose signed statement holders verify, with record, $x$ and
+recipient as associated data; the group is a 256-bit demonstration
+parameter.
+% src: facts-F2#41, facts-F2#42, facts-F2#43
+
+\subsection{Commit-then-Release}
+
+The audit service validates $A$, builds the log event from it, appends the
+hash-chained entry inside one transaction, and only then seals shares 3
+and 4 and returns them with the signed entry.
+% src: facts-F2#50, facts-F2#51, facts-F2#53
+A failed commit raises before the return and yields HTTP~503 with no share,
+so there is no log entry, no key: C2 holds, and the wire shows the COMMIT
+1.35\,ms before the response (Section~\ref{sec:traffic}).
+% src: facts-F2#51, facts-F2#54, facts-live#2, facts-F6#49
+The custodian checks the entry's signature, correlation identifier and
+rising sequence number, and the facility logs the re-wrap before delivering
+the DEK.
+% src: facts-F2#55, facts-F2#57
+The guarantee holds against everyone except the audit service, which is
+trusted (Section~\ref{sec:limits}).
+% src: facts-F2#59
+
+The gate then unwraps the DEK and delivers it by a KEM to the clinician's
+ElGamal key; the facility sees the plaintext DEK meanwhile.
+% src: facts-F2#65, facts-F2#66, facts-F2#90
+The home authority's share~2 covers a lost share~1 only, which the custodian
+keeps in memory.
+% src: facts-F2#62
+It does not cover a custodian or audit outage, nor an audit restart, which
+loses shares 3 and 4 for every record; by code reading, not observed, a
+restarted audit service also has a new signing key and would fail its
+startup chain check.
+% src: facts-F2#63, facts-F2#64
+
+\subsection{Hash Chain}
+
+Each entry holds \texttt{seq}, \texttt{prev\_hash}, \texttt{entry\_hash},
+event type and metadata, actor, correlation identifier, timestamp and an
+ECDSA signature, with
+$h_i=\mathrm{SHA\text{-}256}(\mathrm{enc}(h_{i-1},\mathit{event},t,\mathit{actor}))$
+from a zero-hash genesis (Fig.~\ref{fig:chain}b).
+% src: facts-F2#71, facts-F2#72, facts-F2#73, facts-F2#74
+Verification checks signature, link, sequence and hash, and C5 holds.
+% src: facts-F2#77, facts-live#5
+Against truncation, a facility refuses an entry whose \texttt{seq} is not
+above its stored mark; it compares sequence numbers only and verifies no
+entry signature.
+% src: facts-F2#79, facts-F2#81
+
+\subsection{Expiry by Full Rotation}
+
+The deployed window is 4\,h, which a caller may only shorten.
+% src: facts-F2#20, facts-F2#21
+At expiry a monitor signs \textsc{Emergency\_Open}$\to$\textsc{Expired},
+runs a full rotation (new DEK, policy root and $K_E$, with a fresh 3-of-4
+split to the same holders), and signs the return to the prior state
+(Section~\ref{sec:lifecycle-expiry}); old shares then open nothing (C4).
+% src: facts-F2#83, facts-F2#84, facts-F2#85, facts-F2#86, facts-live#4

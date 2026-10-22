@@ -1,0 +1,54 @@
+% 3-of-4 gate (a) and audit hash chain (b) (W4). One float, both labels.
+\begin{figure}[!t]
+\centering
+\begin{tikzpicture}[
+  font=\footnotesize,
+  >={Stealth[length=4pt]},
+  sh/.style={draw, fill=white, minimum width=2.15cm, minimum height=0.48cm, inner sep=1pt},
+  bx/.style={draw, fill=white, align=center, inner sep=2pt, minimum height=0.55cm}
+]
+% (a) shares by holder (facts-F2#33, F2#34)
+\node[sh] (s1) at (0,0)     {$x{=}1$ custodian};
+\node[sh] (s2) at (0,-0.6)  {$x{=}2$ home auth.};
+\node[sh, fill=gray!15] (s3) at (0,-1.2) {$x{=}3$ audit};
+\node[sh, fill=gray!15] (s4) at (0,-1.8) {$x{=}4$ audit};
+\begin{scope}[on background layer]
+  \node[draw, dashed, rounded corners=2pt, fit=(s3)(s4), inner sep=3pt,
+        label={[font=\footnotesize, align=center]left:audit\\service}] {};
+\end{scope}
+% gate: no holder check, only ">= 3 distinct x" (facts-F2#37, F2#40)
+\node[bx, text width=1.55cm] (g) at (2.85,-0.9) {gate:\\ $\ge 3$ distinct $x$\\ (Lagrange)};
+\foreach \s in {s1,s2,s3,s4}{ \draw[->] (\s.east) -- (g.west); }
+% key, unwrap, delivery (facts-F2#32, F2#65)
+\node[bx, text width=1.75cm] (k) at (5.35,0)    {$K_E$ (256 bit)};
+\node[bx, text width=1.75cm] (u) at (5.35,-0.95) {AES-GCM unwrap DEK};
+\node[bx, text width=1.75cm] (d) at (5.35,-2.05) {KEM to clinician's ElGamal key};
+\draw[->] (g.east) -- ++(0.25,0) |- (k.west);
+\draw[->] (k) -- (u);
+\draw[->] (u) -- (d);
+\node[font=\footnotesize\bfseries] at (-1.55,0.45) {(a)};
+
+% (b) hash chain (facts-F2#71-75)
+\begin{scope}[yshift=-4.15cm]
+\foreach \i/\x/\s/\p/\h in {0/-0.3/{$0$}/{$0^{32}$}/{$h_0$}, 1/2.45/{$n$}/{$h_{n-1}$}/{$h_n$}, 2/5.2/{$n{+}1$}/{$h_{n}$}/{$h_{n+1}$}}{
+  \node[draw, fill=white, align=left, text width=2.2cm, inner sep=2pt] (e\i) at (\x,0)
+    {seq \s\\ prev \p\\ hash \h\\ event, actor, $t$\\ corr.\ id, \textbf{sig}};
+}
+\node[font=\footnotesize, above=0pt of e0] {genesis};
+\node[font=\footnotesize, above=0pt of e1] {release entry $e_n$};
+\node[font=\footnotesize, above=0pt of e2] {next entry};
+\draw[->] (e0.east) -- node[above, font=\footnotesize]{$\cdots$} (e1.west);
+\draw[->] (e1.east) -- (e2.west);
+\node[font=\footnotesize\bfseries] at (-1.55,1.05) {(b)};
+\node[font=\footnotesize, align=center, text width=7.6cm] at (2.45,-1.25)
+  {$h_i=\mathrm{SHA\text{-}256}(\mathrm{enc}(h_{i-1},\mathit{event},t,\mathit{actor}))$;
+   the signature also covers seq and correlation id.};
+\end{scope}
+\end{tikzpicture}
+\caption{(a) Weighted 3-of-4 gate. The gate checks no share holder, only for
+three distinct $x$ values; that every qualifying set holds an audit share follows from the
+placement of shares, not from a gate check. (b) Audit hash chain; entry $n$
+is committed before shares 3 and 4 leave the audit service.}
+% src: facts-F2#32, facts-F2#33, facts-F2#34, facts-F2#36, facts-F2#37, facts-F2#40, facts-F2#51, facts-F2#57, facts-F2#65, facts-F2#71, facts-F2#72, facts-F2#73, facts-F2#74
+\label{fig:gate}\label{fig:chain}
+\end{figure}

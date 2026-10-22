@@ -1,0 +1,48 @@
+% Key-lifecycle state diagram (W3). States and arrows are the four
+% LifecycleState values and the seven LEGAL_TRANSITIONS pairs in
+% src/lifecycle/state_machine.py; signers and rotation marks follow
+% facts-F1#46. Edit together with paper/data/make_transitions.py.
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+    font=\footnotesize,
+    >={Stealth[length=2.2mm]},
+    st/.style={state, rectangle, rounded corners=3pt, minimum width=15mm,
+      minimum height=6.5mm, inner sep=2pt, font=\footnotesize\scshape,
+      align=center},
+    rot/.style={->, very thick},
+    plain/.style={->, thin},
+    lbl/.style={font=\footnotesize, inner sep=1.5pt},
+  ]
+  % src: facts-F1#1, facts-F1#9, facts-F1#11
+  \node[st, initial, initial text={ingest}, initial where=left]
+    (G) at (0,1.05) {Granted};
+  \node[st] (R) at (0,-1.05) {Revoked};
+  \node[st] (E) at (2.9,0) {Emergency\\open};
+  \node[st] (X) at (5.9,0) {Expired};
+
+  % src: facts-F1#32, facts-F1#37
+  \draw[rot] ([xshift=-3mm]G.south) -- node[lbl, left] {revoke [P]$^{\star}$}
+    ([xshift=-3mm]R.north);
+  % src: facts-F1#35
+  \draw[plain, dashed] ([xshift=3mm]R.north) -- node[lbl, right] {no emitter}
+    ([xshift=3mm]G.south);
+  % src: facts-F1#30, facts-F1#36
+  \draw[plain] (G) -- node[lbl, pos=0.45, above right] {open [C]} (E);
+  \draw[plain] (R) -- node[lbl, pos=0.45, below right] {open [C]} (E);
+  % src: facts-F1#33, facts-F1#53
+  \draw[plain] (E) -- node[lbl, above] {timer [T]} (X);
+  % src: facts-F1#39, facts-F1#63, facts-F1#64, facts-F1#73
+  \draw[rot] (X.north) to[out=90, in=0] node[lbl, pos=0.35, above right]
+    {[T]$^{\star}$} (G.east);
+  \draw[rot] (X.south) to[out=-90, in=0] node[lbl, pos=0.35, below right]
+    {[T]/[P]$^{\star}$} (R.east);
+\end{tikzpicture}
+\caption{Key-lifecycle states and the seven legal transitions. Signer:
+[P]~patient, [C]~clinician, [T]~timer key; ``open'' is the break-glass unlock. Thick arrows ($\star$) carry a
+full rotation; break-glass open rotates nothing. \textsc{Expired}$\to$\textsc{Revoked} is
+timer- or patient-signed. The dashed
+\textsc{Revoked}$\to$\textsc{Granted} pair is legal, but no code emits it.}
+% src: facts-F1#11, facts-F1#35, facts-F1#36, facts-F1#46, facts-F1#47, facts-F1#73
+\label{fig:states}
+\end{figure}
