@@ -103,3 +103,8 @@ PROJECT.md §5 has **13** caveats (counted 2026-10-21). Note: PROJECT.md §1 lin
 - Table I note reformatted: footnotesize, labelled Columns / Marks / This work lines, one line per footnote a–c.
 - Commit hash explained at first use (intro: "the evaluated version of our code, git commit 57a1a8c of the project repository"); later mentions say "the evaluated commit"; wire caption says the capture was at repository commit 99092d1 and the code is unchanged in 57a1a8c.
 - Build: 0 errors/undefined/overfull, 6 underfull, 10 pages, references end p10, no "ADR" in the PDF text.
+
+## Author block (2026-10-22)
+
+- Four authors in two rows of two (Ojas Thakurela 240911282, Powel Lawrence Lewis 240911458; Avaneeth Gowda L 240911368, Nandini Taldar 240911356), each with School of Computer Engineering, MIT, Manipal, India. IEEEtran wraps after three per row, so a `\linebreakand` macro forces the 2×2 layout.
+- The taller title block pushes references [16]–[21] onto page 11: 11 pages total, body still ends in p10's left column (within "8–10 pages plus references"). Build otherwise clean (0 errors/undefined/overfull, 6 underfull).
