@@ -33,7 +33,7 @@ without a durable entry or show different chains to different parties, so
 itself. % src: facts-F5#9, facts-F2#59
 \emph{The Key Custodian} is one shared process acting as every subject's key
 agent: it holds every synthetic persona's signing key, PRE key, credentials
-and share~1, and signs on their behalf (ADR-0043). % src: facts-F4#14, facts-F5#10
+and share~1, and signs on their behalf. % src: facts-F4#14, facts-F5#10
 \emph{The emergency timer}, a simulated HSM realized as a per-facility
 signing key and monitor thread, could decline to expire a key; because expiry
 is a signed, logged rotation, this is tamper-evident, not
@@ -57,6 +57,6 @@ Section~\ref{sec:security}. % src: facts-F5#22, facts-F5#26, facts-live#13
 crypto or DB work (BOLA). % src: facts-live#13
 \textbf{C10}~An expired or revoked credential fails validation and releases no
 key. % src: facts-live#13
-\textbf{C11}~A patient login alone never releases a DEK (ADR-0016). % src: facts-live#13
+\textbf{C11}~A patient login alone never releases a DEK. % src: facts-live#13
 In C1, re-wrap is a full rotation; in C3, the audit service's two shares
 together are one short of the threshold. % src: facts-F1#37, facts-F2#36, facts-live#13

@@ -74,9 +74,9 @@ def main() -> None:
         r"\setlength{\tabcolsep}{3pt}",
         (
             r"\caption{PyShark wire checks on the plain and TLS captures "
-            r"(captured 2026-10-21 on the tree committed as "
-            r"\textnormal{\texttt{99092d1}}; no capture, analyser or service "
-            r"code changed up to \textnormal{\texttt{57a1a8c}}).}"
+            r"(captured 2026-10-21 at repository commit "
+            r"\textnormal{\texttt{99092d1}}; the capture, analyser and service "
+            r"code is unchanged in the evaluated commit \textnormal{\texttt{57a1a8c}}).}"
         ),
         "% src: " + ", ".join(f"facts-F6#{i}" for i in range(34, 54))
         + ", facts-F6#90, facts-F6#93",

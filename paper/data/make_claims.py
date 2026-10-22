@@ -6,8 +6,10 @@ statements are copied from that file, never retyped. Test counts are the
 number of `<br>`-separated node ids in the Module/System columns ("none" = 0).
 
 Deterministic rewriting applied to the printed statement (and only this):
+  * A trailing internal design-record reference such as " (ADR-0016)" is
+    dropped; it means nothing to a reader of the paper.
   * LaTeX special characters are escaped.
-No statement is abbreviated.
+No statement is otherwise abbreviated.
 
 The commit is not printed in the raw file; it is recorded in facts-live
 ("Run metadata": `git rev-parse --short HEAD` = 57a1a8c) and checked here
@@ -74,7 +76,7 @@ def parse() -> tuple[str, list[dict[str, str | int]]]:
         rows.append(
             {
                 "claim": claim,
-                "statement": statement,
+                "statement": re.sub(r"\s*\(ADR-\d{4}\)", "", statement),
                 "status": status,
                 "module": count_tests(module),
                 "system": count_tests(system),
@@ -101,7 +103,7 @@ def main() -> None:
         r"\setlength{\tabcolsep}{3pt}",
         (
             r"\caption{Security claims C1--C11, live claims run "
-            f"{date} at commit \\textnormal{{\\texttt{{{RUN_SHA}}}}}. "
+            f"{date} on repository commit \\textnormal{{\\texttt{{{RUN_SHA}}}}}. "
             r"Status is computed from the system-level tests only; "
             r"Sys./Mod.\ count the system- and module-level tests tagged with the claim.}"
         ),

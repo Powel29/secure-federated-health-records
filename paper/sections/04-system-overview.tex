@@ -65,8 +65,7 @@ synthetic. % src: facts-F4#1, facts-F4#44, facts-F4#39
 
 \textbf{Components.} Facilities hold no records: they read ciphertext from the
 shared store and run the policy engine and threshold gate. % src: facts-F4#7
-This build chooses a weighted 3-of-4 split of each emergency key (ADR-0089,
-Proposed): $x{=}1$ to the custodian, $x{=}2$ to the patient's home authority
+This build chooses a weighted 3-of-4 split of each emergency key: $x{=}1$ to the custodian, $x{=}2$ to the patient's home authority
 (always \texttt{authority-net} here), $x{=}3,4$ to
 the audit service, so every set of three shares includes an audit
 share. % src: facts-F4#10, facts-F4#11, facts-F2#36
@@ -80,7 +79,7 @@ shares only after validating the assertion and committing a log entry
 (Section~\ref{sec:breakglass}). % src: facts-F4#12
 
 \textbf{What portals and Postgres may not do.} They store data and identify
-users but never decide access (ADR-0014). % src: facts-F4#19
+users but never decide access. % src: facts-F4#19
 The portal holds no subject key and sends every key-needing action to the
 custodian, so a portal account alone decrypts nothing; its database roles
 cannot write store tables, and its mirrored consent state is display data no
@@ -90,5 +89,5 @@ read path consults. % src: facts-F4#20, facts-F4#21, facts-F4#22, facts-F4#23
 \texttt{postgres} superuser; only the portal is role-restricted. % src: facts-F4#26
 HTTP TLS certificates are self-signed and server-only, with no version or
 cipher suite pinned. % src: facts-F4#34
-Only the patient revokes (ADR-0084, Proposed), so one who cannot sign has no
+Only the patient revokes in this build, so one who cannot sign has no
 revocation path. % src: facts-F4#41

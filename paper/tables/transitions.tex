@@ -17,7 +17,7 @@ From & To & Trigger & Signer & Key operation \\
 \textsc{Revoked} & \textsc{Granted} & Legal; no code emits it & --- & None implemented \\  % src: facts-F1#35, facts-F1#46
 \textsc{EmOpen} & \textsc{Expired} & Timer: $\mathit{now}\ge\mathit{expires\_at}$ & Timer & None; rotation follows \\  % src: facts-F1#33, facts-F1#46, facts-F1#53
 \textsc{Expired} & \textsc{Granted} & Timer, once rotation is stored and shares deposited & Timer & Full rotation$^{a}$ before it \\  % src: facts-F1#39, facts-F1#46, facts-F1#63
-\textsc{Expired} & \textsc{Revoked} & As above, if \textsc{Revoked} before (ADR-0058, Proposed); or patient revokes & Timer or Patient & Full rotation$^{a}$ \\  % src: facts-F1#12, facts-F1#46, facts-F1#64, facts-F1#73
+\textsc{Expired} & \textsc{Revoked} & As above, if \textsc{Revoked} before; or patient revokes & Timer or Patient & Full rotation$^{a}$ \\  % src: facts-F1#12, facts-F1#46, facts-F1#64, facts-F1#73
 \bottomrule
 \end{tabular}
 \par\smallskip

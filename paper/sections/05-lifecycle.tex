@@ -21,8 +21,8 @@ The legal set is a frozen set of seven $(\mathit{from},\mathit{to})$ pairs;
 self-transitions and \textsc{Granted}$\to$\textsc{Expired} are illegal, and
 there is no premature-termination edge out of \textsc{Emergency\_Open}.
 % src: facts-F1#11, facts-F1#13, facts-F1#15, facts-F1#16
-ADR-0030 (Accepted) defined six of the pairs; this build adds
-\textsc{Expired}$\to$\textsc{Revoked} under ADR-0058, which is still Proposed.
+Six of the pairs come from the original design; \textsc{Expired}$\to$\textsc{Revoked}
+is a later addition and a design choice of this build.
 % src: facts-F1#12
 \textsc{Revoked}$\to$\textsc{Granted} is legal, but no code in the repository
 emits it.
@@ -100,7 +100,7 @@ invalid signature, and a forged event cannot burn a legitimate id.
 % src: facts-F1#20, facts-F1#22
 The deployed facility backs the consumed-id store durably, so ids survive a
 restart, and the record store adds its own compare-and-set on the stored
-state (ADR-0050, Proposed).
+state.
 % src: facts-F1#24, facts-F1#25
 
 \subsection{Expiry}\label{sec:lifecycle-expiry}
@@ -135,7 +135,7 @@ closed, reusing the already-signed events and the first rotation plan, so in-pro
 it neither re-signs nor mints a second emergency key.
 % src: facts-F1#45, facts-F1#58, facts-F1#59
 
-For crash recovery this build chooses (ADR-0081, Proposed) to persist, when a
+For crash recovery this build chooses to persist, when a
 session opens, a row of identifiers that holds no key; if that write fails,
 the session is not registered.
 % src: facts-F1#66
@@ -190,7 +190,7 @@ which the AES-GCM unwrap downstream detects.
 % src: facts-F3#24
 The same code splits each record's emergency key 3-of-4, with $x=1$ held by
 the clinician custodian, $x=2$ by the home authority, and $x=3,4$ by the audit
-service (ADR-0089, Proposed); Section~\ref{sec:breakglass} describes the gate
+service; Section~\ref{sec:breakglass} describes the gate
 that combines them.
 % src: facts-F1#41, facts-F3#49
 

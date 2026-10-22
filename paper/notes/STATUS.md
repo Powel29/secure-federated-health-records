@@ -96,3 +96,10 @@ PROJECT.md §5 has **13** caveats (counted 2026-10-21). Note: PROJECT.md §1 lin
 - Re-verified: V1 round 4 0/0; V5 round 3 0 BLOCKER, 2 MINOR.
 - Build: 0 errors/undefined/overfull; 4 underfull \hbox (none at 10000), 2 underfull \vbox; 10 pages, references end p10.
 - Left, by choice: the two \vbox stretches (gap above §VI-B on p6, smaller near §VII-C on p7). \raggedbottom removes them but leaves p6's left column ~3 lines short; kept the balanced columns.
+
+## Reader-facing clean-up (2026-10-22)
+
+- Removed every ADR reference from the paper text, tables and generators (03, 04, 05, 06, transitions, claims C11). The decisions are still described ("this build chooses …"), only the internal record numbers are gone; `% src:` tags unchanged. make_claims.py drops a trailing "(ADR-NNNN)" from claim statements by a documented deterministic rule.
+- Table I note reformatted: footnotesize, labelled Columns / Marks / This work lines, one line per footnote a–c.
+- Commit hash explained at first use (intro: "the evaluated version of our code, git commit 57a1a8c of the project repository"); later mentions say "the evaluated commit"; wire caption says the capture was at repository commit 99092d1 and the code is unchanged in 57a1a8c.
+- Build: 0 errors/undefined/overfull, 6 underfull, 10 pages, references end p10, no "ADR" in the PDF text.

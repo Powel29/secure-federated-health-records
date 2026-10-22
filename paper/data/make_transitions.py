@@ -55,7 +55,7 @@ ROWS: list[tuple[str, str, str, str, str, str]] = [
     ("expired", "granted", "Timer, once rotation is stored and shares deposited",
      "Timer", r"Full rotation$^{a}$ before it", "facts-F1#39, facts-F1#46, facts-F1#63"),
     ("expired", "revoked",
-     r"As above, if \textsc{Revoked} before (ADR-0058, Proposed); or patient revokes",
+     r"As above, if \textsc{Revoked} before; or patient revokes",
      "Timer or Patient", r"Full rotation$^{a}$",
      "facts-F1#12, facts-F1#46, facts-F1#64, facts-F1#73"),
 ]

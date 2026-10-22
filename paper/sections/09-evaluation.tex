@@ -9,7 +9,7 @@ store is PostgreSQL~16, and one Django process serves the three
 portals. % src: facts-F4#1, facts-F4#3, facts-F4#4, facts-F4#5
 \texttt{src/} holds 97 Python files (16{,}450 non-blank
 lines). % src: facts-F7#38
-On commit \texttt{57a1a8c} (2026-10-21) the full suite, run against
+On the evaluated commit, \texttt{57a1a8c} (2026-10-21), the full suite, run against
 PostgreSQL, gave 1006 passed, 2 skipped and 0 failed; both skips test the
 missing-\texttt{dumpcap} path and skip by design when the tool is
 present. % src: facts-live#14, facts-live#15, facts-live#16
@@ -21,8 +21,8 @@ claim in Table~\ref{tab:claims} holds. % src: facts-live#12
 the interpolated p95, with no outlier removal or CPU
 pinning. % src: facts-F7#13, facts-F7#14, facts-F7#15, facts-F7#16, facts-F7#17
 The machine in Table~\ref{tab:bench} comes from \texttt{environment.json},
-which records no commit or library versions; the results match
-\texttt{57a1a8c}. % src: facts-F7#1, facts-F7#3, facts-F7#4, facts-F7#7, facts-F7#9
+which records no commit or library versions; the result files are the ones
+committed at \texttt{57a1a8c}. % src: facts-F7#1, facts-F7#3, facts-F7#4, facts-F7#7, facts-F7#9
 Despite the label \texttt{local-processes}, the six services ran as uvicorn
 servers in threads of the benchmark's own Python process, shared with the
 client, with PostgreSQL~16 in Docker Desktop on Windows

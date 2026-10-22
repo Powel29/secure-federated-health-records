@@ -36,7 +36,7 @@ The audit service releases its two shares only after validating a signed, one-ti
 Search tokens are derived from the emergency key, so search works only while an emergency session is live, and old tokens stop matching after the expiry rotation.
 % src: facts-F3#51, facts-F3#53, facts-F3#54
 \item \emph{Evidence.}
-Negative security tests back eleven claims, C1--C11, all of which hold in a live run on commit \texttt{57a1a8c} (Section~\ref{sec:security}).
+Negative security tests back eleven claims, C1--C11, all of which hold in a live test run on the evaluated version of our code, git commit \texttt{57a1a8c} of the project repository (Section~\ref{sec:security}).
 % src: facts-live#12, facts-F5#22
 PyShark wire checks see the audit service's database commit before the release response that carries the shares (Section~\ref{sec:traffic}).
 % src: facts-F6#43, facts-F6#47, facts-F6#49
