@@ -1,0 +1,64 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{cite}
+\usepackage{amsmath}
+\usepackage{newtxmath}
+\usepackage{fontspec}
+\setmainfont{texgyretermes}[Extension=.otf, UprightFont=*-regular,
+  BoldFont=*-bold, ItalicFont=*-italic, BoldItalicFont=*-bolditalic]
+\setmonofont{texgyrecursor}[Extension=.otf, UprightFont=*-regular,
+  BoldFont=*-bold, ItalicFont=*-italic, BoldItalicFont=*-bolditalic]
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{url}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,automata,shapes.geometric,calc,fit,backgrounds}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage[hidelinks]{hyperref}
+\setlength{\emergencystretch}{1em}
+
+\begin{document}
+
+\title{Federated Break-Glass EHR with a Unified\\Key-Lifecycle State Machine}
+
+\author{
+\IEEEauthorblockN{Ojas Thakurela}
+\IEEEauthorblockA{Reg.\ No.\ 240911282\\
+School of Computer\\Engineering\\
+MIT, Manipal, India}
+\and
+\IEEEauthorblockN{Powel Lawrence Lewis}
+\IEEEauthorblockA{Reg.\ No.\ 240911458\\
+School of Computer\\Engineering\\
+MIT, Manipal, India}
+\and
+\IEEEauthorblockN{Avaneeth Gowda L}
+\IEEEauthorblockA{Reg.\ No.\ 240911368\\
+School of Computer\\Engineering\\
+MIT, Manipal, India}
+\and
+\IEEEauthorblockN{Nandini Taldar}
+\IEEEauthorblockA{Reg.\ No.\ 240911356\\
+School of Computer\\Engineering\\
+MIT, Manipal, India}
+}
+
+\maketitle
+
+\input{sections/00-abstract}
+\input{sections/01-introduction}
+\input{sections/02-related-work}
+\input{sections/03-threat-model}
+\input{sections/04-system-overview}
+\input{sections/05-lifecycle}
+\input{sections/06-breakglass}
+\input{sections/07-security-analysis}
+\input{sections/08-traffic-analysis}
+\input{sections/09-evaluation}
+\input{sections/10-limitations}
+\input{sections/11-conclusion}
+
+\bibliographystyle{IEEEtran}
+\bibliography{refs}
+
+\end{document}

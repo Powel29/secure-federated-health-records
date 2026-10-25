@@ -1,0 +1,24 @@
+\section{Conclusion}\label{sec:conclusion}
+
+We built a simulated federated EHR in which revocation, break-glass and
+expiry are signed transitions of one four-state lifecycle over per-record
+DEKs, and consent is a patient-signed grant checked at read time when
+presented, outside that lifecycle. % src: facts-F1#1, facts-F1#11, facts-F1#35, facts-F1#77, facts-F1#78, facts-F4#1
+Break-glass instantiates the log gating of transparent
+decryption~\cite{ryan2017accountable,cheval2023transparency}: a weighted
+3-of-4 Shamir split gives two shares to the audit service, which releases
+them only after validating a signed Emergency Assertion and committing its
+log entry. % src: facts-F4#10, facts-F2#50, facts-F8#2, facts-F8#3
+Log-gated decryption is prior art; our contribution is the
+combination, implemented and tested, in which revocation and expiry re-key
+the record and emergency search ends with the window. % src: facts-F8#2, facts-F8#3, facts-F1#47, facts-F3#54
+On the evaluated commit C1--C11 all hold, and in-process
+cryptographic operations take under a millisecond. % src: facts-live#12, facts-F7#26, facts-F7#27, facts-F7#28, facts-F7#29
+
+Future work, from Section~\ref{sec:limits}: a Merkle log whose
+presence and extension proofs the facility checks; a home authority that
+also logs, so break-glass works without the audit service; epoch-versioned
+attribute keys; real CP-ABE and a pairing-based unidirectional PRE;
+client-side cryptography in personal key agents; keyed chain
+pseudonyms; home-authority revocation; production-size groups; and the
+cut scalability runs. % src: facts-F8#25, facts-F3#19, facts-F7#35

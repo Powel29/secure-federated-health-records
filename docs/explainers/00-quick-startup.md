@@ -72,6 +72,7 @@ docker compose -f deploy/docker-compose.yml down
 | Run the unit tests (no stack needed) | `python -m pytest tests -q` |
 | Run tests that need Postgres too | see `README.md` §3 (a separate `ehr_test` database in the Compose store) |
 | Seed nothing (a driver seeds its own records) | `$env:SEED_DATA="false"` before `up --build -d` |
+| Short emergency window for a demo (default is 4 h = `14400`; a window can be shortened, never extended) | `$env:EMERGENCY_DURATION_SECONDS="60"` before `up --build -d` |
 | Verified TLS between services | `python -m wire.tls`, then `$env:TLS_ENABLED="true"` before `up --build -d` |
 | Wireshark capture (Phase 5 module) | `README.md` §6 and [06-traffic-analysis-module.md](06-traffic-analysis-module.md) |
 
@@ -90,9 +91,10 @@ docker compose -f deploy/docker-compose.yml down
 | Login fails | Stack was started with `SEED_DATA=false` | Recreate it without that setting |
 | `run_scenario` fails with a 500 on `rec-001` | Bootstrap already seeded that record | Recreate the stack with `SEED_DATA=false` |
 | `run_scenario` prints a `charmap` error on Windows | Console encoding | Set `PYTHONUTF8=1` |
-| Break-glass says `emergency_open -> emergency_open` | That record is already open this run | Recreate the stack, or wait for the time-box to end |
+| Break-glass says `emergency_open -> emergency_open` | That record is already open this run (a second *open* is illegal; a *join* by another clinician of the opening facility is allowed) | Recreate the stack, or wait for the time-box to end |
 | Stack in a strange state | Partial or stale run | `down`, then `up --build -d` (resets all synthetic data) |
 
-Keys live only in process memory, so after a key-service restart or a failed
-bootstrap, `down` then `up --build -d`. Bootstrap refuses a partial or stale
+Keys live only in process memory (paper limitations 5 and 8: the custodian and the
+audit service lose their shares on restart), so after a key-service restart or a
+failed bootstrap, `down` then `up --build -d`. Bootstrap refuses a partial or stale
 rerun and says so. Full details: `deploy/README.md`.

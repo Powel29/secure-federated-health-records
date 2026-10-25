@@ -1,0 +1,97 @@
+\section{Security Analysis}\label{sec:security}
+
+\input{tables/claims}
+
+Table~\ref{tab:claims} gives claims C1--C11 from a live run of the claim
+registry.
+% src: facts-live#13
+A claim holds only when every system-level test tagged with it passed; a skip
+makes it unverified, an expected failure ``fails today'', and module-level
+outcomes never change a status.
+% src: facts-F5#23, facts-F5#26
+In the run of 2026-10-21 on the evaluated commit, \texttt{57a1a8c}, all eleven claims hold, with 35
+of 35 system-level tests passing and none skipped.
+% src: facts-live#12
+
+\subsection{Per-Claim Arguments}
+
+Test names are abbreviated from the node ids printed by the run.
+% src: facts-live#13
+\emph{C1:} after revocation through the facility endpoint, on the in-memory
+store and on Postgres, the clinician cannot read
+(\texttt{c1\_revoked\_clinician\_*}).
+% src: facts-live#13
+Revocation re-keys through the expiry rotation (new emergency key, shares and
+search index) and is forward-only.
+% src: facts-F3#58, facts-F5#16
+\emph{C2:} \texttt{release\_share\_fails\_closed} makes the audit commit fail
+and gets no share; the append runs in one transaction that raises before any
+share is returned.
+% src: facts-live#13, facts-F2#51
+\emph{C3:} ten tests check that the audit service refuses an assertion for
+another record, one not signed by the certificate key, one from an untrusted
+CA and a replayed one (the home authority, the first two), and that the
+facility opens nothing with one share, with the custodian and home authority
+together, or with the audit service's two shares.
+% src: facts-live#13, facts-F2#34
+The claim text was written on 2026-10-07, before the 3-of-4 split; that every
+qualifying set holds an audit share follows from share placement, not from a
+gate check.
+% src: facts-F5#57, facts-F2#36, facts-F2#37
+\emph{C4:} six tests check that emergency search is refused after expiry, is
+not restored by pre-expiry shares, and that a restart or crash mid-window
+still ends in a rotation, on both stores.
+% src: facts-live#13
+Tokens derive from the live emergency key, which expiry replaces.
+% src: facts-F3#53, facts-F3#54
+\emph{C5:} \texttt{c5\_tampered\_db\_row} alters a stored entry and chain
+verification, which checks signature, link, sequence and hash, fails.
+% src: facts-live#13, facts-F2#77
+\emph{C6, C7:} \texttt{c6\_api\_refuses\_revocation} requests a pair outside
+the seven legal transitions; two C7 tests check that a break-glass event
+verifies against the clinician's certificate and that one the clinician did
+not sign opens nothing.
+% src: facts-live#13, facts-F1#11
+\emph{C8:} a replayed assertion is refused at the home authority, at the
+facility, after a facility restart and across processes on Postgres; each
+party keeps its own store of consumed ids.
+% src: facts-live#13, facts-F2#26
+\emph{C9:} a portal may not request an audit share, an unsigned service
+request is refused, and an authenticated but unauthorised caller is stopped
+before any crypto or database work; C9 has no module-level test.
+% src: facts-live#13, facts-F5#33
+\emph{C10:} revoked, expired or copied credentials, and requests without a
+valid credential, release no key.
+% src: facts-live#13
+\emph{C11:} the custodian refuses a patient without an owner credential, and
+only the home authority issues that key.
+% src: facts-live#13, facts-F3#40, facts-F5#12
+
+\subsection{Mutation Testing of the Claim Tests}
+
+Eighteen mutations, each disabling one control by monkeypatching, cover
+C1--C10; a test passes only if a mutation of its claim turns it red, and C11
+relies on a positive control instead.
+% src: facts-F5#35, facts-F5#38, facts-F5#39, facts-F5#40, facts-F5#41, facts-F5#42, facts-F5#43, facts-F5#44, facts-F5#45
+The only per-test mutation log (2026-10-19, 43 rows, each red under some
+mutation) predates the 3-of-4 split and lacks seven of today's claim-tagged
+nodes; the post-split run of 2026-10-21 is recorded only in prose.
+% src: facts-F5#46, facts-F5#49, facts-F5#50
+The runner also counts a test whose baseline is skipped as neither caught nor
+decorative.
+% src: facts-F5#37
+We therefore do not claim that every current claim test is shown to go red.
+% src: facts-F5#49, facts-F5#50
+
+\subsection{What Is Proven}
+
+\input{tables/secprops}
+
+Library primitives are assumed secure, not proven by us, and the hand-rolled
+Shamir sharing, policy tree and ElGamal PRE have no proof
+(Table~\ref{tab:secprops}).
+% src: facts-F3#1, facts-F3#3, facts-F3#50, facts-F5#5
+Unlike CP-ABE~\cite{bethencourt2007cpabe}, the tree is not
+collusion-resistant, and the PRE is bidirectional and unused, since
+break-glass uses only the KEM.
+% src: facts-F3#41, facts-F3#43, facts-F3#44

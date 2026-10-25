@@ -4,6 +4,14 @@ System components, what depends on what, the tech stack, and how data moves.
 Scope and deliverables live in `PROJECT.md`; sequencing and ownership live in
 `WORKFLOW.md`.
 
+**The IEEE paper (`paper/`, built PDF `paper/build/main.pdf`) is the reference for
+what the system does and how well it is evidenced.** It describes commit `57a1a8c`
+(live run of 2026-10-21): all eleven security claims C1 to C11 hold, 35 of 35
+system-level tests pass, and the PyShark wire checks pass on real plain and TLS
+captures. Where this document and the paper disagree about behaviour, the paper
+(which cites code) wins; fix this file. Plain-language walkthroughs are in
+`docs/explainers/`.
+
 ---
 
 ## 1. Tech stack
@@ -14,15 +22,15 @@ sophistication win.
 
 | Layer | Choice | Why |
 |---|---|---|
-| Language | Python 3.11+ | Team familiarity; every needed primitive available |
-| Crypto primitives | `cryptography` (pyca) | AES-256-GCM, HKDF, ECDSA (P-256), RSA-OAEP, X.509. Pure wheels, no C build |
+| Language | Python 3.11 (3.11.9 evaluated) | Team familiarity; every needed primitive available |
+| Crypto primitives | `cryptography` (pyca) | AES-256-GCM, HKDF, ECDSA (P-256) with SHA-256, X.509. Pure wheels, no C build. (RSA-OAEP appeared in the first design; the code uses ElGamal KEMs instead.) |
 | Hashing | `hashlib` (stdlib) | SHA-256 for the audit chain |
 | Randomness | `secrets` (stdlib) | Never `random` for anything security-relevant |
-| Shamir SSS | **Hand-rolled**, GF(p) with p a 256-bit prime | ~80 lines, it is a course topic, and it removes a dependency |
+| Shamir SSS | **Hand-rolled**, GF(p) with p = 2^256 + 297 (a 257-bit prime) | ~80 lines, it is a course topic, and it removes a dependency |
 | Proxy re-encryption | **Hand-rolled** ElGamal-style PRE (bidirectional, ADR-0076) | No maintained easy-install PRE library exists |
 | Access structure | **Hand-rolled** policy tree over Shamir | Replaces CP-ABE — see §3 |
-| Services | FastAPI + Uvicorn | Trivial to run several processes; gives us real network boundaries |
-| Storage | **PostgreSQL** (one shared store) | Real concurrent multi-service access; holds only ciphertext, wrapped keys, and coded index — stores data, never decides access (ADR-0014) |
+| Services | FastAPI + Uvicorn (six federation services) | Trivial to run several processes; gives us real network boundaries |
+| Storage | **PostgreSQL 16** (one shared store) | Real concurrent multi-service access; holds only ciphertext, wrapped keys, and coded index — stores data, never decides access (ADR-0014) |
 | Analysis | pandas + matplotlib | Benchmark tables and plots |
 | Testing | pytest | Including the negative security suite |
 | Style | black + ruff | See `CONVENTIONS.md` |
@@ -47,7 +55,8 @@ primitives *through here*, never directly.
 **C2 — `shamir`.** Threshold secret sharing over a prime field. Split, combine,
 share validation. Used by both the break-glass gate and the policy engine.
 
-**C3 — `pre`.** ElGamal-style proxy re-encryption over a safe-prime group:
+**C3 — `pre`.** ElGamal-style proxy re-encryption over a 256-bit
+*demonstration* safe-prime group (not a production size):
 re-encryption key `rk = sk_a · sk_b⁻¹ mod q` and a ciphertext transform. The
 scheme is **bidirectional** (`rk⁻¹` re-encrypts B to A) and computing `rk` needs
 both secret keys (ADR-0076). The break-glass path uses only its KEM: the
@@ -55,7 +64,9 @@ facility unwraps the DEK and delivers it to the clinician's ElGamal key.
 
 **C4 — `storage`.** PostgreSQL schema and repository objects. Tables: patients,
 records, dek_wrappings, attributes, authorities, facilities, lifecycle_state,
-transition_events, audit_log, search_index.
+transition_events, audit_log, search_index, plus consumed ids, compiled policies,
+consent grants, clinical metadata, service-auth/rotation state and emergency
+sessions (migrations 0001 to 0006).
 
 **C5 — `identity`.** The federated PKI. Root trust anchor, per-facility CAs,
 cross-certification, certificate chain validation, clinician certificates. This
@@ -73,13 +84,20 @@ presented credential set satisfies the tree. This is our ABE substitute.
 envelope encryption of the DEK per authorised party, re-wrap on rotation.
 
 **C9 — `lifecycle`.** The state machine. States Granted / Revoked /
-Emergency-open / Expired, the legal transition table, signed transition event
-generation and verification, and the rotation logic each transition triggers.
-**This is the spine of the project.**
+Emergency_Open / Expired, the **seven** legal transitions (Granted→Revoked,
+Granted→Emergency_Open, Revoked→Emergency_Open, Revoked→Granted [legal, never
+emitted], Emergency_Open→Expired, Expired→Granted, Expired→Revoked), signed
+transition-event generation and verification (domain-tagged, length-prefixed
+bytes), and the expiry manager. **Revocation and expiry perform a full rotation
+(new DEK, policy root, emergency key with fresh shares, re-derived search
+index); opening break-glass rotates nothing.** Consent is *not* a state. **This
+is the spine of the project.**
 
 **C10 — `audit`.** Hash-chained signed log — `h_i = SHA-256(h_{i-1} ‖ event ‖
 timestamp ‖ actor)` — append and full-chain verification. Runs as its own
-process. Also custodian of two break-glass shares, 3 and 4 (see C11).
+process. Also custodian of two break-glass shares, 3 and 4 (see C11). It is a
+plain hash chain held by a **trusted** service: tampering with stored entries is
+detected, but there are no proofs of presence or extension (paper limitation 13).
 
 **C11 — `breakglass`.** The threshold gate. The emergency key is a weighted
 Shamir **3-of-4** split (ADR-0089): share 1 to the attending clinician's
@@ -93,7 +111,9 @@ is returned. Reconstructs the time-boxed emergency key.
 
 **C12 — `search`.** Encrypted inverted index over record contents, plus search
 token derivation. Tokens derive from the emergency key, so search capability
-exists only while the record is in Emergency-open and is dead once it expires.
+exists only while the record is in Emergency_Open and is dead once the expiry
+rotation replaces the key. Tokens are deterministic, so search leaks search and
+access patterns (measured in the paper's Section VIII).
 
 **C13 — `federation`.** Patient-indexed discovery over the shared store. Records
 live in **one semi-trusted encrypted store**, not scattered per facility.
@@ -152,7 +172,11 @@ A record's access policy is a tree, e.g.
 - Each **AND node** splits its parent's secret with a k-of-k Shamir sharing
   across its children.
 - Each **OR node** gives each child the *same* secret — any one child suffices.
-- The root secret is the wrapping key for the record's DEK.
+- The root secret is the wrapping key for the record's DEK; the wrapping's
+  associated data binds the record id, policy id and generation. Leaf
+  ciphertexts carry no associated data.
+- Every record's tree is `Or(clinical policy, owner:patient)`, so the patient
+  reads through the same path (ADR-0016). There is no general k-of-n gate.
 
 A clinician holding attribute keys that satisfy the tree can reconstruct up the
 tree to the root and unwrap the DEK. No per-clinician pre-provisioning is
@@ -163,7 +187,8 @@ which is the property we actually need for cross-institution access.
 collusion-resistant. Two clinicians could pool attribute keys to satisfy a
 policy neither satisfies alone. Pairing-based CP-ABE prevents this by binding
 attribute keys to a per-user random value; we cannot without pairings. Stated as
-a limitation, with real CP-ABE listed as future work.
+a limitation, with real CP-ABE listed as future work. There is no security
+proof for the construction.
 
 ---
 
@@ -185,9 +210,10 @@ C6 authority          <- C1, C5            (issuance needs certs to sign under)
 C7 policy             <- C1, C2, C6        (needs attribute keys to share to)
 C13 federation        <- C4, C5            (discovery needs cross-facility trust)
 
-C9 lifecycle          <- C1, C4, C8        (transitions rotate real keys)
-   consent/grant path <- C9, C7            (grant = wrap DEK to a policy)
-   revocation path    <- C9, C8            (revoke = re-wrap DEK)
+C9 lifecycle          <- C1, C4, C8        (revocation and expiry rotate real keys)
+   consent path       <- C7                (a patient-signed grant checked at read
+                                            time; not a lifecycle state, wraps nothing)
+   revocation path    <- C9, C8            (revoke = full rotation, ADR-0036/0080)
 
 C11 breakglass        <- C2, C9, C10, C6   (shares, a state to enter, an
                                             audit service to gate on; share 2
@@ -198,9 +224,9 @@ C12 search            <- C1, C8, C11       (tokens derive from emergency key)
    handoff                                  clinician at a discovered node)
 
 C14 api               <- C5..C13           (exposes them; thin)
-C16 demo              <- C14, C13, C11, C12
+demo (seed + driver) <- C14, C13, C11, C12
 C15 bench             <- whichever module it measures
-C17 wire              <- deployed topology (§7) + C16
+C17 wire              <- deployed topology (§7) + demo
                          (captures need real processes and a real scenario)
 ```
 
@@ -237,7 +263,9 @@ contracts (T02) -> crypto_core -> records -> lifecycle -> breakglass -> search -
    reconstruction of the root secret (C7).
 4. On success the DEK is unwrapped, the record is AES-256-GCM decrypted (C1).
 5. Access is appended to the audit chain (C10). *Normal reads are logged but not
-   gated on logging — only break-glass is.*
+   gated on logging — only break-glass is.* If a patient-signed consent grant is
+   presented, it is checked first (status, window, signature, grantee, scope);
+   a grant never releases a key by itself.
 
 ### Revocation (Granted → Revoked)
 
@@ -248,8 +276,10 @@ contracts (T02) -> crypto_core -> records -> lifecycle -> breakglass -> search -
    work (ADR-0080, ADR-0084).
 2. `lifecycle` validates the transition is legal, emits a **signed transition
    event** (C9).
-3. Record's DEK is rotated: new DEK, record re-encrypted, wrappings rebuilt
-   excluding the revoked party (C8).
+3. A **full rotation** runs (C8, C9): new DEK and re-encrypted record, a new
+   policy identifier and a policy tree recompiled under a fresh 32-byte root
+   secret, a fresh emergency key split 3-of-4 to the same holders, the DEK
+   wrapped under both at generation + 1, and the search tokens re-derived.
 4. Transition event and new chain head appended to the audit log (C10).
 5. The revoked party retains nothing usable for future reads. Already-decrypted
    plaintext is not retractable — stated as a limitation.
@@ -272,16 +302,16 @@ contracts (T02) -> crypto_core -> records -> lifecycle -> breakglass -> search -
    cross-certification (C5).
 2. Federated discovery locates the patient's records (C13).
 3. Threshold collection begins (C11):
-   - **Share 1** — attending clinician, released against a valid emergency
-     assertion and a valid cross-certified identity.
+   - **Share 1** — attending clinician (held by the custodian), released
+     against a valid emergency assertion and a valid cross-certified identity.
    - **Share 2** — the patient's home authority (the authority that issued the
      patient's `owner` credential). Used only when share 1 is not available
      (for example, lost in a custodian restart): the custodian then asks the
      home authority before it asks the audit service. The home authority
      releases share 2 only after it has validated the emergency assertion
-     itself, with the same five-point check and record binding as the audit
-     service, against its own trust anchors and its own consumed-assertion
-     store, and only sealed to a root-certified facility gate. It writes no
+     itself, with the same check (§8) as the audit service, against its own
+     trust anchors and its own consumed-assertion store, and only sealed to a
+     root-certified facility gate. It writes no
      log entry: share 2 opens nothing without shares 3 and 4 (ADR-0089).
    - **In transit** every share is sealed to its recipient's share key,
      published at `GET /share-key` and signed by the recipient's
@@ -300,32 +330,38 @@ contracts (T02) -> crypto_core -> records -> lifecycle -> breakglass -> search -
      points.
 
      Each share holder validates the emergency assertion itself before it
-     releases anything: the audit service runs the same five-point check
-     against its own trust anchors and requires the assertion's signed context
-     digest to name this record (ADR-0067).
+     releases anything: the audit service runs the same check against its own
+     trust anchors and requires the assertion's signed context digest to name
+     this record (ADR-0067). No share holder checks that the record belongs to
+     the assertion's patient; the facility does (and the custodian, when it can
+     load the record).
 4. Shares 3 and 4 plus share 1 (or share 2) reconstruct the emergency key.
    Any 3 of the 4 points would; the custodian and the home authority hold
    only two between them, so every set of three contains a share only the
    audit service releases, and it releases 3 and 4 together, after its log
-   commit. `lifecycle` records the
-   Granted → Emergency-open transition, signed by the clinician's own key
+   commit. The gate itself checks only that three distinct share indices are
+   present; the audit-share property comes from share placement. `lifecycle`
+   records the Granted/Revoked → Emergency_Open transition, signed by the clinician's own key
    inside the custodian and verified against their certificate before any
    share is combined (C9, ADR-0068).
-5. Cross-facility handoff: the facility unwraps the DEK and delivers it to
+5. Cross-facility handoff (nothing is re-keyed on open): the facility unwraps the DEK and delivers it to
    the out-of-network clinician's ElGamal key with the `pre` KEM (C3). The
    facility sees the DEK; there is no decryption-free re-encryption here
    (ADR-0076).
 6. **Emergency search** becomes available: tokens are derived from the emergency
    key via HKDF, so the capability exists only in this state (C12).
-7. Time-box expires. `lifecycle` performs Emergency-open → Expired → forced
-   rotation back to baseline with no administrator action (C9). The rotation
+7. Time-box expires. `lifecycle` performs Emergency_Open → Expired → forced
+   rotation → Granted/Revoked with no administrator action (C9). The rotation
    replaces every key (ADR-0069): a new DEK and re-encrypted record, the same
    policy tree compiled under a new root secret, a new emergency key whose new
-   shares go to the custodian and the audit service, and the search index
+   shares go to all three holders (custodian, home authority, audit service), and the search index
    re-derived under it from the record's term list (sealed under the DEK at
-   ingest). It is stored before the record returns to baseline. Search tokens
-   are dead because the key they derive from is gone, and the old shares open
-   nothing.
+   ingest). It is stored, and the new shares deposited, before the record
+   returns to the state it was claimed from (Granted or Revoked, so an
+   emergency can never undo a revocation, ADR-0058). Search tokens are dead
+   because the key they derive from is gone, and the old shares open nothing.
+   A crash or restart mid-window is closed at startup by the same rotation
+   (ADR-0081).
 
 ### Trust boundaries
 
@@ -335,10 +371,23 @@ contracts (T02) -> crypto_core -> records -> lifecycle -> breakglass -> search -
   anything — it holds no keys and never sees plaintext. A full compromise of the
   store yields only gibberish. This is the deliberate trade of a central store:
   one target, but one that holds nothing usable (ADR-0011).
-- The **audit service** is trusted to hold one share and to commit before
-  releasing — but it **cannot open a record alone**, which is a tested property.
+- The **audit service** is trusted to hold two shares (3 and 4) and to commit
+  before releasing — but it **cannot open a record alone** (two points of
+  three), which is a tested property (C3). It is itself **trusted**: a
+  compromised audit service could release its shares without a durable entry
+  or show different chains to different parties, so "no log entry, no key"
+  holds against everyone except the audit service. It is also a single point
+  of availability: the home authority's share 2 covers only a lost share 1.
+- The **Key Custodian** is one shared process acting as every subject's key
+  agent in this build (in reality each person's device or enclave).
 - The **HSM/KMS timer** is simulated by a trusted process. Its subversion is a
-  documented limitation, mitigated by making expiry a signed, logged rotation.
+  documented limitation, mitigated by making expiry a signed, logged rotation
+  (tamper-evident, not prevented).
+- The **PKI root** is a single point of trust, held only at bootstrap.
+- The paper's threat model has four adversaries (shared store, compromised
+  facility, rogue attribute authority, colluding clinicians — the last is
+  *not* stopped) and **no on-path network attacker**: "no plaintext on the
+  wire" is a goal of the TLS profile only.
 
 ---
 
@@ -360,13 +409,17 @@ src/
   search/          C12  encrypted index + emergency-only tokens
   federation/      C13  patient-indexed discovery
   api/             C14  FastAPI apps (facility, authority, audit)
+  consent/         ---  patient-signed grants, read-time check (not a lifecycle state)
+  custodian/       ---  key-agent logic behind the Key Custodian service
   contracts/       ---  shared schemas, frozen in Phase 0
+portal/            C16  three Django portals (patient, clinician, admin/audit)
+deploy/            Docker Compose, bootstrap, local runners
 tests/             mirrors src/, plus tests/security/ for negative tests
 bench/             C15  harness + analysis notebooks/scripts
 demo/              C16  seed data + scripted walkthrough
 wire/              C17  capture profiles + PyShark analysers (§4A module)
-paper/             LaTeX source, figures
-docs/              threat model, ADRs, dashboard build spec
+paper/             IEEEtran LaTeX source, tables, figures, fact sheets (built PDF in paper/build)
+docs/              ADRs, explainers, diagrams, threat model, test evidence
 ```
 
 `src/contracts/` is the one directory everybody touches. It is frozen after
@@ -385,17 +438,17 @@ undermine the paper's central claim.
 
 ### Runtime topology
 
-Seven processes. The shared `store` holds the encrypted records; the five federation services each have their own signing key and a small local DB for keys and state; the `custodian` (ADR-0043) is the portals' key agent:
+Six federation services plus the store and the portals. The shared `store` holds the encrypted records; each federation service has its own signing key and certificate; the `custodian` (ADR-0043) is the portals' key agent:
 
 | Process | Port | Role | Holds |
 |---|---|---|---|
-| `store`      | 8000 | Shared semi-trusted encrypted record store | All ciphertext records, wrapped keys, coded search index — **never plaintext, never unwrapped keys** |
+| `store`      | Postgres (host 55433 in Compose) | Shared semi-trusted encrypted record store | All ciphertext records, wrapped keys, coded search index — **never plaintext, never unwrapped keys** |
 | `facility-a` | 8001 | Patient's home facility | Clinician certs + home-authority link; **holds no records** — reads them from `store` |
 | `facility-b` | 8002 | Out-of-network facility (the demo entry point) | Clinician certs only; must discover the patient in `store`, then break-glass |
 | `authority-med` | 8010 | Medical council attribute authority | Attribute keys for `role:*`; share 2 of records whose patients it issued an `owner` credential |
 | `authority-net` | 8011 | Hospital network attribute authority | Attribute keys for `specialty:*`, `facility:*`; share 2 of records whose patients it issued an `owner` credential (ADR-0089) |
-| `audit` | 8020 | Audit service — chain custodian + shares 3 and 4 | Hash-chained log, break-glass shares |
-| `custodian` | 8030 | Key Custodian — every subject's key agent (ADR-0043) | Per-subject signing keys, certificates, PRE keypairs, issued credentials; clinician-custody share 1 per record. Signs and presents on request; **decides nothing** |
+| `audit` | 8020 | Audit service — chain custodian + shares 3 and 4 | Hash-chained log, break-glass shares 3 and 4 |
+| `custodian` | 8030 | Key Custodian — every subject's key agent (ADR-0043) | Per-subject signing keys, certificates, PRE keypairs, issued credentials; clinician-custody share 1 per record (all in memory). Signs and presents on request; **decides nothing** |
 
 The three Django portals (C16) run beside these (`portal/manage.py runserver`,
 port 8000, or all-in-one via `python -m deploy.run_portal_demo`) and hold no
@@ -411,14 +464,14 @@ convention rather than an enforced precondition.
 ### Two deployment paths
 
 **Path A — local processes (primary, for development).** A Python supervisor
-script (`deploy/run_local.py`) launches all five uvicorn processes, waits for
+script (`deploy/run_local.py`) launches all six uvicorn processes, waits for
 health checks, and seeds the federation. No Docker required. This is what the
 team uses day to day, and it honours the "keep it easy" constraint — a teammate
 who cannot install Docker is not blocked.
 
-**Path B — Docker Compose (for the demo and for reproducibility).** Five
-services in one `docker-compose.yml`, one shared bridge network, a named volume
-for the PostgreSQL data (ADR-0014). This is what runs on demo day and what an evaluator or a
+**Path B — Docker Compose (for the demo and for reproducibility).** The
+store, the six services, bootstrap and the portal in one `docker-compose.yml`, one
+shared bridge network, with the PostgreSQL data on tmpfs (ADR-0014, ADR-0047). This is what runs on demo day and what an evaluator or a
 paper reviewer can bring up from a clean clone with one command. It also removes
 the "works on my machine" failure mode at the worst possible moment.
 
@@ -473,13 +526,14 @@ profiles, selected by environment variable:
 
 | Profile | Transport | Purpose |
 |---|---|---|
-| `capture-plain` | Plain HTTP between all five services | **Primary.** Demonstrates that confidentiality comes from application-layer encryption, not from TLS. This is the profile that produces the evidence in `PROJECT.md` §4A. |
-| `capture-tls` | TLS between services | Secondary. Shows defence in depth and that we are not relying on the absence of transport security. |
+| `capture-plain` | Plain HTTP between all six services | The **positive control** and the only profile where the database COMMIT is visible. On the plain wire the facility encrypts and decrypts server-side, so record plaintext, the emergency key and attribute keys cross in the clear; no share or signing key does, because shares travel sealed. |
+| `capture-tls` | TLS between services (self-signed, server-only, no pinned version or cipher) | The profile for which **"no plaintext on the wire" is claimed** (ADR-0073). A clean TLS result is trusted only because the plain control fires. |
 
 Capture points:
 - **Docker path:** capture on the Compose bridge network, which sees all
   inter-service traffic in one place.
-- **Local path:** capture on loopback across the five service ports.
+- **Local path:** capture on loopback across the six service ports and Postgres.
+  Only allowlisted loopback or Docker-bridge interfaces are accepted.
 
 PCAPs are written to `wire/captures/` (beside the canary manifest each run
 writes; review F40), which is `.gitignore`d — captures of a
@@ -512,28 +566,34 @@ EmergencyAssertion {
   assertion_id    # one-time UUID, consumed on use
   patient_id      # bound: this assertion opens this patient only
   clinician_id    # bound: subject of the presenting certificate
-  facility_id     # bound: where the emergency is being declared
-  reason_code     # constrained enum, not free text
+  facility_id     # bound: the record's own facility (the custodian routes there)
+  reason_code     # constrained enum (13 values), not free text
   issued_at
-  expires_at      # short — an assertion is not a standing permission
-  nonce
-  signature       # ECDSA, by the clinician's certificate key
+  expires_at      # short: lifetime <= 15 min (custodian default 120 s)
+  nonce           # >= 128 bits
+  clinical_context_digest  # SHA-256 over record id + justification; share
+                           # holders require it
+  signature       # ECDSA P-256 by the clinician's key (never leaves the custodian)
 }
 ```
 
-Validation, in order, before any share is requested: signature verifies against
-a currently-valid clinician certificate; `clinician_id` matches the certificate
-subject; `facility_id` matches the receiving node; `expires_at` is in the
-future; `assertion_id` has not been consumed. Once the record is loaded, and
-before any state changes, its `patient_id` must equal the assertion's
-(ADR-0044). Failure at any step is
-fail-closed — no share request is made.
+Validation, in order, failing closed at the first failure: signature; the
+certificate chain via a facility CA to the trusted root; `clinician_id` matches
+the certificate CN; certificate not revoked; `facility_id` (at the facility, the
+receiving node; at the share holders, only that it is a federation member);
+not expired; lifetime <= 15 min and `issued_at` at most 30 s in the future; and
+only then consumption of `assertion_id`. Consuming last means an invalid
+assertion cannot burn a legitimate id. The facility, the audit service and the
+home authority each run this against their own trust anchors and consumed-id
+store. Once the record is loaded, and before any state changes, its
+`patient_id` must equal the assertion's (ADR-0044) — checked by the facility
+only. Failure at any step is fail-closed — no share is released.
 
 **How `patient_id` gets into the assertion.** The clinician resolves the
 identifier upstream of signing via a name + DOB lookup in the clinician
 portal (ADR-0033, step 0 of the break-glass sequence above). Identification
 is not authorization: picking a candidate from the search results releases
-no key, and the five validation checks and threshold gate below are the
+no key, and the assertion validation and threshold gate below are the
 things that actually decide access. PII (name, DOB) lives only in the
 portal DB, never in the crypto store (ADR-0011), and that includes the audit
 chain: a lookup entry records the candidates and the selection, nothing about
@@ -544,7 +604,9 @@ through the portal DB, so `patient_id` must never be derived from PII.
 ### Replay protection
 
 Emergency assertions, share requests, transition events and every
-service-to-service request each carry a one-time ID. A consumed-ID store
+service-to-service request each carry a one-time ID (the consumed-id stores are
+durable at the facility and the audit service; the home authority's is in
+memory). A consumed-ID store
 rejects reuse. Without this, a captured break-glass request could be replayed
 for repeated emergency sessions, which would defeat the time-boxing that the
 state machine exists to enforce.
@@ -555,8 +617,8 @@ Every federation process (facilities, the audit service, the authorities, the
 custodian, the portal and the bootstrap job) holds a key and a certificate
 signed directly by the federation root: CN = service id, OU =
 `service:<kind>`. Every call between them carries that certificate and a
-signed one-time `RequestEnvelope` binding caller, recipient, method, path,
-body and time; the body itself travels unchanged. The callee checks all of it
+signed one-time `RequestEnvelope` (age <= 120 s, 30 s skew) binding caller, recipient,
+method, path, body and time; the body itself travels unchanged. The callee checks all of it
 before any route code runs, then allows the call only if the route permits the
 caller's kind (ADR-0066, reversing the service-signing cut of ADR-0015). The
 portal's key identifies the portal process; it is not a subject's key and

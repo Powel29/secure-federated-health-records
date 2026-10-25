@@ -60,7 +60,7 @@
     <text x="581" y="327" font-size="15" font-weight="700" fill="#e65100">audit</text>
     <text x="581" y="345" font-size="12" fill="#546e7a">:8020</text>
     <text x="581" y="368" font-size="12">hash chain and</text>
-    <text x="581" y="385" font-size="12">break-glass share 3</text>
+    <text x="581" y="385" font-size="12">break-glass shares 3 and 4</text>
     <text x="581" y="402" font-size="12" font-weight="700">separate process</text>
 
     <text x="743" y="327" font-size="15" font-weight="700">authority-med</text>
@@ -71,7 +71,7 @@
     <text x="905" y="327" font-size="15" font-weight="700">authority-net</text>
     <text x="905" y="345" font-size="12" fill="#546e7a">:8011</text>
     <text x="905" y="368" font-size="12">attribute keys: specialty,</text>
-    <text x="905" y="385" font-size="12">facility, owner</text>
+    <text x="905" y="385" font-size="12">facility, owner; share 2</text>
   </g>
 
   <!-- bus services -> store -->

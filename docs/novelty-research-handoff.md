@@ -6,6 +6,10 @@
 > does revocation-as-key-rotation) are what we *asked* the reviewer to test.
 > They aren't current positions.
 
+> **Design snapshot, not current.** The gate described below is the earlier 2-of-3
+> design; the current system is a weighted 3-of-4 split (ADR-0089) with all eleven
+> claims holding (see the IEEE paper in `paper/`).
+
 > **How to use:** open a new Claude chat, turn on **Research** (web search),
 > and paste everything below the line. It is self-contained; Claude chat has no
 > access to our repo.

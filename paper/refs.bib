@@ -1,0 +1,324 @@
+% refs-verified.bib -- F8 citation verification, 2026-10-21.
+% Every entry below was checked against a primary page (DOI registry record,
+% publisher page, arXiv abstract, IACR ePrint page, USENIX page, or the
+% author-hosted PDF). Metadata (authors, title, venue, year, pages) comes from
+% that page, NOT from docs/review/2026-10-21-novelty-publishability-review.md.
+% "% caution:" lines say what was NOT confirmed; writers must not cite an
+% entry for anything beyond what facts-F8.md records for it.
+
+% ===================== Accountable / transparent decryption =====================
+
+% verified: https://www.cs.yale.edu/homes/jf/kroll-paper.pdf (author list, title,
+%   abstract, Sec. 1.1 "Hospital patient records" read from the PDF text)
+% verified: https://www.cs.yale.edu/homes/jf/Kroll.html (Yale talk page linking the PDF; undated)
+% note: review metadata was wrong/unsupported: the PDF carries NO date and NO venue;
+%   its newest reference is 2016. "2018" (review, PROJECT.md section 4) is not confirmed
+%   by any primary page. Cite as an undated manuscript.
+@misc{kroll2018accountable,
+  author       = {Joshua A. Kroll and Joe Zimmerman and David J. Wu and Valeria Nikolaenko and Edward W. Felten and Dan Boneh},
+  title        = {Accountable Cryptographic Access Control},
+  howpublished = {Manuscript, \url{https://www.cs.yale.edu/homes/jf/kroll-paper.pdf}},
+  note         = {Undated manuscript; accessed Oct. 2026}
+}
+
+% verified: https://link.springer.com/chapter/10.1007/978-3-319-71075-4_11 (LNCS 10476, pp. 93-98)
+% verified: https://api.crossref.org/works?query.bibliographic=Making+Decryption+Accountable+Ryan (DOI _11)
+% verified: https://pure-oai.bham.ac.uk/ws/files/41623943/06_ryan_paper.pdf (abstract + protocol text)
+% caution: DOI _12 is the separate "Transcript of Discussion" (pp. 99-108); do not confuse.
+@inproceedings{ryan2017accountable,
+  author    = {Mark D. Ryan},
+  title     = {Making Decryption Accountable},
+  booktitle = {Security Protocols XXV (SPW 2017)},
+  editor    = {Frank Stajano and Jonathan Anderson and Bruce Christianson and Vashek Maty{\'a}{\v{s}}},
+  series    = {Lecture Notes in Computer Science},
+  volume    = {10476},
+  pages     = {93--98},
+  publisher = {Springer},
+  year      = {2017},
+  doi       = {10.1007/978-3-319-71075-4_11}
+}
+
+% verified: https://api.crossref.org/works?query.bibliographic=Automatic+verification+of+transparency+protocols+Cheval+Moreira+Ryan
+%   (DOI 10.1109/EuroSP57164.2023.00016, pp. 107-121, July 2023)
+% verified: https://arxiv.org/abs/2303.04500 (extended version; comments field names EuroS&P'23)
+% verified: Sec. 2.2 of the arXiv PDF (trustees use key shares only if log proofs verify)
+% note: the paper title is "Automatic verification of transparency protocols"; it is
+%   NOT titled "transparent decryption". It formally verifies transparent decryption.
+@inproceedings{cheval2023transparency,
+  author    = {Vincent Cheval and Jos{\'e} Moreira and Mark Ryan},
+  title     = {Automatic Verification of Transparency Protocols},
+  booktitle = {Proc. 8th IEEE European Symposium on Security and Privacy (EuroS\&P)},
+  pages     = {107--121},
+  year      = {2023},
+  doi       = {10.1109/EuroSP57164.2023.00016}
+}
+
+% verified: https://www.usenix.org/conference/osdi23/presentation/dauterman (OSDI '23, pp. 81-98)
+% verified: https://arxiv.org/abs/2305.19241 (extended version) + intro text of arXiv PDF
+@inproceedings{dauterman2023larch,
+  author    = {Emma Dauterman and Danny Lin and Henry Corrigan-Gibbs and David Mazi{\`e}res},
+  title     = {Accountable Authentication with Privacy Protection: The {Larch} System for Universal Login},
+  booktitle = {Proc. 17th USENIX Symposium on Operating Systems Design and Implementation (OSDI)},
+  pages     = {81--98},
+  year      = {2023},
+  publisher = {USENIX Association}
+}
+
+% verified: https://api.crossref.org/works?query.bibliographic=Making+Decryption+Accountable+Ryan
+%   (Crossref record for DOI 10.1109/TIFS.2024.3515808: vol. 20, pp. 620-635, 2025)
+% verified: https://eprint.iacr.org/2023/1519 (preprint; same six authors; abstract)
+% verified: https://api.semanticscholar.org/graph/v1/paper/DOI:10.1109/TIFS.2024.3515808 (cross-check)
+% note: review metadata was wrong/unsupported: the name "PORTEX" does not appear on
+%   the ePrint page, the TIFS abstract, or the indexing records. Do NOT call it PORTEX.
+% caution: "its motivation is break-glass" (review N7, PROJECT.md section 4) is NOT in
+%   the abstract; full text (ePrint PDF) returned 403. Do not cite it for break-glass.
+@article{li2025accountable,
+  author  = {Rujia Li and Yuanzhao Li and Qin Wang and Sisi Duan and Qi Wang and Mark Ryan},
+  title   = {Accountable Decryption Made Formal and Practical},
+  journal = {IEEE Transactions on Information Forensics and Security},
+  volume  = {20},
+  pages   = {620--635},
+  year    = {2025},
+  doi     = {10.1109/TIFS.2024.3515808}
+}
+
+% ===================== Break-glass access control (policy layer) =====================
+
+% verified: https://api.crossref.org/works/10.1145/1542207.1542239 (SACMAT '09, pp. 197-206)
+% verified: https://brucker.ch/abstract/brucker.ea-extending-2009.en.html (abstract)
+@inproceedings{brucker2009extending,
+  author    = {Achim D. Brucker and Helmut Petritsch},
+  title     = {Extending Access Control Models with Break-Glass},
+  booktitle = {Proc. 14th ACM Symposium on Access Control Models and Technologies (SACMAT)},
+  pages     = {197--206},
+  year      = {2009},
+  publisher = {ACM},
+  doi       = {10.1145/1542207.1542239}
+}
+
+% verified: https://api.crossref.org/works?query.bibliographic=How+to+Break+Access+Control+in+a+Controlled+Manner+Ferreira
+%   (DOI 10.1109/CBMS.2006.95, CBMS'06, pp. 847-854)
+% verified: https://api.openalex.org/works/doi:10.1109/CBMS.2006.95 (publisher abstract via
+%   OpenAlex index, re-checked 2026-10-22): BTG policy implemented to override access control
+%   in the access-control model of a university-hospital Virtual EMR used by >500 doctors,
+%   "whilst providing for non-repudiation mechanisms for its usage"; pp. 847-854 agree with
+%   Crossref. Full text not opened. Kent listing pages "182-196" disagree; Crossref used.
+@inproceedings{ferreira2006break,
+  author    = {A. Ferreira and R. Cruz-Correia and L. Antunes and P. Farinha and E. Oliveira-Palhares and D. W. Chadwick and A. Costa-Pereira},
+  title     = {How to Break Access Control in a Controlled Manner},
+  booktitle = {Proc. 19th IEEE Symposium on Computer-Based Medical Systems (CBMS)},
+  pages     = {847--854},
+  year      = {2006},
+  doi       = {10.1109/CBMS.2006.95}
+}
+
+% verified: https://api.crossref.org/works?query.bibliographic=Rumpole+a+flexible+break-glass+access+control+model+Marinovic
+%   (DOI 10.1145/1998441.1998453, SACMAT '11, pp. 73-82; full title via Semantic Scholar record)
+% verified: https://api.openalex.org/works/doi:10.1145/1998441.1998453 (publisher abstract via
+%   OpenAlex index, re-checked 2026-10-22): Rumpole is a break-glass access-control model that
+%   establishes why access was denied, uses Belnap four-valued logic for conflicting/missing
+%   information, and gives a declarative query language for the override procedure. Full text
+%   not opened. The TISSEC 2014 journal version (DOI 10.1145/2629502) is a different paper.
+@inproceedings{marinovic2011rumpole,
+  author    = {Srdjan Marinovic and Robert Craven and Jiefei Ma and Naranker Dulay},
+  title     = {Rumpole: A Flexible Break-Glass Access Control Model},
+  booktitle = {Proc. 16th ACM Symposium on Access Control Models and Technologies (SACMAT)},
+  pages     = {73--82},
+  year      = {2011},
+  publisher = {ACM},
+  doi       = {10.1145/1998441.1998453}
+}
+
+% ===================== Cryptographic break-glass =====================
+
+% verified: https://link.springer.com/chapter/10.1007/978-3-642-12368-9_18 (LNCS 6033, pp. 237-244, WISTP 2010; abstract)
+@inproceedings{brucker2010abe,
+  author    = {Achim D. Brucker and Helmut Petritsch and Stefan G. Weber},
+  title     = {Attribute-Based Encryption with Break-Glass},
+  booktitle = {Information Security Theory and Practices: Security and Privacy of Pervasive Systems and Smart Devices (WISTP 2010)},
+  series    = {Lecture Notes in Computer Science},
+  volume    = {6033},
+  pages     = {237--244},
+  publisher = {Springer},
+  year      = {2010},
+  doi       = {10.1007/978-3-642-12368-9_18}
+}
+
+% verified: https://api.crossref.org/works?query.bibliographic=Password-Controlled+Encryption+with+Accountable+Break-Glass+Access
+%   (DOI 10.1145/2897845.2897869, AsiaCCS '16, pp. 235-246)
+% verified: https://crypto.ie.cuhk.edu.hk/TZhang (author publication list)
+% verified: https://api.openalex.org/works/doi:10.1145/2897845.2897869 (publisher abstract via
+%   OpenAlex index, re-checked 2026-10-22): two-factor password + KGC master key; anyone holding
+%   the password (e.g. an emergency contact) obtains a decryption key from the KGC without
+%   revealing the password; KGC accountable for misused key generation; pitched for medical
+%   records, no key-escrow server or trusted hardware. dl.acm.org still 403; full text not opened.
+% note: review source [18] for this paper points at de Oliveira's ResearchGate page (wrong).
+@inproceedings{zhang2016password,
+  author    = {Tao Zhang and Sherman S. M. Chow and Jinyuan Sun},
+  title     = {Password-Controlled Encryption with Accountable Break-Glass Access},
+  booktitle = {Proc. 11th ACM Asia Conference on Computer and Communications Security (AsiaCCS)},
+  pages     = {235--246},
+  year      = {2016},
+  publisher = {ACM},
+  doi       = {10.1145/2897845.2897869}
+}
+
+% verified: https://link.springer.com/chapter/10.1007/978-3-030-17259-6_2 (PKC 2019, LNCS 11443, pp. 34-62; abstract)
+% verified: https://api.crossref.org/works/10.1007/978-3-030-17259-6_2
+@inproceedings{scafuro2019breakglass,
+  author    = {Alessandra Scafuro},
+  title     = {Break-Glass Encryption},
+  booktitle = {Public-Key Cryptography -- PKC 2019},
+  editor    = {Dongdai Lin and Kazue Sako},
+  series    = {Lecture Notes in Computer Science},
+  volume    = {11443},
+  pages     = {34--62},
+  publisher = {Springer},
+  year      = {2019},
+  doi       = {10.1007/978-3-030-17259-6_2}
+}
+
+% verified: https://api.crossref.org/works/10.1109/HealthCom46333.2019.9009598 (pp. 1-7, Oct. 2019; full names)
+% verified: https://api.semanticscholar.org/graph/v1/paper/search?query=Red%20Alert... (abstract cross-check)
+% note: review source [12] for de Oliveira et al. is "Sharing in the Rain" (wrong paper).
+% verified: https://pure.amsterdamumc.nl/ws/files/178264175/Red-alert-break-glass-protocol-to-access-encrypted-medical-records-in-the-cloud.pdf
+%   (version of record, full text read 2026-10-22): CP-ABE emergency key plus MA-signed team
+%   access tokens with default expiry; MA revokes tokens via the CSP when a team's task ends
+%   (e.g. ambulance after hospital arrival), no re-encryption; multi-team, cross-institution;
+%   informal security analysis of malicious behaviours; no audit log gating, no implementation
+%   reported. Abstract also at https://researchportal.tuni.fi/en/publications/red-alert-break-glass-protocol-to-access-encrypted-medical-record/
+@inproceedings{deoliveira2019redalert,
+  author    = {Marcela Tuler de Oliveira and Antonis Michalas and Adrien E. D. Groot and Henk A. Marquering and Silvia Delgado Olabarriaga},
+  title     = {Red Alert: Break-Glass Protocol to Access Encrypted Medical Records in the Cloud},
+  booktitle = {Proc. IEEE International Conference on E-health Networking, Application \& Services (HealthCom)},
+  pages     = {1--7},
+  year      = {2019},
+  doi       = {10.1109/HealthCom46333.2019.9009598}
+}
+
+% verified: https://link.springer.com/article/10.1007/s12243-020-00759-2 (open access, CC BY 4.0;
+%   vol. 75, pp. 103-119, published 7 Mar. 2020; abstract and body read)
+% verified: https://api.semanticscholar.org/graph/v1/paper/DOI:10.1007/s12243-020-00759-2 (full author list)
+@article{deoliveira2020breakglass,
+  author  = {Marcela T. de Oliveira and Alexandros Bakas and Eugene Frimpong and Adrien E. D. Groot and Henk A. Marquering and Antonis Michalas and Silvia D. Olabarriaga},
+  title   = {A Break-Glass Protocol Based on Ciphertext-Policy Attribute-Based Encryption to Access Medical Records in the Cloud},
+  journal = {Annals of Telecommunications},
+  volume  = {75},
+  pages   = {103--119},
+  year    = {2020},
+  doi     = {10.1007/s12243-020-00759-2}
+}
+
+% verified: https://api.crossref.org/works?query.bibliographic=Lightweight+Break-Glass+Access+Control+System+Healthcare+Internet-of-Things
+%   (DOI 10.1109/TII.2017.2751640, vol. 14, no. 8, pp. 3610-3617, Aug. 2018)
+% verified: https://api.semanticscholar.org/graph/v1/paper/DOI:10.1109/TII.2017.2751640 (abstract)
+% note: review gave no year/pages ("IEEE TII 14(8)"); Crossref gives 2018, pp. 3610-3617.
+@article{yang2018libac,
+  author  = {Yang Yang and Ximeng Liu and Robert H. Deng},
+  title   = {Lightweight Break-Glass Access Control System for Healthcare {Internet-of-Things}},
+  journal = {IEEE Transactions on Industrial Informatics},
+  volume  = {14},
+  number  = {8},
+  pages   = {3610--3617},
+  year    = {2018},
+  doi     = {10.1109/TII.2017.2751640}
+}
+
+% ===================== Encrypted PHR sharing (anchor) =====================
+
+% verified: https://api.crossref.org/works/10.1109/TPDS.2012.97 (vol. 24, no. 1, pp. 131-143, Jan. 2013)
+% verified: https://experts.arizona.edu/en/publications/scalable-and-secure-sharing-of-personal-health-records-in-cloud-c/ (abstract)
+% note: the ED-escrow break-glass mechanism was read in the SecureComm 2010 conference
+%   version (https://www.cnsr.ictas.vt.edu/publication/Li_SecureComm10.pdf, LNICST 50,
+%   pp. 89-106; authors Li, Yu, Ren, Lou -- no Zheng; different title). The TPDS full
+%   text was not opened; its abstract confirms break-glass access under emergency scenarios.
+@article{li2013phr,
+  author  = {Ming Li and Shucheng Yu and Yao Zheng and Kui Ren and Wenjing Lou},
+  title   = {Scalable and Secure Sharing of Personal Health Records in Cloud Computing Using Attribute-Based Encryption},
+  journal = {IEEE Transactions on Parallel and Distributed Systems},
+  volume  = {24},
+  number  = {1},
+  pages   = {131--143},
+  year    = {2013},
+  doi     = {10.1109/TPDS.2012.97}
+}
+
+% ===================== Time-limited search / PRE in e-health =====================
+
+% verified: https://api.crossref.org/works/10.1109/TIFS.2015.2509912 (vol. 11, no. 4, pp. 746-759, Apr. 2016)
+% note: review source [33] for this paper is an unrelated consortium-blockchain EHR paper (wrong).
+% verified: https://api.openalex.org/works/doi:10.1109/TIFS.2015.2509912 (publisher abstract via
+%   OpenAlex index, re-checked 2026-10-22): Re-dtPECK -- conjunctive keyword search, designated
+%   tester, timed PRE; patients delegate search and decryption rights for a set period that then
+%   expires; resists keyword guessing; proven secure in the standard model; simulation results.
+%   Full text not opened. (OpenAlex year 2015 = online-first; Crossref issue date Apr. 2016 used.)
+@article{yang2016timing,
+  author  = {Yang Yang and Maode Ma},
+  title   = {Conjunctive Keyword Search With Designated Tester and Timing Enabled Proxy Re-Encryption Function for E-Health Clouds},
+  journal = {IEEE Transactions on Information Forensics and Security},
+  volume  = {11},
+  number  = {4},
+  pages   = {746--759},
+  year    = {2016},
+  doi     = {10.1109/TIFS.2015.2509912}
+}
+
+% ===================== Consent at the policy layer =====================
+
+% verified: https://arxiv.org/abs/2603.07004 (v1, 7 Mar 2026, cs.CR) + https://arxiv.org/html/2603.07004v1 (body)
+@misc{muslim2026consent,
+  author       = {Nasif Muslim and Jean-Charles Gr{\'e}goire},
+  title        = {An Extended Consent-Based Access Control Framework: Pre-Commit Validation and Emergency Access},
+  howpublished = {arXiv:2603.07004 [cs.CR]},
+  year         = {2026},
+  doi          = {10.48550/arXiv.2603.07004}
+}
+
+% verified: https://arxiv.org/abs/2511.17464 (v1, 21 Nov 2025, cs.CR) + https://arxiv.org/html/2511.17464v1 (body)
+% note: cite for signed (EIP-712), time-bounded, on-chain-audited grants with public-key
+%   wrapping. Revocation flips an on-chain flag (no re-encryption) -- NOT key rotation.
+% note: review metadata was wrong: it HAS emergency access (Sec. 5.8, two-physician co-signed
+%   grant, 2-hour expiry, on-chain event); review matrix marked break-glass as absent.
+@misc{romel2025patient,
+  author       = {Tanzim Hossain Romel and Kawshik Kumar Paul and Tanberul Islam Ruhan and Maisha Rahman Mim and Abu Sayed Md. Latiful Hoque},
+  title        = {A Patient-Centric Blockchain Framework for Secure Electronic Health Record Management: Decoupling Data Storage from Access Control},
+  howpublished = {arXiv:2511.17464 [cs.CR]},
+  year         = {2025},
+  doi          = {10.48550/arXiv.2511.17464}
+}
+
+% ===================== Foundational primitives =====================
+
+% verified: https://api.crossref.org/works/10.1145/359168.359176
+@article{shamir1979share,
+  author  = {Adi Shamir},
+  title   = {How to Share a Secret},
+  journal = {Communications of the ACM},
+  volume  = {22},
+  number  = {11},
+  pages   = {612--613},
+  year    = {1979},
+  doi     = {10.1145/359168.359176}
+}
+
+% verified: https://api.crossref.org/works/10.1109/SP.2007.11
+@inproceedings{bethencourt2007cpabe,
+  author    = {John Bethencourt and Amit Sahai and Brent Waters},
+  title     = {Ciphertext-Policy Attribute-Based Encryption},
+  booktitle = {Proc. IEEE Symposium on Security and Privacy (SP)},
+  pages     = {321--334},
+  year      = {2007},
+  doi       = {10.1109/SP.2007.11}
+}
+
+% verified: https://api.crossref.org/works/10.1145/1180405.1180417
+@inproceedings{curtmola2006sse,
+  author    = {Reza Curtmola and Juan Garay and Seny Kamara and Rafail Ostrovsky},
+  title     = {Searchable Symmetric Encryption: Improved Definitions and Efficient Constructions},
+  booktitle = {Proc. 13th ACM Conference on Computer and Communications Security (CCS)},
+  pages     = {79--88},
+  year      = {2006},
+  publisher = {ACM},
+  doi       = {10.1145/1180405.1180417}
+}
+

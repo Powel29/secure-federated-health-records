@@ -1,0 +1,93 @@
+\section{System Overview}\label{sec:overview}
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  font=\footnotesize,
+  >={Stealth[length=4pt,width=3.5pt]},
+  comp/.style={draw, rounded corners=1.5pt, align=center, inner sep=2pt,
+    minimum height=0.8cm, text width=#1},
+  comp/.default=2.1cm,
+  trusted/.style={fill=black!12},
+  keyedge/.style={->, line width=1.3pt},
+  aux/.style={->, black!55},
+  bnd/.style={draw, dashed, rounded corners=3pt, inner sep=2.5pt},
+]
+% row 0: outside the key path
+\node[comp=1.6cm] (br) at (0.85,0) {Browser};
+\node[comp]       (po) at (3.95,0) {Portals (Django)\\no subject keys};
+\node[comp]       (st) at (7.3,0) {Postgres store\\ciphertext, wrapped\\keys, index, log};
+% row 1: key holders
+\node[comp=1.6cm] (an) at (0.85,-1.6) {Authority net\\share $x{=}2$};
+\node[comp, trusted] (cu) at (3.95,-1.6) {Key Custodian\\all persona keys\\share $x{=}1$};
+\node[comp, trusted] (au) at (7.3,-1.6) {Audit service\\hash chain\\shares $x{=}3,4$};
+% row 2
+\node[comp=1.6cm] (am) at (0.85,-3.0) {Authority med};
+\node[comp]       (fa) at (3.95,-3.0) {Facility A\\threshold gate};
+\node[comp]       (fb) at (7.3,-3.0) {Facility B\\threshold gate};
+% trust boundaries
+\begin{scope}[on background layer]
+  \node[bnd, fit=(po)(st), label={[yshift=-1pt]above:{store data, identify users, decide no access}}] {};
+  \node[bnd, fit=(an)(am)] {};
+  \node[bnd, fit=(fa)(fb), label={[yshift=1pt]below:{facilities: hold no records}}] {};
+  \node[bnd, fit=(cu)] {};
+  \node[bnd, fit=(au)] {};
+\end{scope}
+% non-key traffic
+\draw[aux] (br) -- node[above] {HTTP} (po);
+\draw[aux] (po) -- node[above] {read} (st);
+\draw[aux] (po) -- (cu);
+\draw[aux] (fb) -- (au);
+% key path
+\draw[keyedge] (an) -- node[above] {$x{=}2$} (cu);
+\draw[keyedge] (au) -- node[above] {$x{=}3,4$} (cu);
+\draw[keyedge] (cu) -- (fa);
+\draw[keyedge] (cu.south east) -- (fb.north west);
+\end{tikzpicture}
+\caption{Simulated federation; dashed boxes are trust boundaries, shaded
+parties are trusted. Thick arrows carry emergency-key shares, sealed to a
+facility's gate; share~2 is used only if share~1 is missing. Thin arrows:
+portal to custodian by subject id, no keys; facility to audit, log append
+and, at rotation, the new sealed shares~3,4. Not drawn: portal-to-facility
+calls, rotation deposits to custodian and authority, Postgres, root CA.}
+% src: facts-F4#43, facts-F2#85, facts-F4#10, facts-F4#12, facts-F4#20, facts-F4#22, facts-F5#9, facts-F5#10
+\label{fig:components}
+\end{figure}
+
+The federation is simulated: two mock facilities, two attribute authorities,
+an audit service, a Key Custodian, a PostgreSQL store and one Django process
+serving the patient, clinician and admin portals run on one machine, as local
+processes or as Docker Compose containers on one bridge, under one
+self-signed PKI root that cross-certifies the facilities
+(Fig.~\ref{fig:components}). % src: facts-F4#1, facts-F4#5, facts-F4#27, facts-F4#43
+There is no HIE and no FHIR/HL7 interface, and all records are
+synthetic. % src: facts-F4#1, facts-F4#44, facts-F4#39
+
+\textbf{Components.} Facilities hold no records: they read ciphertext from the
+shared store and run the policy engine and threshold gate. % src: facts-F4#7
+This build chooses a weighted 3-of-4 split of each emergency key: $x{=}1$ to the custodian, $x{=}2$ to the patient's home authority
+(always \texttt{authority-net} here), $x{=}3,4$ to
+the audit service, so every set of three shares includes an audit
+share. % src: facts-F4#10, facts-F4#11, facts-F2#36
+
+\textbf{Trust boundaries.} Every service call carries a root-issued service
+certificate and a signed one-time request envelope, checked before any route
+code runs, and key-bearing facility routes admit only the custodian or
+bootstrap. % src: facts-F4#16, facts-F4#15
+Shares travel sealed to the facility's gate; the audit service releases its
+shares only after validating the assertion and committing a log entry
+(Section~\ref{sec:breakglass}). % src: facts-F4#12
+
+\textbf{What portals and Postgres may not do.} They store data and identify
+users but never decide access. % src: facts-F4#19
+The portal holds no subject key and sends every key-needing action to the
+custodian, so a portal account alone decrypts nothing; its database roles
+cannot write store tables, and its mirrored consent state is display data no
+read path consults. % src: facts-F4#20, facts-F4#21, facts-F4#22, facts-F4#23
+
+\textbf{Caveats.} Federation services connect to Postgres as the
+\texttt{postgres} superuser; only the portal is role-restricted. % src: facts-F4#26
+HTTP TLS certificates are self-signed and server-only, with no version or
+cipher suite pinned. % src: facts-F4#34
+Only the patient revokes in this build, so one who cannot sign has no
+revocation path. % src: facts-F4#41

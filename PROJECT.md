@@ -155,10 +155,11 @@ search.
    states at the policy layer. Not every transition is a rotation: Grant adds
    a key wrapping, while Revoke and expiry rotate.
 2. **Transparent-decryption-style log gating instantiated for federated
-   break-glass.** The audit service holds a share of the emergency key that
-   every break-glass needs. It releases that share only after validating a
-   signed, one-time Emergency Assertion bound to the record, and committing a
-   hash-chained entry (ADR-0067, ADR-0074).
+   break-glass.** The audit service holds two of the four shares of the
+   emergency key, and every three-share unlock needs at least one of them. It
+   releases them only after validating a signed, one-time Emergency Assertion
+   bound to the record, and committing a hash-chained entry (ADR-0067,
+   ADR-0089).
 3. **Emergency search derived from the emergency key**, so it ends with the
    emergency state at the expiry rotation (ADR-0069).
 4. **Evidence**: negative-security tests for C1–C11, and passive wire captures

@@ -1,0 +1,38 @@
+% Ciphertext expansion (W6). Data: paper/data/expansion.csv, written by
+% paper/data/make_data.py from the ciphertext_expansion rows of
+% bench/results/benchmark_results.csv.
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  scale only axis,
+  width=0.78\columnwidth,
+  height=2.3cm,
+  xmode=log, log basis x=2,
+  ymode=log,
+  xmin=40, xmax=26000,
+  ymin=0.05, ymax=50,
+  xtick={64,256,1024,4096,16384},
+  xticklabels={64,256,1\,Ki,4\,Ki,16\,Ki},
+  ytick={0.1,1,10},
+  yticklabels={0.1,1,10},
+  tick label style={font=\footnotesize},
+  label style={font=\footnotesize},
+  xlabel={Plaintext size (bytes)},
+  ylabel={Expansion (\%)},
+  grid=major,
+  major grid style={gray!30},
+]
+\addplot[mark=*, mark size=1.6pt, black]
+  table[col sep=comma, x=plaintext_bytes, y=expansion_percent]
+  {data/expansion.csv};
+\node[font=\footnotesize, anchor=south west, align=left]
+  at (axis cs:1500,4) {+16\,B at every size\\(GCM tag)};
+\end{axis}
+\end{tikzpicture}
+\caption{Payload ciphertext expansion, $100\cdot(|c|-|m|)/|m|$, for the
+AES-256-GCM record payload. The overhead is the constant 16-byte tag; the
+12-byte nonce, DEK wrappings, policy, shares and search index are not
+counted.}% src: facts-F7#33, facts-F7#34
+\label{fig:expansion}
+\end{figure}

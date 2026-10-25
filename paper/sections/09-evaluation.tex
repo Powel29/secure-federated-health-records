@@ -1,0 +1,72 @@
+\section{Implementation and Evaluation}\label{sec:eval}
+
+\textit{Implementation.} The prototype is written in Python~3.11.9 on pyca
+\texttt{cryptography}, with every \texttt{hazmat} import confined to
+\texttt{crypto\_core}; Shamir sharing, the ElGamal PRE and the policy tree
+are hand-rolled. % src: facts-F7#8, facts-F3#1, facts-F3#3
+The six federation services are FastAPI applications under uvicorn, the
+store is PostgreSQL~16, and one Django process serves the three
+portals. % src: facts-F4#1, facts-F4#3, facts-F4#4, facts-F4#5
+\texttt{src/} holds 97 Python files (16{,}450 non-blank
+lines). % src: facts-F7#38
+On the evaluated commit, \texttt{57a1a8c} (2026-10-21), the full suite, run against
+PostgreSQL, gave 1006 passed, 2 skipped and 0 failed; both skips test the
+missing-\texttt{dumpcap} path and skip by design when the tool is
+present. % src: facts-live#14, facts-live#15, facts-live#16
+In the claims run on that commit all 35 system-level tests passed, so every
+claim in Table~\ref{tab:claims} holds. % src: facts-live#12
+
+\textit{Method.} Each latency benchmark makes 5 untimed warm-up calls, then
+30 calls timed with \texttt{time.perf\_counter}; we report the median and
+the interpolated p95, with no outlier removal or CPU
+pinning. % src: facts-F7#13, facts-F7#14, facts-F7#15, facts-F7#16, facts-F7#17
+The machine in Table~\ref{tab:bench} comes from \texttt{environment.json},
+which records no commit or library versions; the result files are the ones
+committed at \texttt{57a1a8c}. % src: facts-F7#1, facts-F7#3, facts-F7#4, facts-F7#7, facts-F7#9
+Despite the label \texttt{local-processes}, the six services ran as uvicorn
+servers in threads of the benchmark's own Python process, shared with the
+client, with PostgreSQL~16 in Docker Desktop on Windows
+build~26300. % src: facts-F7#40, facts-F7#8, facts-F7#10, facts-F7#20
+
+The four cryptographic benchmarks run in-process, with no HTTP or
+database. % src: facts-F7#21
+\emph{Shamir combine (3-of-4)} times \texttt{combine\_shares} alone; it is
+not break-glass latency, which also validates the assertion, commits the
+audit entry and unwraps and delivers the DEK. % src: facts-F7#26
+\emph{DEK re-wrap} covers one DEK, not a sweep over
+records. % src: facts-F7#27, facts-F7#36
+\emph{Revocation} times the library call \texttt{revoke\_record\_access}
+without persistence, audit or HTTP; the deployed facility instead revokes
+through the full expiry rotation, which no benchmark
+times. % src: facts-F7#28, facts-F3#58, facts-F7#21, facts-F7#22, facts-F7#24
+\emph{PRE re-encrypt} is a subgroup check and one exponentiation in the 256-bit demonstration
+group, so it does not predict a production-size group, and no deployed path
+calls it. % src: facts-F7#29, facts-F3#21, facts-F3#44
+The two HTTP benchmarks send signed requests over plain HTTP on loopback,
+and each endpoint makes a nested signed call to the audit service, which
+writes to PostgreSQL, before replying, so their figures include transport, a
+second hop and a database write. % src: facts-F7#22, facts-F7#23
+They vary between runs (our task log, not re-run, records 405 then
+247\,ms on this machine), so we treat them as indicative
+only. % src: facts-F7#41, facts-F7#25
+\emph{Audit chain verification} reads the whole chain from PostgreSQL and
+checks every signature and link; the chain length was not
+recorded. % src: facts-F7#24, facts-F7#32
+
+\input{tables/bench}
+\input{figures/latency}
+\input{figures/expansion}
+
+\textit{Results.} All four in-process operations have medians below
+0.25\,ms and p95 values below 0.63\,ms
+(Table~\ref{tab:bench}, Fig.~\ref{fig:latency}). % src: facts-F7#26, facts-F7#27, facts-F7#28, facts-F7#29
+Discovery and emergency search take about 240--250\,ms at the median, a
+figure that, given the nested audit call and the spread above, describes
+this deployment's request path rather than the
+cryptography. % src: facts-F7#30, facts-F7#31, facts-F7#23, facts-F7#25
+Payload ciphertext expansion (Fig.~\ref{fig:expansion}) is a constant
+16 bytes, the GCM tag: 25\% at 64\,B and under 0.1\% at
+16\,KiB. % src: facts-F7#33, facts-F7#34
+It excludes everything stored beside the payload: the 12-byte nonce, two
+48-byte DEK wrappings, the compiled policy, a 66-byte share per $x$ and
+the search index. % src: facts-F7#33, facts-F3#5, facts-F3#29, facts-F3#30, facts-F2#39

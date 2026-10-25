@@ -4,7 +4,7 @@
 **Covers:** deliverable D3 (`PROJECT.md` §2)
 **Skill:** `.claude/skills/ieee-paper/` (every drafting and verifying agent
 reads it)
-**Decision:** ADR-0087 (IEEEtran LaTeX, built locally with Tectonic); ADR-0088 (novelty restated as a combination)
+**Decision:** ADR-0087 (IEEEtran LaTeX, built locally with Tectonic); ADR-0088 (novelty restated as a combination); ADR-0089 (weighted 3-of-4 break-glass split)
 
 ## Readiness: what was fixed on 2026-10-21
 
@@ -17,6 +17,7 @@ reads it)
 | Wire evidence (course module) | The saved `plain.pcap` had no Postgres traffic, so check 2 failed in the live test | Plain and TLS captures re-recorded (TLS against the TLS-only store). `wire.analyze_traffic`: **checks 0–4 pass**, audit COMMIT 4.62 ms before the release. `bench/results/p55_*` regenerated |
 | Benchmarks | 2026-10-19 run, AMD 16-core, before the ADR-0086 dependency bump | Re-run on current code: Intel 12-core, Postgres in Docker Desktop. Crypto figures unchanged. HTTP is ~405 ms median against ~50 ms before, which is the DB path on this machine (~11 ms per new connection), not the code. Recorded in `WORKFLOW.md` P5-2 |
 | Limitations count | `WORKFLOW.md` said "four caveats" | Points to `PROJECT.md` §5 (thirteen since ADR-0088) |
+| Break-glass split | 2-of-3 with share 2 discarded, so 2-of-2 in practice (ADR-0074) | Weighted 3-of-4 (ADR-0089, PR #54): custodian x=1, home authority x=2, audit service x=3,4; every unlock set holds an audit share. The `threshold_reconstruction` benchmark now uses `THRESHOLD`/`TOTAL_SHARES` and was re-run |
 | Novelty claim | `PROJECT.md` §4 claimed "no prior work makes logging a cryptographic precondition", and that 2511.17464 does rotation | Restated as a combination (ADR-0088) after the literature review, filed at `docs/review/2026-10-21-novelty-publishability-review.md` with a status note on its outdated findings. New caveat §5 item 13 (trusted audit service). The review's bibliography feeds F8 as leads to verify |
 
 ## Still needed before running the prompt
@@ -27,9 +28,9 @@ reads it)
    errors. The first attempt failed after 34 minutes on network errors to
    Tectonic's bundle server; the retry succeeded. On another machine, the
    first build fetches packages again.
-2. **Pick the benchmark run the paper quotes.** Either the fresh 2026-10-21
-   run (the working tree) or the 2026-10-19 run (in git). The paper names its
-   machine either way.
+2. ~~Pick the benchmark run the paper quotes~~: the 2026-10-21 re-run after
+   ADR-0089 (in git), the only one that times the 3-of-4 combine. The paper
+   names its machine.
 3. **P5-3 search leakage** (`bench/results/p53_*`) predates the ADR-0086 bump
    and wasn't re-captured. It needs the two `--search-workload` captures and an
    update to `p53_search_leakage.md`. Otherwise the paper quotes it with its
@@ -148,9 +149,11 @@ F1 lifecycle (skill: crypto-implementation) — ARCHITECTURE.md §2, §5;
    handling; expiry and full rotation.
 F2 breakglass (crypto-implementation) — ARCHITECTURE.md §5 (cross-facility
    break-glass), §8; src/breakglass/*, src/audit/*, src/shamir/*; ADR-0032–0035,
-   0044, 0049, 0056, 0057, 0063, 0065–0068, 0074, 0079, 0082, 0083. Extract:
-   assertion fields and validation, replay protection, the commit-then-release
-   order, share holders (2-of-3 split, 2-of-2 in practice), time limits.
+   0044, 0049, 0056, 0057, 0063, 0065–0068, 0079, 0082, 0083, 0089 (0074 is
+   superseded by 0089). Extract: assertion fields and validation, replay
+   protection, the commit-then-release order, share holders (weighted 3-of-4:
+   custodian x=1, home authority x=2, audit service x=3,4), the home-authority
+   fallback and what it does not cover, time limits.
 F3 crypto (crypto-implementation) — ARCHITECTURE.md §1, §3; src/crypto_core,
    src/policy, src/records, src/pre, src/search; ADR-0001, 0002, 0012, 0022,
    0023, 0026, 0027, 0036, 0076, 0077, 0080. Extract: primitives, sizes and
@@ -225,7 +228,7 @@ W2 III Threat Model and Goals + IV System Overview (F4, F5) — 1 p; TikZ
 W3 V Key-Lifecycle State Machine (F1, F3) — 1.5 pp; TikZ state diagram and the
    transition table
 W4 VI Break-Glass Protocol (F2, F3) — 1.25 pp; TikZ message sequence, the
-   2-of-3 gate, the hash chain
+   3-of-4 gate, the hash chain
 W5 VII Security Analysis (F5, live) + VIII Traffic Analysis (F6) — 1.5 pp; the
    C1–C11 table captioned with its date and sha; the wire-check table; PRE
    marked unproven

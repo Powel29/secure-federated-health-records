@@ -35,13 +35,13 @@
   <g font-size="12.5" fill="#1a1a1a">
     <text x="240" y="340" text-anchor="middle" font-weight="700">unlock</text>
     <text x="240" y="357" text-anchor="middle">assertion valid,</text>
-    <text x="240" y="374" text-anchor="middle">2-of-3 shares met</text>
+    <text x="240" y="374" text-anchor="middle">3-of-4 shares met</text>
     <text x="640" y="340" text-anchor="middle" font-weight="700">expires_at</text>
     <text x="640" y="357" text-anchor="middle">timer signs</text>
     <text x="640" y="374" text-anchor="middle">EMERGENCY_OPEN &#8594; EXPIRED</text>
-    <text x="800" y="340" text-anchor="middle" font-weight="700">re-key done</text>
+    <text x="800" y="340" text-anchor="middle" font-weight="700">full rotation done</text>
     <text x="800" y="357" text-anchor="middle">timer signs</text>
-    <text x="800" y="374" text-anchor="middle">EXPIRED &#8594; GRANTED</text>
+    <text x="800" y="374" text-anchor="middle">EXPIRED &#8594; prior state</text>
   </g>
 
   <!-- token lane -->
@@ -54,5 +54,5 @@
   <text x="140" y="470" text-anchor="middle" font-size="13" fill="#546e7a">no emergency key, no token</text>
 
   <text x="40" y="528" font-size="12.5" fill="#37474f">The store holds only the coded index, so it cannot tell which term a token stands for. On rotation the index is rebuilt under the new key (rekey_search_index).</text>
-  <text x="40" y="546" font-size="12.5" fill="#546e7a">Known gap: on the emergency path the pre-expiry shares can still re-derive the old tokens until the emergency key itself is replaced (review finding F9).</text>
+  <text x="40" y="546" font-size="12.5" fill="#546e7a">Closed (claim C4): expiry is a full rotation (new emergency key, shares and index), so pre-expiry shares open nothing and old tokens match nothing.</text>
 </svg>

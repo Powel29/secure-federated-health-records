@@ -10,7 +10,7 @@ Order: Powel, Ojas, Avaneeth, Nandini (about 6 minutes each, 4 topics of about
 | 1 | Key-lifecycle state machine | Identity and credentials | Record protection (AES, DEK, wrapping) | Federated discovery and identification |
 | 2 | Revocation by key rotation | Audit hash chain and commit-before-release | Emergency Assertion, patient binding, replay protection | Emergency-only searchable encryption |
 | 3 | Access structure: policy tree and Shamir | Proxy re-encryption and key delivery | Consent and the patient side | Time-boxed expiry and forced re-key |
-| 4 | Break-glass gate (2-of-3) | Deployment, threat model, admin/audit portal | Thin API, normal read, portal boundary | Traffic analysis |
+| 4 | Break-glass gate (weighted 3-of-4) | Deployment, threat model, admin/audit portal | Thin API, normal read, portal boundary | Traffic analysis |
 
 ## Who explains the major concepts
 
@@ -29,7 +29,7 @@ Order: Powel, Ojas, Avaneeth, Nandini (about 6 minutes each, 4 topics of about
 | Credential lifecycle | Ojas | `src/authority/issuance.py` |
 | Shamir secret sharing | Powel | `src/shamir/split.py` |
 | Policy tree | Powel | `src/policy/engine.py` |
-| 2-of-3 threshold, emergency key | Powel | `src/breakglass/emergency_key.py`, `gate.py` |
+| Weighted 3-of-4 threshold, emergency key | Powel | `src/breakglass/emergency_key.py`, `gate.py` |
 | Key rotation, forward secrecy | Powel | `src/records/revocation.py`: `revoke_record_access` |
 | HKDF and search tokens | Nandini | `src/search/service.py`: `derive_search_token` |
 | Time-boxed expiry | Nandini | `src/lifecycle/expiry.py` |
@@ -38,31 +38,33 @@ Order: Powel, Ojas, Avaneeth, Nandini (about 6 minutes each, 4 topics of about
 
 ## Powel
 
-1. **Key-lifecycle state machine.** Granted, Revoked, Emergency-open, Expired; legal
+1. **Key-lifecycle state machine.** Granted, Revoked, Emergency_Open, Expired; legal
    arrows; illegal arrows rejected; each move is a signed event with a single-use id.
    *Code:* `src/lifecycle/state_machine.py`: `validate_transition`,
    `create_transition_event`, `verify_transition_event`,
    `LifecycleStateMachine.apply_transition`.
 2. **Revocation by key rotation.** Decrypt, new key, re-encrypt, rebuild wrappings
-   without the revoked party. Limit: forward-only.
+   without the revoked party; expiry runs the same full rotation. Limit: forward-only
+   and patient-only.
    *Code:* `src/records/revocation.py`: `revoke_record_access`.
 3. **Access structure.** Policy tree (AND needs every child, OR needs any one) over
    Shamir sharing. Limit: not collusion-resistant.
    *Code:* `src/shamir/split.py`: `split_secret`, `combine_shares`;
    `src/policy/engine.py`: `compile_policy`, `reconstruct_root_secret`,
    `unwrap_dek_via_policy`.
-4. **Break-glass gate.** Emergency key split 2-of-3 (clinician, home authority,
-   audit service); any two rebuild it; the gate refuses fewer than two.
+4. **Break-glass gate.** Emergency key split weighted 3-of-4: custodian x=1, home
+   authority x=2, audit service x=3 and 4; any three distinct x rebuild it, so every
+   opening includes an audit share; the gate refuses fewer than three.
    *Code:* `src/breakglass/emergency_key.py`: `generate_emergency_key`,
    `split_emergency_key`; `src/breakglass/gate.py`: `open_emergency_access`.
 
-**Diagrams:** UML state diagram (main), policy tree for `rec-002`, 2-of-3 diagram.
+**Diagrams:** UML state diagram (main; **seven** arrows), policy tree for `rec-002`, 3-of-4 diagram.
 
 **Demo:** as `david`, `house` refused on `rec-002` and `cameron` succeeds, then
 revoke and the read fails. In a terminal: `python -m tests.security.claims --table`
 and `python -m tests.security.mutations`.
 
-**Rubric slides:** objectives and scope; test-case table (11 claims);
+**Rubric slides:** objectives and scope; test-case table (11 claims, all hold);
 bugs-found-and-fixed; deck assembly and timekeeping.
 
 ---
@@ -150,12 +152,12 @@ a request; wrong-patient break-glass refused with 403.
    session key; index re-keyed on rotation; leakage measured.
    *Code:* `src/search/service.py`: `derive_search_token`, `index_search_term`,
    `search_records_with_emergency`, `rekey_search_index`.
-3. **Time-boxed expiry and forced re-key.** A timer signs Emergency-open to Expired,
+3. **Time-boxed expiry and forced re-key.** A timer signs Emergency_Open to Expired,
    re-keys the record, signs Expired to Granted; search tokens go dead.
    *Code:* `src/lifecycle/expiry.py`: `EmergencyExpiryManager.expire_session`.
 4. **Traffic analysis.** Plain HTTP captured on loopback; PyShark analysers assert
    four wire properties; TLS profile; measured search leakage.
-   Status: analyser built (ADR-0045), not yet run on real captures.
+   Status: analyser built (ADR-0045) and **run on real plain and TLS captures**; all checks pass.
    *Code:* `wire/capture.py`, `wire/tls.py`, `wire/analyze_traffic.py`,
    `wire/analyze_search_leakage.py`; `bench/results/p53_search_leakage.json`.
 
@@ -177,7 +179,7 @@ and let it expire.
 |---|---|
 | 1 | `house`: Identify patient, `Miller`, DOB `11/20/1965`, one match |
 | 2 | Run federated discovery, pick `rec-002`, choose a reason code |
-| 3 | Declare: case page with the three piece cards and countdown |
+| 3 | Declare: case page with the three share cards (share 1 presented, share 2 not requested, shares 3 and 4 released after seq N) and a countdown |
 | 4 | Emergency search "glucose": TOKEN LIVE |
 | 5 | Window ends: TOKEN DEAD, case reads expired |
 
@@ -195,6 +197,6 @@ The presentation is live. If a step fails, show that step's screenshot slide.
 | 3. Status | Modules, GitHub, CI, ADR log | Ojas |
 | 4. Testing (2) | Test-case table | Powel |
 | 4. Results and baseline | Benchmark charts, baseline, analysis | Nandini |
-| 4. Bugs discussed | Three bugs found, fixed, tested | Powel |
+| 4. Bugs discussed | Bugs found by our own driver (3) and by per-container runs (1), fixed and tested | Powel |
 | 4. Screenshots | Refused read, break-glass case, chain PASS | Avaneeth |
 | 5. Presentation (1) | Order, timing, Q&A | All four; Powel keeps time |

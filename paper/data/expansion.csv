@@ -1,0 +1,6 @@
+plaintext_bytes,ciphertext_bytes,expansion_percent
+64,80,25.0
+256,272,6.25
+1024,1040,1.5625
+4096,4112,0.390625
+16384,16400,0.09765625

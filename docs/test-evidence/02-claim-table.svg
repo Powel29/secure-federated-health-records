@@ -23,7 +23,7 @@
 <rect x="30" y="204" width="1180" height="54" fill="#f6faf7" stroke="#cfd8dc" stroke-width="1"/>
 <text x="40" y="236" font-size="16" font-weight="700" fill="#1a1a1a">C2</text>
 <text x="110" y="228" font-size="13.5" fill="#1a1a1a">No committed log entry, no key (fails closed)</text>
-<text x="470" y="228" font-size="13" fill="#37474f">share 3 not released when the log commit fails</text>
+<text x="470" y="228" font-size="13" fill="#37474f">shares 3 and 4 not released when the log commit fails</text>
 <rect x="840" y="217" width="100" height="28" rx="14" fill="#2e7d32"/>
 <text x="890" y="236" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">HOLDS</text>
 <rect x="30" y="258" width="1180" height="54" fill="#fffaf2" stroke="#cfd8dc" stroke-width="1"/>

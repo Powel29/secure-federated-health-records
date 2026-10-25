@@ -1,0 +1,57 @@
+% Break-glass message sequence (W4). Every arrow and box is a step in
+% facts-F2 section G (fact 60) and the facts tagged per line below.
+\begin{figure}[!t]
+\centering
+\begin{tikzpicture}[
+  font=\footnotesize,
+  >={Stealth[length=4pt]},
+  head/.style={draw, fill=white, align=center, inner sep=2pt, minimum height=0.75cm},
+  act/.style={draw, fill=gray!12, align=center, inner sep=2pt, rounded corners=1pt},
+  msg/.style={->, thick},
+  ret/.style={->, dashed},
+  opt/.style={->, densely dotted, thick},
+  lbl/.style={above, inner sep=1pt, fill=white},
+  num/.style={font=\footnotesize\bfseries}
+]
+% lifelines
+\def\xP{0} \def\xC{1.85} \def\xH{3.7} \def\xA{5.55} \def\xF{7.4}
+\def\ybot{-11.05}
+\foreach \x/\t in {\xP/{Clinician\\portal}, \xC/{Custodian}, \xH/{Home\\authority}, \xA/{Audit\\service}, \xF/{Facility\\(gate)}}{
+  \draw[gray] (\x,-0.4) -- (\x,\ybot);
+  \node[head] at (\x,0) {\t};
+}
+% 1  portal -> custodian (facts-F2#89)
+\draw[msg] (\xP,-0.85) -- node[lbl]{\textbf{1} declare} (\xC,-0.85);
+% custodian checks state and patient, signs the assertion (facts-F2#5, F2#17, F2#92)
+\node[act, text width=2.0cm] at (\xC,-1.45) {check state, patient; sign $A$};
+% 2  gate share key (facts-F2#60, F2#42)
+\draw[msg] (\xC,-2.1) -- node[lbl]{\textbf{2} get gate share key} (\xF,-2.1);
+\draw[ret] (\xF,-2.45) -- node[lbl]{signed key statement} (\xC,-2.45);
+% 3  fallback: home authority, only if share 1 is lost (facts-F2#60-62)
+\draw[opt] (\xC,-3.05) -- node[lbl]{\textbf{3} $A$} (\xH,-3.05);
+\draw[ret] (\xH,-3.4) -- node[lbl]{sealed $s_2$} (\xC,-3.4);
+% 4  audit release (facts-F2#50-53)
+\draw[msg] (\xC,-4.0) -- node[lbl]{\textbf{4} $A$, gate key} (\xA,-4.0);
+\node[act, text width=2.35cm] at (\xA,-4.85) {validate $A$;\\ consume id;\\ \textbf{commit} entry $e_n$;\\ seal $s_3,s_4$};
+\draw[ret] (\xA,-5.9) -- node[lbl]{sealed $s_3,s_4$ + $e_n$} (\xC,-5.9);
+% custodian verifies e_n, signs the transition (facts-F2#55, F2#60)
+\node[act, text width=2.45cm] at (\xC,-6.4) {verify $e_n$; sign\\ $\to$\textsc{Emergency\_Open}};
+% 5  present to the facility (facts-F2#60)
+\draw[msg] (\xC,-7.2) -- node[lbl]{\textbf{5} $A$, cert, 3 sealed shares, $pk$, event} (\xF,-7.2);
+% facility path: unseal, then validate (facts-F2#93, F2#67, F2#65)
+\node[act, text width=2.25cm, anchor=north east] at (\xF+0.55,-7.4) {unseal shares; validate $A$; bind patient; set state; \textbf{gate} 3/4; unwrap DEK};
+% 6  second log-before-release (facts-F2#57)
+\draw[msg] (\xF,-9.6) -- node[lbl]{\textbf{6} log rewrap} (\xA,-9.6);
+\draw[ret] (\xA,-9.9) -- (\xF,-9.9);
+% 7  KEM delivery to the clinician's ElGamal key (facts-F2#65, F2#90)
+\draw[msg] (\xF,-10.35) -- node[lbl]{\textbf{7} KEM$_{pk}$(DEK)} (\xC,-10.35);
+\draw[msg] (\xC,-10.8) -- node[lbl]{\textbf{8} record} (\xP,-10.8);
+\end{tikzpicture}
+\caption{Cross-facility break-glass. $A$ is the Emergency Assertion, signed in
+the custodian with the clinician's key; $s_i$ is the share at $x=i$. Step~3
+(dotted) runs only when share~1 is lost. The audit service commits its entry
+before it seals and returns shares 3 and 4 (step 4), and the facility logs
+the re-wrap before delivering the DEK (step 6).}
+% src: facts-F2#5, facts-F2#17, facts-F2#42, facts-F2#50, facts-F2#55, facts-F2#57, facts-F2#60, facts-F2#61, facts-F2#62, facts-F2#65, facts-F2#67, facts-F2#89, facts-F2#90, facts-F2#92, facts-F2#93
+\label{fig:sequence}
+\end{figure}

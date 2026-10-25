@@ -1,0 +1,49 @@
+% Latency dot plot (W6). Data: paper/data/latency.csv, written by
+% paper/data/make_data.py from bench/results/benchmark_summary.csv.
+% The y tick labels follow the row order of latency.csv.
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  scale only axis,
+  width=0.50\columnwidth,
+  height=3.2cm,
+  xmode=log,
+  xmin=0.004, xmax=1000,
+  ymin=-0.6, ymax=6.6,
+  y dir=reverse,
+  ytick={0,1,2,3,4,5,6},
+  yticklabels={Shamir combine (3-of-4),
+               DEK re-wrap (one DEK),
+               Revocation (library call),
+               PRE re-encrypt (demo group),
+               Cross-facility discovery,
+               Emergency search,
+               Audit chain verification},
+  tick label style={font=\footnotesize},
+  label style={font=\footnotesize},
+  xlabel={Latency (ms, log scale)},
+  xmajorgrids,
+  major grid style={gray!30},
+  legend style={font=\footnotesize, at={(0.98,0.97)}, anchor=north east,
+    draw=gray!50, inner sep=1pt},
+  legend cell align=left,
+]
+\addplot[only marks, mark=*, mark size=1.8pt, black,
+  error bars/.cd, x dir=plus, x explicit, error mark=none,
+  error bar style={gray}]
+  table[col sep=comma, x=median_ms, y expr=\coordindex,
+        x error expr=\thisrow{p95_ms}-\thisrow{median_ms}]
+  {data/latency.csv};
+\addplot[only marks, mark=|, mark size=3pt, thick, black]
+  table[col sep=comma, x=p95_ms, y expr=\coordindex]
+  {data/latency.csv};
+\legend{median, p95}
+\end{axis}
+\end{tikzpicture}
+\caption{Median (dot) and p95 (bar) latency per operation, $n=30$ after 5
+warm-up calls; same run as Table~\ref{tab:bench}. The two HTTP operations
+include transport, a nested signed call to the audit service and a
+PostgreSQL write.}% src: facts-F7#14, facts-F7#15, facts-F7#22, facts-F7#23
+\label{fig:latency}
+\end{figure}

@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 660" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#37474f"/>
+    </marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2e7d32"/>
+    </marker>
+  </defs>
+  <rect width="980" height="660" fill="#ffffff"/>
+  <text x="490" y="36" text-anchor="middle" font-size="22" font-weight="700" fill="#1a1a1a">Break-glass weighted 3-of-4 gate (Shamir)</text>
+  <text x="490" y="58" text-anchor="middle" font-size="13" fill="#546e7a">src/shamir &#183; src/breakglass &#183; GF(2^256+297) &#183; any three distinct x rebuild the emergency key, two points reveal nothing</text>
+
+  <!-- shares -->
+  <g stroke-width="2.5">
+    <rect x="40" y="90" width="270" height="110" rx="12" fill="#e3f2fd" stroke="#1565c0"/>
+    <rect x="40" y="215" width="270" height="110" rx="12" fill="#f3f3f3" stroke="#90a4ae" stroke-dasharray="7 5"/>
+    <rect x="40" y="340" width="270" height="185" rx="12" fill="#fff4e0" stroke="#ef6c00"/>
+  </g>
+  <g fill="#1a1a1a">
+    <text x="58" y="118" font-size="17" font-weight="700">Share x = 1</text>
+    <text x="58" y="140" font-size="13">Key Custodian (clinician's key agent)</text>
+    <text x="58" y="158" font-size="12" fill="#546e7a">kept in process memory;</text>
+    <text x="58" y="175" font-size="12" fill="#546e7a">presented against a valid assertion</text>
+
+    <text x="58" y="243" font-size="17" font-weight="700" fill="#546e7a">Share x = 2</text>
+    <text x="58" y="265" font-size="13" fill="#546e7a">Patient's home authority</text>
+    <text x="58" y="283" font-size="12" fill="#546e7a">used only if share 1 is lost;</text>
+    <text x="58" y="300" font-size="12" fill="#546e7a">validates the assertion itself, logs nothing</text>
+
+    <text x="58" y="368" font-size="17" font-weight="700">Shares x = 3 and 4</text>
+    <text x="58" y="390" font-size="13">Audit service (two points)</text>
+    <text x="58" y="418" font-size="12" fill="#c62828" font-weight="700">1. validate the assertion</text>
+    <text x="58" y="436" font-size="12" fill="#c62828" font-weight="700">2. WRITE the log entry, COMMIT</text>
+    <text x="58" y="454" font-size="12" fill="#c62828" font-weight="700">3. only then seal and return 3 and 4 together</text>
+    <text x="58" y="480" font-size="12" fill="#546e7a">commit fails &#8594; HTTP 503, no share</text>
+    <text x="58" y="498" font-size="12" fill="#546e7a">every set of three contains an audit share</text>
+  </g>
+
+  <!-- arrows to combine -->
+  <g fill="none" stroke-width="2.6">
+    <path d="M310,145 C400,145 430,260 520,275" stroke="#2e7d32" marker-end="url(#ag)"/>
+    <path d="M310,430 C400,430 430,330 520,320" stroke="#2e7d32" marker-end="url(#ag)"/>
+    <path d="M310,270 H380" stroke="#90a4ae" stroke-dasharray="7 5"/>
+  </g>
+  <text x="440" y="236" text-anchor="middle" font-size="11.5" fill="#546e7a">(or share 2 in place of share 1)</text>
+
+  <!-- combine -->
+  <rect x="520" y="245" width="190" height="100" rx="14" fill="#e6f4ea" stroke="#2e7d32" stroke-width="2.5"/>
+  <text x="615" y="282" text-anchor="middle" font-size="16" font-weight="700" fill="#1b5e20">combine_shares</text>
+  <text x="615" y="304" text-anchor="middle" font-size="13">3 distinct x</text>
+  <text x="615" y="324" text-anchor="middle" font-size="13">&#8594; emergency key K_E</text>
+  <path d="M710,295 H770" stroke="#37474f" stroke-width="2.6" fill="none" marker-end="url(#ar)"/>
+  <rect x="772" y="235" width="180" height="120" rx="14" fill="#fff4e0" stroke="#ef6c00" stroke-width="2.5"/>
+  <text x="862" y="268" text-anchor="middle" font-size="15" font-weight="700">EMERGENCY_OPEN</text>
+  <text x="862" y="290" text-anchor="middle" font-size="12">DEK unwrapped, delivered</text>
+  <text x="862" y="307" text-anchor="middle" font-size="12">to the clinician by a KEM</text>
+  <text x="862" y="328" text-anchor="middle" font-size="12" fill="#546e7a">no key is rotated</text>
+
+  <!-- combinations -->
+  <g>
+    <rect x="360" y="380" width="592" height="160" rx="10" fill="#fafafa" stroke="#b0bec5" stroke-width="1.5"/>
+    <text x="376" y="404" font-size="14" font-weight="700" fill="#1a1a1a">Who can open (points held, need 3)</text>
+    <g font-size="13" fill="#37474f">
+      <text x="376" y="430">Custodian alone / home authority alone</text><text x="760" y="430">1 point</text><text x="860" y="430" fill="#c62828" font-weight="700">no</text>
+      <text x="376" y="452">Audit service alone</text><text x="760" y="452">2 points</text><text x="860" y="452" fill="#c62828" font-weight="700">no (claim C3)</text>
+      <text x="376" y="474">Custodian + home authority</text><text x="760" y="474">2 points</text><text x="860" y="474" fill="#c62828" font-weight="700">no, no audit entry</text>
+      <text x="376" y="496">Audit + custodian</text><text x="760" y="496">3 points</text><text x="860" y="496" fill="#2e7d32" font-weight="700">opens</text>
+      <text x="376" y="518">Audit + home authority</text><text x="760" y="518">3 points</text><text x="860" y="518" fill="#2e7d32" font-weight="700">opens (fallback)</text>
+    </g>
+  </g>
+
+  <!-- preconditions -->
+  <g>
+    <rect x="40" y="555" width="912" height="80" rx="10" fill="#fafafa" stroke="#b0bec5" stroke-width="1.5"/>
+    <text x="56" y="578" font-size="13" font-weight="700" fill="#1a1a1a">Also required</text>
+    <text x="56" y="598" font-size="12.5" fill="#37474f">&#8226; Signed, one-time Emergency Assertion (&#8804; 15 min), validated by the facility, audit service and home authority; the facility checks the record belongs to its patient.</text>
+    <text x="56" y="616" font-size="12.5" fill="#37474f">&#8226; The gate checks only that three distinct x are present: that every set holds an audit share follows from share placement, not from a gate check.</text>
+    <text x="56" y="630" font-size="11" fill="#546e7a">Shares travel sealed to the gate (KEM, 256-bit demonstration group). Missing, short or garbage shares: raise, never degrade.</text>
+  </g>
+</svg>

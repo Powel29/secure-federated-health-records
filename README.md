@@ -8,6 +8,43 @@ Start with [CLAUDE.md](CLAUDE.md), which routes to the four project documents:
 [CONVENTIONS.md](CONVENTIONS.md) (code rules), [WORKFLOW.md](WORKFLOW.md)
 (who does what, when).
 
+## What this is
+
+Hospitals keep records encrypted, but an unconscious patient at a hospital that has
+never seen them cannot give consent. Most systems answer with a break-glass button
+and a promise to log it later. Here the **log is a precondition of the key**:
+
+- Each record has its own data key (DEK). A record's **emergency key** is split with
+  Shamir **3-of-4**: the custodian holds share 1, the patient's home authority share
+  2, and the **audit service shares 3 and 4**, so every opening needs the audit
+  service. It releases its shares only after validating a signed, one-time
+  **Emergency Assertion** and **committing a hash-chained log entry**.
+- **Revocation, break-glass and expiry are signed, logged transitions of one
+  four-state key-lifecycle machine.** Revocation and expiry fully re-key the record;
+  opening break-glass rotates nothing. Consent is a patient-signed grant checked at
+  read time, separate from the state.
+- **Emergency search** derives from the emergency key and ends at the expiry rotation.
+- The federation is **simulated on one machine with synthetic data** (two facilities,
+  two attribute authorities, audit service, key custodian, PostgreSQL, three Django
+  portals).
+
+Log-gated decryption is prior art (accountable/transparent decryption); our claim is
+the **combination**, implemented and tested. We are weaker than that literature on log
+strength (a trusted hash chain, no proofs) and have no formal model.
+
+**Where it stands** (IEEE paper, commit `57a1a8c`, live run 2026-10-21): all 11 security
+claims C1 to C11 hold (35 of 35 system-level tests); full suite 1006 passed, 2 skipped,
+0 failed; PyShark wire checks pass on real plain and TLS captures. Thirteen limitations
+are listed in the paper and in `docs/explainers/07-honest-limits-and-what-we-found.md`.
+
+| Read | Where |
+|---|---|
+| The paper | `paper/build/main.pdf` (sources in `paper/`) |
+| Plain-language explainers and viva prep | [docs/explainers/](docs/explainers/README.md) |
+| Diagrams | `docs/diagrams/` |
+| Security claims table | `docs/test-evidence/claim-table.md` |
+| Decision log | [docs/adr/README.md](docs/adr/README.md) |
+
 This README is the **complete install-to-running guide**: prerequisites, the
 Python environment, the Docker store, the test suite, the federation, the web portals,
 and the Wireshark traffic-capture verification. Deep detail for the federation
@@ -140,10 +177,11 @@ pytest tests/ -ra -q
 (`CREATE DATABASE` fails harmlessly with "already exists" on a second run.) This
 runs the real read/write round-trips, the standalone-federation demo
 integration, and the cross-facility break-glass end-to-end test over real
-sockets. Expected: the whole suite passes (on 2026-10-19: **950 passed** with
-Postgres; `tests/wire/test_live_capture.py` also runs once `wire/captures/`
-holds fresh captures, and the two missing-`dumpcap` tests skip when Wireshark
-is installed).
+sockets. Expected: the whole suite passes (on 2026-10-21 at `57a1a8c`: **1006
+passed, 2 skipped, 0 failed** with Postgres; `tests/wire/test_live_capture.py` also
+runs once `wire/captures/` holds fresh captures, and the two missing-`dumpcap` tests
+skip by design when Wireshark is installed). The claims table is
+`python -m tests.security.claims --table` (all 11 hold).
 
 The Django portals have their own suite (SQLite, no services), see
 [portal/README.md](portal/README.md):
@@ -171,7 +209,7 @@ docker compose -f deploy/docker-compose.yml logs -f bootstrap
 ```
 
 Compose runs migrations and bootstrap (seven steps, audit chain verified from
-genesis), serves the six roles at `8001/8002/8010/8011/8020/8030`, and starts
+genesis; the emergency window defaults to 4 h, `EMERGENCY_DURATION_SECONDS`), serves the six roles at `8001/8002/8010/8011/8020/8030`, and starts
 the three portals at **http://127.0.0.1:8000/**. All published ports bind to
 loopback. It is ready when the log prints `federation is up.` and the
 `bootstrap` container has exited 0. Check with
@@ -268,8 +306,10 @@ traffic and asserts wire-level properties. Needs `tshark`/`dumpcap` on `PATH`
 (step 0) and, on Windows, the Npcap loopback adapter. **Capture only our own
 loopback federation — never a shared or third-party network** (CLAUDE.md).
 
-Generate the local TLS server certs (for the `capture-tls` profile; written to
-the git-ignored `wire/certs/`):
+The plain capture is the **positive control**: it exposes record plaintext and keys
+(proving the detector fires) and is the only one where the database COMMIT is visible.
+The claim "no plaintext on the wire" is made for the **TLS** profile only. Generate the
+local TLS server certs (written to the git-ignored `wire/certs/`):
 
 ```bash
 python -m wire.tls
@@ -301,7 +341,9 @@ python -m wire.analyze_traffic --captures wire/captures
 > adapter explicitly, e.g. `--interface "\Device\NPF_Loopback"`. List adapters
 > with `tshark -D`.
 
-Done when both modes produce a capture file and the analyzer's checks pass.
+Done when both modes produce a capture file and the analyzer's checks pass. The
+paper's results (2026-10-21): 0 of 13 canaries visible under TLS, 6 of 13 on the plain
+control, and the audit `COMMIT` on the wire 1.35 ms before the release response.
 
 ---
 

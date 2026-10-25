@@ -33,6 +33,7 @@ import pandas as pd
 import psycopg
 from api.share_transport import fetch_share_recipient, sealed_json
 from audit.chain import verify_full_chain
+from breakglass.emergency_key import THRESHOLD, TOTAL_SHARES
 from contracts.enums import LifecycleState, ReasonCode
 from crypto_core import (
     certificate_from_pem,
@@ -159,11 +160,12 @@ def environment(deployment_path: str) -> dict[str, object]:
 def benchmark_threshold(iterations: int) -> Row:
     secret = b"benchmark-secret-for-phase5-task2"
 
-    shares = split_secret(secret, k=2, n=3)
-    threshold_shares = shares[:2]
+    # The deployed access structure (ADR-0089), not a hard-coded k and n.
+    shares = split_secret(secret, k=THRESHOLD, n=TOTAL_SHARES)
+    threshold_shares = shares[:THRESHOLD]
 
     def operation() -> None:
-        recovered = combine_shares(threshold_shares, k=2)
+        recovered = combine_shares(threshold_shares, k=THRESHOLD)
         if recovered != secret:
             raise RuntimeError("Threshold reconstruction failed")
 
@@ -171,7 +173,7 @@ def benchmark_threshold(iterations: int) -> Row:
         "threshold_reconstruction",
         timed_call(operation, iterations, "threshold_reconstruction"),
         iterations,
-        "Shamir k=2,n=3",
+        f"Shamir k={THRESHOLD},n={TOTAL_SHARES}",
     )
 
 
@@ -496,14 +498,15 @@ def run_db_benchmarks(iterations: int, database_url: str) -> list[Row]:
             ttl=dt.timedelta(minutes=5),
         )
 
-        # Use the two locally available threshold shares, sealed to the
-        # facility's gate (ADR-0079).
+        # Present a three-share unlock set (custodian x=1, audit x=3 and x=4;
+        # ADR-0089) from the seeded shares, sealed to the facility's gate
+        # (ADR-0079).
         gate = fetch_share_recipient(
             client, endpoints.facility_b, kind="facility", trusted_root=root
         )
         shares_payload = [
             sealed_json(record_info[name], record_id="rec-001", recipient=gate)
-            for name in ("share1", "share2")
+            for name in ("share1", "share3", "share4")
         ]
 
         unlock_payload = {
