@@ -9,7 +9,7 @@ store is PostgreSQL~16, and one Django process serves the three
 portals. % src: facts-F4#1, facts-F4#3, facts-F4#4, facts-F4#5
 \texttt{src/} holds 97 Python files (16{,}450 non-blank
 lines). % src: facts-F7#38
-On the evaluated commit, \texttt{57a1a8c} (2026-10-21), the full suite, run against
+On the evaluated commit (2026-10-21) the full suite, run against
 PostgreSQL, gave 1006 passed, 2 skipped and 0 failed; both skips test the
 missing-\texttt{dumpcap} path and skip by design when the tool is
 present. % src: facts-live#14, facts-live#15, facts-live#16
@@ -21,8 +21,8 @@ claim in Table~\ref{tab:claims} holds. % src: facts-live#12
 the interpolated p95, with no outlier removal or CPU
 pinning. % src: facts-F7#13, facts-F7#14, facts-F7#15, facts-F7#16, facts-F7#17
 The machine in Table~\ref{tab:bench} comes from \texttt{environment.json},
-which records no commit or library versions; the result files are the ones
-committed at \texttt{57a1a8c}. % src: facts-F7#1, facts-F7#3, facts-F7#4, facts-F7#7, facts-F7#9
+which records no commit or library versions; the result files are those
+of the evaluated commit. % src: facts-F7#1, facts-F7#3, facts-F7#4, facts-F7#7, facts-F7#9
 Despite the label \texttt{local-processes}, the six services ran as uvicorn
 servers in threads of the benchmark's own Python process, shared with the
 client, with PostgreSQL~16 in Docker Desktop on Windows
@@ -70,3 +70,15 @@ Payload ciphertext expansion (Fig.~\ref{fig:expansion}) is a constant
 It excludes everything stored beside the payload: the 12-byte nonce, two
 48-byte DEK wrappings, the compiled policy, a 66-byte share per $x$ and
 the search index. % src: facts-F7#33, facts-F3#5, facts-F3#29, facts-F3#30, facts-F2#39
+
+\textit{Provenance and availability.} The evaluated commit is git commit
+\texttt{57a1a8c} of our project repository: the claims run and the full
+test suite ran on it on 2026-10-21, and the benchmark results are the files
+committed in it. % src: facts-live#12, facts-live#14, facts-F7#1
+The wire captures (Table~\ref{tab:wire}) were taken on 2026-10-21 at commit
+\texttt{99092d1}; no capture, analyser or service code changed between the
+two. % src: facts-F6#93
+The multi-search leakage figures come from runs of 2026-10-19 that
+predate the 3-of-4 split. % src: facts-F6#91
+The repository, with its tests, raw results and the evidence notes behind
+every statement here, is private at the time of writing. % src: facts-F7#42

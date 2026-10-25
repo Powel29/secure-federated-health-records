@@ -37,7 +37,7 @@ Scafuro~\cite{scafuro2019breakglass} builds encryption breakable exactly once, d
 % src: facts-F8#11
 De Oliveira et al.\ limit emergency access to the task at hand~\cite{deoliveira2019redalert}, or to each team's period of care across institutions using signed access tokens and revocation by a trusted master authority and storage provider, without re-encrypting data~\cite{deoliveira2020breakglass}.
 % src: facts-F8#12, facts-F8#13
-None gates key release on a committed log entry (Scafuro's break is detectable, not log-gated), and our expiry re-keys the record instead of trusting a provider to block access; several, however, have formal analyses we lack.
+None of these is described as gating key release on a committed log entry (Scafuro's break is detectable, not log-gated), and our expiry re-keys the record instead of trusting a provider to block access; several, however, have formal analyses we lack.
 % src: facts-F8#9, facts-F8#10, facts-F8#11, facts-F8#12, facts-F8#13, facts-F8#14, facts-F1#39
 
 \textit{Encrypted PHR sharing.}
@@ -55,7 +55,7 @@ This is prior art; we only derive emergency search tokens from the emergency key
 \textit{Consent at the policy layer.}
 Muslim and Gr\'egoire~\cite{muslim2026consent} validate consent directives before activation in XACML, add bounded break-the-glass access logged for post-hoc review, and argue that consent needs a lifecycle of creation, activation, revocation and expiration; their enforcement is ``logical rather than cryptographic''.
 % src: facts-F8#17
-We realise revocation and expiration by re-keying, while consent stays a patient-signed grant checked at read time; their ``pre-commit'' commits a policy, not a log entry.
+We realize revocation and expiration by re-keying, while consent stays a patient-signed grant checked at read time; their ``pre-commit'' commits a policy, not a log entry.
 % src: facts-F8#17, facts-F1#47, facts-F1#77, facts-F1#78
 Romel et al.~\cite{romel2025patient} keep encrypted records off-chain, with patient-signed, time-bounded permissions on a public chain and keys distributed by public-key wrapping; revocation flips an on-chain flag, and re-keying is a separate, optional workflow.
 % src: facts-F8#18

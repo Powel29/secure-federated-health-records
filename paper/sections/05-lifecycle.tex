@@ -17,6 +17,12 @@ emergency wrapping of the data-encryption key (DEK) at generation~0.
 grants do not move lifecycle state, and the consent module does not wrap or
 re-wrap records.
 % src: facts-F1#35
+On a normal read, a presented grant must carry the patient's valid
+signature, status \textsc{Granted}, a current window, the reader as grantee
+and the record in scope, or the read is refused; with no grant, the reader's
+attribute keys must satisfy the record's policy; emergency reads use
+break-glass (Section~\ref{sec:breakglass}).
+% src: facts-F1#79
 The legal set is a frozen set of seven $(\mathit{from},\mathit{to})$ pairs;
 self-transitions and \textsc{Granted}$\to$\textsc{Expired} are illegal, and
 there is no premature-termination edge out of \textsc{Emergency\_Open}.

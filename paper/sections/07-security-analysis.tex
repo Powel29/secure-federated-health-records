@@ -9,8 +9,9 @@ A claim holds only when every system-level test tagged with it passed; a skip
 makes it unverified, an expected failure ``fails today'', and module-level
 outcomes never change a status.
 % src: facts-F5#23, facts-F5#26
-In the run of 2026-10-21 on the evaluated commit, \texttt{57a1a8c}, all eleven claims hold, with 35
-of 35 system-level tests passing and none skipped.
+In the run of 2026-10-21 all eleven claims hold, with 35 of 35 system-level
+tests passing and none skipped; these are outcomes of the tested cases, not
+proofs (Table~\ref{tab:secprops}).
 % src: facts-live#12
 
 \subsection{Per-Claim Arguments}
@@ -24,6 +25,10 @@ store and on Postgres, the clinician cannot read
 Revocation re-keys through the expiry rotation (new emergency key, shares and
 search index) and is forward-only.
 % src: facts-F3#58, facts-F5#16
+C1 covers these service paths only: a clinician who kept a shared attribute
+key from before revocation still satisfies the rotated policy
+(Section~\ref{sec:limits}, item~9).
+% src: facts-F9#9, facts-live#13
 \emph{C2:} \texttt{release\_share\_fails\_closed} makes the audit commit fail
 and gets no share; the append runs in one transaction that raises before any
 share is returned.
@@ -57,7 +62,7 @@ facility, after a facility restart and across processes on Postgres; each
 party keeps its own store of consumed ids.
 % src: facts-live#13, facts-F2#26
 \emph{C9:} a portal may not request an audit share, an unsigned service
-request is refused, and an authenticated but unauthorised caller is stopped
+request is refused, and an authenticated but unauthorized caller is stopped
 before any crypto or database work; C9 has no module-level test.
 % src: facts-live#13, facts-F5#33
 \emph{C10:} revoked, expired or copied credentials, and requests without a

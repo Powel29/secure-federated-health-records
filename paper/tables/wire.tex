@@ -4,7 +4,7 @@
 \centering
 \footnotesize
 \setlength{\tabcolsep}{3pt}
-\caption{PyShark wire checks on the plain and TLS captures (captured 2026-10-21 at repository commit \textnormal{\texttt{99092d1}}; the capture, analyser and service code is unchanged in the evaluated commit \textnormal{\texttt{57a1a8c}}).}
+\caption{PyShark wire checks on the plain and TLS captures of 2026-10-21 (provenance in Section~\ref{sec:eval}).}
 % src: facts-F6#34, facts-F6#35, facts-F6#36, facts-F6#37, facts-F6#38, facts-F6#39, facts-F6#40, facts-F6#41, facts-F6#42, facts-F6#43, facts-F6#44, facts-F6#45, facts-F6#46, facts-F6#47, facts-F6#48, facts-F6#49, facts-F6#50, facts-F6#51, facts-F6#52, facts-F6#53, facts-F6#90, facts-F6#93
 \label{tab:wire}
 \begin{tabular}{@{}l >{\raggedright\arraybackslash}p{0.19\columnwidth} >{\raggedright\arraybackslash}p{0.29\columnwidth} >{\raggedright\arraybackslash}p{0.27\columnwidth} l@{}}
@@ -14,9 +14,9 @@
 0 & Preconditions & 16 endpoints seen & TLS records only & pass \\
 1 & No plaintext & 6 of 13 canaries hit (control fired) & 0 of 13 canaries hit & pass \\
 2 & Commit before release & COMMIT 1.35\,ms before response & n/a (plain only) & pass \\
-3 & Search leakage & 1 search, 1 term in clear, 43\,B resp. & n/a (plain only) & pass$^\ast$ \\
+3 & Search leakage & 1 search, 1 term in clear, 43\,B resp. & n/a (plain only) & measured$^\ast$ \\
 4 & Break-glass as metadata & URI visible; 4314\,B request & 4356\,B burst; 0 content hits & pass \\
 \bottomrule
-\multicolumn{5}{@{}p{\columnwidth}@{}}{$^\ast$A measurement: it fails only if no search traffic is captured.}\\
+\multicolumn{5}{@{}p{\columnwidth}@{}}{$^\ast$Leakage is measured, not asserted; the check only confirms search traffic was captured.}\\
 \end{tabular}
 \end{table}

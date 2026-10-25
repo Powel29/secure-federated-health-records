@@ -4,7 +4,7 @@
 keys (DEKs), each record's emergency key, attribute keys, audit-chain
 integrity, and metadata, which we do not claim to hide. % src: facts-F5#4
 
-\textbf{Adversaries.} Each of four adversaries is modelled separately. % src: facts-F5#2
+\textbf{Adversaries.} Each of four adversaries is modeled separately. % src: facts-F5#2
 \emph{(A) The shared store}, honest-but-curious or fully dumped, sees all
 ciphertext, wrapped keys and the coded search index, but never plaintext or an
 unwrapped key; it learns access patterns, sizes and metadata (e.g., that a
@@ -25,7 +25,7 @@ a goal of the TLS profile only (Section~\ref{sec:traffic}). % src: facts-F5#21, 
 
 \textbf{Trust assumptions.} AES-256-GCM, ECDSA, SHA-256, HKDF and Shamir
 sharing are assumed sound. % src: facts-F5#5
-Four parties are trusted, not modelled as adversaries. % src: facts-F5#21, facts-F5#6, facts-F4#31
+Four parties are trusted, not modeled as adversaries. % src: facts-F5#21, facts-F5#6, facts-F4#31
 \emph{The audit service} holds its own plain hash chain: tampering with stored
 entries is detected, but a compromised audit service could release its shares
 without a durable entry or show different chains to different parties, so
@@ -33,7 +33,8 @@ without a durable entry or show different chains to different parties, so
 itself. % src: facts-F5#9, facts-F2#59
 \emph{The Key Custodian} is one shared process acting as every subject's key
 agent: it holds every synthetic persona's signing key, PRE key, credentials
-and share~1, and signs on their behalf. % src: facts-F4#14, facts-F5#10
+and share~1, and signs on their behalf, so its compromise lets an attacker
+act as any persona. % src: facts-F4#14, facts-F5#10
 \emph{The emergency timer}, a simulated HSM realized as a per-facility
 signing key and monitor thread, could decline to expire a key; because expiry
 is a signed, logged rotation, this is tamper-evident, not

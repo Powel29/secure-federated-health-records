@@ -8,7 +8,7 @@ Hospital systems add a break-the-glass override and record its use for later rev
 
 Log-gated decryption is established: in accountable and transparent decryption a key, or a share of one, is used only once the request is in a log~\cite{ryan2017accountable,kroll2018accountable,cheval2023transparency}, and Kroll et al.\ name hospital emergencies as an application~\cite{kroll2018accountable}.
 % src: facts-F8#1, facts-F8#2, facts-F8#3
-Break-glass for health records is established too, at the policy layer, where consent gets a lifecycle but is enforced in software~\cite{muslim2026consent}, and with keys~\cite{brucker2010abe,deoliveira2020breakglass,yang2018libac,romel2025patient}, but none of these schemes is described as gating key release on a log entry.
+Break-glass for health records is established too, at the policy layer, where consent gets a lifecycle but is enforced in software~\cite{muslim2026consent}, and with keys~\cite{brucker2010abe,deoliveira2020breakglass,yang2018libac,romel2025patient}, but none of those we examined is described as gating key release on a log entry.
 % src: facts-F8#17, facts-F8#9, facts-F8#13, facts-F8#14, facts-F8#18
 In the works we compare (Table~\ref{tab:related}), the log-gated schemes have no patient revocation lifecycle, so none joins log-gated release to consent and revocation.
 % src: facts-F8#23
@@ -36,7 +36,7 @@ The audit service releases its two shares only after validating a signed, one-ti
 Search tokens derive from the emergency key, so search works only during a live emergency session, and old tokens stop matching after expiry rotation.
 % src: facts-F3#51, facts-F3#53, facts-F3#54
 \item \emph{Evidence.}
-Negative security tests back eleven claims, C1--C11, all of which hold in a live test run on the evaluated version of our code, git commit \texttt{57a1a8c} of the project repository (Section~\ref{sec:security}).
+Negative security tests back eleven claims, C1--C11; all 35 system tests tagged to them pass in a live run on the evaluated commit (Sections~\ref{sec:security} and~\ref{sec:eval}), as test outcomes, not proofs.
 % src: facts-live#12, facts-F5#22
 PyShark wire checks see the audit service's database commit before the release response that carries the shares (Section~\ref{sec:traffic}).
 % src: facts-F6#43, facts-F6#47, facts-F6#49

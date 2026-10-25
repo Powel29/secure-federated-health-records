@@ -65,7 +65,7 @@ hash-chained entry inside one transaction, and only then seals shares 3
 and 4 and returns them with the signed entry.
 % src: facts-F2#50, facts-F2#51, facts-F2#53
 A failed commit raises before the return and yields HTTP~503 with no share,
-so there is no log entry, no key: C2 holds, and the wire shows the COMMIT
+so, with an honest audit service, there is no log entry, no key: C2 holds, and the wire shows the COMMIT
 1.35\,ms before the response (Section~\ref{sec:traffic}).
 % src: facts-F2#51, facts-F2#54, facts-live#2, facts-F6#49
 The custodian checks the entry's signature, correlation identifier and
@@ -94,8 +94,13 @@ Each entry holds \texttt{seq}, \texttt{prev\_\allowbreak hash} and \texttt{entry
 the event type and metadata, the actor, a correlation identifier, a timestamp
 and an ECDSA signature, with
 $h_i=\mathrm{SHA\text{-}256}(\mathrm{enc}(h_{i-1},\mathit{event},t,\mathit{actor}))$
-from a zero-hash genesis (Fig.~\ref{fig:chain}b).
-% src: facts-F2#71, facts-F2#72, facts-F2#73, facts-F2#74
+from a zero-hash genesis (Fig.~\ref{fig:chain}b), where enc is a
+domain-tagged, length-prefixed field encoding, \textit{event} encodes the
+event type and its metadata as canonical JSON, and $t$ is the UTC timestamp.
+% src: facts-F2#71, facts-F2#72, facts-F2#74
+The audit service's signature covers \texttt{seq}, both hashes, the event,
+the actor, the correlation identifier and $t$.
+% src: facts-F2#73
 Verification checks signature, link, sequence and hash, and C5 holds.
 % src: facts-F2#77, facts-live#5
 Against truncation, a facility refuses an entry whose \texttt{seq} is not

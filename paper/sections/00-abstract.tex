@@ -1,19 +1,21 @@
 % Abstract and keywords (W1). Every sentence ends with its source tag.
 \begin{abstract}
-Log-gated decryption exists as a generic primitive (accountable and transparent decryption), and break-glass schemes for health records exist; but in the works we compare, the log-gated schemes carry no patient revocation lifecycle, and the health-record break-glass schemes are not described as gating key release on a committed log entry.
+Accountable and transparent decryption gate key use on a log, and break-glass schemes for health records exist; but in the works we compare, the log-gated schemes have no patient revocation lifecycle, and the health-record schemes are not described as gating key release on a committed log entry.
 % src: facts-F8#1, facts-F8#2, facts-F8#3, facts-F8#9, facts-F8#13, facts-F8#14, facts-F8#15, facts-F8#18, facts-F8#23
-We implement a federated electronic health record prototype in which patient revocation, break-glass and expiry are signed, logged transitions of one key-lifecycle state machine over per-record keys, while consent is a patient-signed grant checked at read time when one is presented (status, window, signature), separate from the lifecycle state; revocation and expiry re-key the record in full, and opening break-glass rotates nothing.
+We implement a federated electronic health record prototype in which patient revocation, break-glass and expiry are signed, logged transitions of one key-lifecycle state machine over per-record keys, while consent is a patient-signed grant checked at read time when one is presented, outside the lifecycle; revocation and expiry re-key the record, and opening break-glass does not.
 % src: facts-F1#1, facts-F1#11, facts-F1#35, facts-F1#46, facts-F1#47, facts-F1#77, facts-F1#78
 Following transparent decryption, the audit service holds two of four shares of each record's emergency key and releases them only after validating a signed, one-time Emergency Assertion bound to the record and committing a hash-chained log entry.
 % src: facts-F8#3, facts-F2#34, facts-F2#36, facts-F2#45, facts-F2#50, facts-F2#51
 Emergency search, derived from that key, ends at the expiry rotation.
 % src: facts-F3#51, facts-F3#53, facts-F3#54
-On a simulated federation with synthetic data, all eleven security claims hold in a live run, and PyShark checks see the audit commit on the wire before the shares.
+On a simulated federation with synthetic data, all 35 system tests tagged to eleven security claims pass in a live run (test outcomes, not proofs), and packet captures show the audit commit before the shares.
 % src: facts-F4#1, facts-F5#8, facts-live#12, facts-F6#43, facts-F6#49
-Limitations: revocation is forward-only; expiry is server-enforced, not cryptographic; the access structure is not full CP-ABE (not collusion-resistant); the audit service is trusted (no proofs of presence or extension) and is a single point of availability, as the home authority's share replaces only a lost custodian share; and ``no plaintext on the wire'' holds only under TLS.
-% src: facts-F5#16, facts-F1#54, facts-F3#41, facts-F2#59, facts-F5#11, facts-F2#62, facts-F2#63, facts-F6#6
+Limitations: revocation is forward-only, expiry is server-enforced, not cryptographic, and the access structure is not full ciphertext-policy attribute-based encryption (not collusion-resistant).
+% src: facts-F5#16, facts-F1#54, facts-F3#41
+The audit service is trusted (its log has no proofs of presence or extension) and is a single point of availability, as the home authority's share replaces only a lost custodian share; ``no plaintext on the wire'' holds only under Transport Layer Security (TLS).
+% src: facts-F2#59, facts-F5#11, facts-F2#62, facts-F2#63, facts-F6#6
 \end{abstract}
 
 \begin{IEEEkeywords}
-Electronic health records, break-glass access, transparent decryption, threshold secret sharing, key rotation, audit logging, traffic analysis
+Electronic health records, break-glass access, transparent decryption, threshold secret sharing, key rotation
 \end{IEEEkeywords}
