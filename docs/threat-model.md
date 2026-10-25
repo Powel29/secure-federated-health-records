@@ -45,13 +45,24 @@ What an adversary wants, in priority order:
   this model defends against — a compromised timer could decline to expire an
   emergency key, but expiry is a *signed, logged* rotation, so subversion is
   tamper-evident.
+- **The audit service is trusted** (paper limitation 13). It holds its own plain
+  hash chain: tampering with stored entries is detected, but a compromised audit
+  service could release its shares (x=3, 4) without a durable entry or show
+  different chains to different parties, so "no log entry, no key" holds against
+  everyone except the audit service itself. It is also a single point of
+  availability (limitation 8).
+- **The Key Custodian is trusted.** One shared process acts as every persona's key
+  agent and holds their signing keys, PRE keys, credentials and share 1 (limitation 5).
+- **The PKI root is a single point of trust**, held only at bootstrap.
 - **Each service holds its own signing key** and its local key/state DB is not
   leaked *except where an adversary below is defined to compromise it.*
 - **Endpoints out of scope by decision** (`ARCHITECTURE.md` §8 "Deliberately
   excluded", ADR-0015): no rate-limiting, MFA, session, or transport-confidentiality
-  threats — there is no browser-facing public deployment and no user population,
-  and inter-service traffic is plain HTTP *by design* so the traffic-analysis
-  module (§4A) can prove confidentiality comes from the application layer.
+  threats — there is no browser-facing public deployment and no user population.
+  There is **no on-path network attacker** in the model: "no plaintext on the wire"
+  is a goal of the TLS profile only. The plain-HTTP capture is the positive control
+  for the traffic-analysis module (§4A): it exposes record plaintext and keys, which
+  proves the detector fires (paper Section VIII, ADR-0073).
 
 ---
 

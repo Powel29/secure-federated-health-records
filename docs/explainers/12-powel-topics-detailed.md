@@ -11,7 +11,11 @@ step, the exact code to show, what to say in 90 seconds, the limit to admit, and
 likely questions.
 
 Your concepts from the table in file 11: Shamir secret sharing, policy tree,
-2-of-3 threshold and emergency key, key rotation and forward secrecy.
+weighted 3-of-4 threshold and emergency key, key rotation and forward secrecy.
+
+> **Source of truth:** the IEEE paper (`paper/build/main.pdf`, commit `57a1a8c`).
+> Paper sections to know cold: III (threat model), V (lifecycle), VI (break-glass),
+> VII (security analysis), X (limitations). Files 16 and 17 map them for revision.
 
 ---
 
@@ -53,14 +57,16 @@ go wrong with that:
 
 ### Our idea in three plain sentences
 
-1. **The log comes before the key.** The emergency key is cut into three pieces
-   held by three different parties. The audit service hands over its piece only
-   after it has written the log entry. No log entry, no key, no access.
-2. **One machine, four states.** Consent, revocation and emergency access are
-   four states of the same record (Granted, Revoked, Emergency-open, Expired),
-   and every move between them is a signed, one-time event.
-3. **The window closes by itself.** When time runs out, the record's key is
-   changed, so the doctor's access really ends and does not depend on someone
+1. **The log comes before the key.** The emergency key is cut into four shares,
+   three of which rebuild it, and the audit service holds two of the four. It hands
+   its shares over only after it has validated a signed assertion and written the
+   log entry. No log entry, no key, no access.
+2. **One machine, four states.** Revocation, break-glass and expiry are signed,
+   logged transitions of one key lifecycle (Granted, Revoked, Emergency_Open,
+   Expired) over per-record keys. Consent is a separate patient-signed grant checked
+   at read time; it does not move the state.
+3. **The window closes by itself.** When time runs out, the record is fully
+   re-keyed, so the doctor's access really ends and does not depend on someone
    remembering to switch it off.
 
 ### Objectives, each with a pass condition
@@ -70,15 +76,17 @@ test or measurement that proves it.
 
 | # | Objective (plain words) | How we prove it |
 |---|---|---|
-| 1 | Break-glass **cannot succeed without a committed log entry**. | Negative test: when the audit service cannot commit, no share is released and the emergency fails closed (claim C2, holds). |
-| 2 | **No single party can open a record alone**, not even the audit service. | Tests: one share by itself reveals nothing; two shares rebuild the key (claim C3 module tests hold; the system-level test is still an expected-fail, see limits). |
-| 3 | Emergency access **ends on its own**, and the searchable-encryption power dies with it. | Tests: the emergency search token stops working after expiry; the timer signs the close (claim C4: module test holds, the system-level test is an expected-fail). |
-| 4 | **Revoking someone really denies their future reads**, and it is fast. | Tests: a revoked clinician cannot decrypt after rotation (claim C1, holds). Benchmark: revocation latency, measured by the harness. Re-run it on the demo machine before quoting a number. |
+| 1 | Break-glass **cannot succeed without a committed log entry**. | Negative test: when the audit service cannot commit, no share is released and the emergency fails closed (claim C2, holds). On the wire, the COMMIT is seen 1.35 ms before the release response. |
+| 2 | **No single party can open a record alone**, not even the audit service. | Tests: a single share, the audit service's two shares, and custodian + home authority together all fail at the gate; the share holders refuse a wrong-record, unsigned, untrusted-CA or replayed assertion (claim C3, holds: 10 system-level tests). |
+| 3 | Emergency access **ends on its own**, and the searchable-encryption power dies with it. | Tests: search refused after expiry; pre-expiry shares restore nothing; a restart or crash mid-window still ends in a rotation (claim C4, holds: 6 system-level tests, both stores). |
+| 4 | **Revoking someone really denies their future reads.** | Tests: a revoked clinician cannot read after the revoke endpoint, in memory and on Postgres (claim C1, holds). Benchmark: the *library call* takes 0.239 ms median (p95 0.628); the deployed path is a full rotation that no benchmark times. |
 
 Supporting objectives, also checkable: a replayed emergency assertion is
-refused (C8, holds); a tampered log entry is detected (C5, holds); a patient
-login alone never releases a key (C11, holds); an illegal state change is
-rejected (C6 module test holds).
+refused (C8); a tampered log entry is detected (C5); a patient login alone never
+releases a key (C11); an illegal state change and an invalid signature are rejected
+(C6, C7); an unauthorised caller is denied before any crypto or DB work (C9); an
+expired or revoked credential releases no key (C10). **All eleven hold** in the live
+run; 35 of 35 system-level tests pass.
 
 ### What is in scope and out of scope (so nobody asks "why not X?")
 
@@ -86,7 +94,7 @@ rejected (C6 module test holds).
 |---|---|
 | Encrypted records, one key per record | Real hospital data: everything is synthetic |
 | The four-state machine with signed events | FHIR / HL7 interoperability (this is a security project, not health informatics) |
-| 2-of-3 emergency gate with log-before-release | A machine-learning anomaly detector (cut deliberately) |
+| Weighted 3-of-4 emergency gate with log-before-release | A machine-learning anomaly detector (cut deliberately) |
 | Emergency-only searchable encryption | Real hardware security modules (the timer is simulated and logged) |
 | A simulated federation of hospitals and authorities | Scalability curves against patient and facility counts (cut to fund the web portals; stated as a limitation) |
 
@@ -95,15 +103,15 @@ rejected (C6 module test holds).
 "If an unconscious patient arrives at a hospital that has never seen them,
 nobody can ask for consent. Today the answer is a break-glass button plus a
 promise to log it later, and a promise can be skipped. We made the log a
-precondition of the key. The emergency key is split three ways and the audit
-service only gives up its piece after it has written the log entry, so no log
-means no access. Consent, revocation and emergency access are four states of one
-machine, every change is signed, and when the time-box ends the key changes so
-the access really ends. Our objectives are four things we can test: no key
-without a log, no single holder can open a record, the window closes by itself,
-and revocation really denies the revoked person. We are honest about what is
-still open: five of the eleven security claims hold at system level today and
-six are tracked as known gaps."
+precondition of the key. The emergency key is split four ways, any three rebuild
+it, and the audit service holds two, so every opening needs it; it only gives up
+its shares after it has validated the signed assertion and written the log entry,
+so no log means no key. Revocation, break-glass and expiry are signed transitions
+of one four-state machine, and at revocation and expiry the keys change so the
+access really ends. Log-gated release is prior art; our contribution is the
+combination, and we are weaker than the literature on log strength and have no
+formal model. All eleven of our security claims hold in a live run, and we list
+thirteen limitations ourselves."
 
 ---
 
@@ -114,28 +122,32 @@ they are four states of one machine, and every move between states is a signed,
 single-use event.
 
 **Analogy.** A door with four settings: *open by invitation* (Granted), *locked
-and re-keyed* (Revoked), *glass broken, fire crew inside* (Emergency-open), *fire
+and re-keyed* (Revoked), *glass broken, fire crew inside* (Emergency_Open), *fire
 crew's time is over* (Expired). You may only turn the dial along marked arrows,
 and each turn is written in a ledger with the signature of whoever turned it.
 
-### The four states and six legal arrows
+### The four states and seven legal arrows
 
 Defined as `LEGAL_TRANSITIONS` in `src/lifecycle/state_machine.py`:
 
 | From | To | Meaning |
 |---|---|---|
-| Granted | Revoked | Patient (or home authority) withdraws access |
-| Granted | Emergency-open | Break-glass on a record that was normally readable |
-| Revoked | Granted | Access re-granted later |
-| Revoked | Emergency-open | Break-glass even on a revoked record (the whole point) |
-| Emergency-open | Expired | The timer closes the window |
-| Expired | Granted | After the forced re-key the record returns to normal |
+| Granted | Revoked | The patient withdraws access (full rotation). Patient-only in this build (ADR-0084) |
+| Granted | Emergency_Open | Break-glass on a record that was normally readable. No rotation |
+| Revoked | Emergency_Open | Break-glass even on a revoked record (the whole point). No rotation |
+| Revoked | Granted | Legal, but **no code in the repository emits it** |
+| Emergency_Open | Expired | The timer closes the window |
+| Expired | Granted | After the full rotation the record returns to the state it was claimed from |
+| Expired | Revoked | Same, if it was Revoked before; or the patient revokes. A later addition (ADR-0058) |
 
 Everything else is illegal, including self-transitions. Examples: Revoked to
-Expired, Granted to Expired, Emergency-open to Revoked. Adding an arrow needs an
-ADR, because this table is the spine of the project.
+Expired, Granted to Expired, Emergency_Open to Revoked or Granted. There is **no
+premature-termination edge** out of Emergency_Open. Adding an arrow needs an ADR,
+because this table is the spine of the project. (Six of the seven pairs are the
+original design; Expired to Revoked came later.)
 
-Entering Emergency-open also **requires a reason code** (`_EMERGENCY_TRANSITIONS`).
+Entering Emergency_Open also **requires a reason code** (`_EMERGENCY_TRANSITIONS`),
+from a closed enumeration of 13.
 
 ### What a transition event is
 
@@ -144,9 +156,10 @@ Entering Emergency-open also **requires a reason code** (`_EMERGENCY_TRANSITIONS
 1. `validate_transition(from, to, reason)`: if the pair is illegal or the reason
    is missing, it raises and **no signature is ever produced**.
 2. Draw a fresh `event_id` (UUID4) and a 16-byte nonce from `secrets`.
-3. Build a canonical payload: event id, record id, from state, to state, actor,
-   reason, UTC timestamp, nonce, joined with the ASCII unit separator `0x1f`
-   (so fields cannot blur into each other).
+3. Build the signed bytes: the domain tag `ehr/transition-event/v1` followed by
+   event id, record id, from state, to state, actor, reason, UTC timestamp and
+   nonce, **each length-prefixed** (ADR-0077), so fields cannot blur into each
+   other and a transition signature cannot verify as an assertion.
 4. Sign it with the actor's ECDSA-P256 key.
 
 ### What happens when an event is applied
@@ -162,9 +175,10 @@ Entering Emergency-open also **requires a reason code** (`_EMERGENCY_TRANSITIONS
    `ReplayedEventError` ever after. It is consumed last on purpose: if it were
    consumed before verification, a forged event could burn a legitimate id.
 
-The consumed-id set can be backed by the facility's database (`ConsumedIdBackend`,
-review fix F22), so a restart does not forget which ids were used. A lock makes
-two threads unable to both pass the check for the same id (review fix F12).
+The deployed facility backs the consumed-id set durably, so a restart does not
+forget which ids were used. A lock makes two threads unable to both pass the check
+for the same id, and the record store adds its own compare-and-set on the stored
+state (ADR-0050).
 
 The five distinct failures: illegal pair, missing reason code, bad signature,
 stale from-state, replayed id. Each has its own exception, all fail closed.
@@ -174,7 +188,7 @@ consent, revocation and break-glass a common audit shape. Reviewers can ask "wha
 state is this record in and who put it there" and get a cryptographic answer.
 
 **Say in 90 seconds.**
-"Four states, six legal arrows, anything else is refused. Every move is a signed
+"Four states, seven legal arrows, anything else is refused. Every move is a signed
 event with a single-use id and a reason code if it enters emergency. We verify the
 signature before anything else, check the record is really in the claimed state,
 and only then burn the id. I will show it refusing Revoked to Expired, and
@@ -182,13 +196,19 @@ refusing a replayed event."
 
 **Limit to admit.** The machine is stateless about records: the caller passes the
 current state in. Persistence and the audit entry are the caller's job (ADR-0030).
+Also: `Revoked -> Granted` is legal but never emitted, and the expiry-side
+transitions are signed by a timer key, not by a person.
 
 **Likely questions.**
 - *Why verify before consume?* So a forgery cannot burn a real id.
 - *What stops me replaying yesterday's valid Granted to Revoked?* The id is
   consumed, and `from_state` would no longer match.
-- *Can Emergency-open go straight back to Granted?* No. It must pass through
-  Expired, which is what forces the re-key (see Nandini's topic 3).
+- *Can Emergency_Open go straight back to Granted?* No. It must pass through
+  Expired, which is what forces the full rotation (see Nandini's topic 3). It returns
+  to the state the record was claimed from, so an emergency can never undo a
+  revocation.
+- *Is consent a state?* No: a patient-signed grant checked at read time; it does not
+  move the lifecycle state.
 
 **Tests to point at.** `tests/security/test_phase2_lifecycle.py`, claims C6
 (illegal transition rejected) and C7 (bad signature rejected).
@@ -209,19 +229,28 @@ people who still belong**. The old key is now a piece of metal.
 
 | Step | Action |
 |---|---|
-| 0 | `check_revocation_authorization`: only the **patient** or the patient's **home authority** may revoke. A clinician with a valid key and signature is still refused (`UnauthorizedRevocationError`, P3-12). |
+| 0 | `check_revocation_authorization`: the module accepts the **patient** or the patient's **home authority**; a clinician with a valid key and signature is refused (`UnauthorizedRevocationError`, P3-12). **In the deployed build only the patient revokes:** the facility endpoint verifies a patient-signed transition, and home-authority revocation is not wired (ADR-0084). |
 | 1 | Decrypt the current payload with the old DEK. |
 | 2 | Author a new policy tree: `OR(new clinical policy, owner:<patient_id>)`. The owner leaf is always re-added, so the patient never loses their own record (ADR-0016). |
 | 3 | Mint a fresh 32-byte root secret and compile the tree (`compile_policy`). Missing attribute keys raise `PolicyCompileError`. |
 | 4 | Mint a fresh DEK and re-encrypt the plaintext. Same `record_id`; identity is preserved, only the keys change. |
 | 5 | Wrap the new DEK under the new root secret with `generation = old + 1`. |
-| 6 | Create a signed `Granted to Revoked` transition event. |
+| 6 | Create a signed `Granted to Revoked` transition event (patient's key, inside the custodian). |
 | 7 | Return a `RevocationResult` (rotated record, wrapping, compiled policy, event, audit payload with ids and counters only). |
 
 The function **returns** everything and persists nothing: no storage handle, no
 audit connection. That makes it testable without Postgres and keeps one owner for
 persistence. The new root secret is returned only so tests can prove round trips;
 the caller must never store it.
+
+### Library call versus the deployed path (paper Section IX)
+
+`revoke_record_access` is the **library call**, and it is what the benchmark times
+(0.239 ms median). The **deployed facility revokes through the full expiry-style
+rotation**: new DEK and policy root, **a fresh emergency key split 3-of-4 to the same
+holders, and re-derived search tokens**, with persistence, audit and HTTP. No
+benchmark times that path; say so. A revocation can leave break-glass closed until
+re-keying if a shareholder is unreachable (limit 6).
 
 ### Why this works (forward secrecy)
 
@@ -233,12 +262,15 @@ current one.
 **Say in 90 seconds.**
 "Our revocation is cryptographic. Decrypt, new key, re-encrypt, rebuild the
 wrapping without the revoked party, bump the generation, and sign a Granted to
-Revoked event. Only the patient or home authority may trigger it. In the demo,
+Revoked event. Only the patient can trigger it in this build. In the demo,
 `cameron` reads `rec-002`; we revoke; the same read now fails."
 
 **Limit to admit (say it yourself).** **Forward-only.** It cannot un-read
-plaintext the clinician already saved. No cryptographic scheme can. It also needs
-the old DEK, so the caller must already hold a policy-satisfying unwrap.
+plaintext the clinician already saved. No cryptographic scheme can. And **revoking a
+credential does not revoke a released attribute key** (limit 9): the key is shared by
+every holder of the attribute and never rotated, so a revoked holder who kept it
+still satisfies its leaves. A patient who cannot sign has no revocation path
+(ADR-0084).
 
 **Likely questions.**
 - *Why not just flip a flag?* Then a compromised server or anyone with the stored
@@ -300,6 +332,17 @@ leaf return nothing, an AND with any missing child returns nothing, an OR needs 
 success. If the root comes back empty you get `PolicyDeniedError`. Never a partial
 or default secret. `unwrap_dek_via_policy` then unwraps the DEK with the root.
 
+### Exactly what the paper says about the tree
+
+- Only Leaf, And and Or nodes; **no general k-of-n gate**.
+- The root secret is the **DEK wrapping key**; the wrapping's AAD binds **record id,
+  policy id and generation**. **Leaf ciphertexts carry no AAD**, so they are not bound
+  to their record, position or attribute.
+- Attribute keys are symmetric 32-byte keys indexed by **(authority, name, value)**.
+- Shamir is over GF(p), **p = 2^256 + 297** (257-bit); shares are **not
+  authenticated**: a well-formed wrong share gives a wrong secret that the AES-GCM
+  unwrap detects.
+
 ### PDP versus PEP
 
 `evaluate_policy` is a cheap boolean (Policy Decision Point): "do these attribute
@@ -327,10 +370,11 @@ key. Reading rebuilds the root from the keys you hold. If you are short, you get
 denial, not a degraded answer. Demo: `house` is refused on `rec-002`, `cameron`
 succeeds."
 
-**Limit to admit.** **Not collusion-resistant.** Two doctors can pool attribute
-keys and together satisfy a tree neither satisfies alone. Real CP-ABE blinds keys
-per user. We chose Charm-Crypto's rejection (ADR-0001) and this construction
-(ADR-0002, ADR-0026). Say it is future work.
+**Limit to admit.** **Not collusion-resistant, and no proof** (limit 4). Two doctors
+can pool attribute keys and together satisfy a tree neither satisfies alone.
+Pairing-based CP-ABE (Bethencourt et al.) blinds keys per user and prevents this. We
+rejected Charm-Crypto (ADR-0001) and chose this construction (ADR-0002, ADR-0026).
+Say it is future work.
 
 **Likely questions.**
 - *Why not just use CP-ABE?* Library unavailable and unmaintained for our stack;
@@ -345,80 +389,99 @@ credential and patient-login boundaries.
 
 ---
 
-## Topic 4. The break-glass gate (2-of-3)
+## Topic 4. The break-glass gate (weighted 3-of-4)
 
-**One sentence.** The emergency key is split into three shares held by three
-different parties, any two rebuild it, and the gate refuses fewer than two, so no
-single custodian, including the audit service, can open a record alone.
+**One sentence.** The emergency key is split into four shares, any three rebuild it,
+and the **audit service holds two of them**, so no single holder (including the audit
+service) can open a record and **every opening needs the audit service**, which
+commits a log entry before it releases its shares.
 
-**Analogy.** A nuclear-silo two-person rule, but with three possible keyholders:
-the **clinician's facility**, the **patient's home authority**, the **audit
-service**. Any two turn their keys together.
+**Analogy.** A vault that needs three of four keys, where the **notary holds two** and
+the clinician's agent and the patient's home authority hold one each. The notary never
+hands over its keys until it has written the visit in the book, and the notary alone
+(two keys) cannot open the vault.
 
 ### Key and split (`src/breakglass/emergency_key.py`)
 
-- `generate_emergency_key()`: 32 random bytes from the CSPRNG via `crypto_core`
-  (rule: all crypto goes through `crypto_core`).
-- `split_emergency_key(key)`: `split_secret(key, k=2, n=3)`. Constants:
-  `THRESHOLD = 2`, `TOTAL_SHARES = 3`.
-- Property: one share reveals nothing about the key.
+- `generate_emergency_key()`: 256-bit random key via `crypto_core`.
+- `split_emergency_key(key)`: Shamir with `THRESHOLD = 3`, `TOTAL_SHARES = 4` over
+  GF(2^256+297). Holders: **x=1 custodian, x=2 home authority, x=3 and 4 audit**.
+- A holder accepts only its own x-set ({1}, {2}, {3,4}), so a misrouted share cannot
+  give a custodian-plus-home-authority pair three points (ADR-0089).
+
+| Combination | Points | Opens? |
+|---|---|---|
+| Custodian alone / home authority alone | 1 | No |
+| Audit service alone | 2 | **No** (claim C3) |
+| Custodian + home authority | 2 | **No**, and no audit entry exists |
+| Audit + custodian | 3 | Yes |
+| Audit + home authority | 3 | Yes (fallback when share 1 is lost) |
 
 ### The gate (`src/breakglass/gate.py`): `open_emergency_access`
 
 The single choke point where shares become a decryptable DEK:
 
-1. **De-duplicate by x.** Duplicate shares count once. If unique shares < 2,
-   raise `InsufficientSharesError` **before any reconstruction is attempted**.
+1. **De-duplicate by x.** If fewer than 3 distinct x, raise `InsufficientSharesError`
+   **before any reconstruction is attempted**. The gate checks *only* that three
+   distinct x are present: **it checks no share holder.**
 2. Reconstruct the emergency key (`combine_shares`).
-3. Unwrap the record's DEK, which is AES-GCM-wrapped under the emergency key.
-   A wrong key (tampered shares) fails authentication; nothing is re-wrapped.
-4. Re-wrap the DEK for the emergency clinician: PRE `encapsulate_key` creates a
-   fresh delivery key under the clinician's PRE public key; the DEK is AES-GCM
-   encrypted with the record id as AAD; the blob is packed with **fixed-length
-   framing** (32 + 32 + nonce bytes, then ciphertext), because raw binary can
-   legitimately contain the `0x1f` separator byte.
-5. Emit a signed `to Emergency-open` transition event (needs a reason code).
-6. Return emergency key, re-wrapped DEK, and event as a frozen result. The caller
-   must not persist the emergency key.
+3. Unwrap the record's DEK (AES-GCM under the emergency key). A wrong key (a
+   tampered, unauthenticated share) fails authentication; nothing is re-wrapped.
+4. Deliver the DEK to the clinician: a KEM to the clinician's ElGamal key, AES-GCM with
+   the record id as AAD, packed with fixed-length framing. **The facility sees the
+   plaintext DEK meanwhile.**
+5. The signed `-> Emergency_Open` transition (needs a reason code), verified against
+   the clinician's certificate, is applied; **no key is rotated**.
+6. Return emergency key, delivered DEK and event as a frozen result. The caller must
+   not persist the emergency key.
 
-Order matters: **the event is signed last**, so a failed unlock never leaves a
-signed "emergency opened" artefact.
+**Why every set contains an audit share** is arithmetic from the placement: the two
+other holders have only two points between them. It is **not enforced by the gate**.
+That is a deliberate honesty point in the paper.
 
 ### What the gate does not do (know this boundary)
 
-It trusts that the **Emergency Assertion** was already validated (Avaneeth's
-topic) and that the **audit service wrote its log entry before releasing its
-share** (Ojas's topic). Your gate is the maths; theirs are the preconditions. The
-hand-off sentence: "the log-before-release rule is what Ojas will show next."
+It trusts that the **Emergency Assertion** was validated (Avaneeth's topic) and that
+the **audit service committed its entry before releasing shares 3 and 4** (Ojas's
+topic). Your gate is the maths; theirs are the preconditions.
 
-### Why 2-of-3 and not 3-of-3 or 1-of-1
+### Why weighted 3-of-4, and not 2-of-3
 
-- 1-of-1: whoever holds it can open any record alone. That is a promise, not a
-  control.
-- 3-of-3: any one unavailable party blocks an emergency. Unsafe for patients.
-- 2-of-3: no single party can act alone, and any one can be offline.
+The old 2-of-3 gave the home authority a share that was never deposited; had it been,
+shares 1 + 2 would open a record with **no audit entry**. A (3,4) split with two points
+at the audit service makes the audit commit unconditional and still gives a fallback
+for a lost share 1 (ADR-0089, which supersedes ADR-0074). Weighting is just Shamir
+with two points for one holder, not a new construction.
 
 **Say in 90 seconds.**
-"The emergency key is 256 bits, split 2-of-3: clinician's facility, home authority,
-audit service. Fewer than two unique shares and the gate raises before it touches
-the key. With two, we rebuild the key, unwrap the DEK, re-wrap it to the clinician
-under PRE, and sign the move to Emergency-open. The audit service alone cannot
-open a record; that is claim C3, and we test it."
+"The emergency key is 256 bits, split three-of-four over a 257-bit prime field: the
+custodian holds x=1, the home authority x=2, and the audit service x=3 and 4. Fewer
+than three distinct x and the gate raises before it touches the key. Because the
+audit service holds two of the four points, every set of three includes an audit
+share, so there is no opening without the audit commit, and the audit service alone
+cannot open a record. That is claim C3 and we test it, and I will be clear that the
+gate checks only the count, the audit-share property comes from share placement."
 
-**Limit to admit.** In the demo, the Key Custodian is one shared process holding
-share 1; real clinicians would hold their own keys. The threshold property is
-unaffected, but it is a simplification (`07-honest-limits...`).
+**Limits to admit.**
+- The Key Custodian is one shared process holding share 1 (limit 5).
+- **The audit service is a single point of availability** (limit 8): share 2 covers
+  only a lost share 1, not a custodian or audit outage, and an audit restart loses
+  shares 3 and 4 of every record until re-keyed.
+- **The audit service is trusted** (limit 13): a compromised one could release its
+  shares without a durable entry.
+- Shamir shares are unauthenticated; the GCM unwrap detects a wrong share.
 
 **Likely questions.**
-- *What if two shares are corrupted?* Reconstruction fails or AES-GCM unwrap
-  fails; either way, closed.
+- *What if two shares are corrupted?* Reconstruction gives a wrong key; AES-GCM unwrap
+  fails; closed.
 - *What if a custodian sends the same share twice?* Counted once (dedupe by x).
-- *Can two colluding custodians open without an audit entry?* The audit service is
-  one of the three, and its policy is to commit first. Two non-audit custodians
-  could in principle open; that is why the clinician share is only released after
-  a valid assertion and why every release is logged. Be candid about it.
+- *Can two colluding custodians open without an audit entry?* No: custodian + home
+  authority = 2 points. That is the point of the weighting.
+- *Why does the home authority not log?* Share 2 opens nothing without shares 3 and 4,
+  and the audit service logs every release of those. (Future work: a home authority
+  that also logs, so break-glass works without the audit service.)
 
-**Tests.** `tests/security/test_phase3_breakglass_security.py` (claim C3),
+**Tests.** `tests/security/test_phase3_breakglass_security.py` (claims C2, C3),
 `tests/breakglass/test_gate.py`.
 
 ---
@@ -430,9 +493,9 @@ unaffected, but it is a simplification (`07-honest-limits...`).
 2. **Policy tree for `rec-002`.** Root `OR`: left branch clinical `AND`
    (role + facility), right leaf `owner:pat-102`. Annotate "AND = Shamir k-of-k,
    OR = same secret".
-3. **2-of-3 diagram.** Three boxes (facility, home authority, audit service) with
-   one share each; any two arrows meet at the emergency key; one arrow ends at a
-   cross.
+3. **3-of-4 diagram.** Boxes for custodian (x=1), home authority (x=2) and audit
+   service (x=3, 4). Any three arrows meet at the emergency key; every valid triple
+   passes through the audit box; custodian + home authority ends at a cross.
 
 ## Your demo
 
@@ -446,10 +509,11 @@ unaffected, but it is a simplification (`07-honest-limits...`).
 
 Be ready for the table to say "NO SYSTEM TEST" if the suite has not been run in
 that shell first; run pytest for `tests/security` beforehand and re-check the
-output before you present. The current status in `10-presentation-split.md` is
-5 of 11 claims hold (C1, C2, C5, C8, C11) and 6 are expected-fail against review
-findings. The full suite was re-run on 2026-10-09 against Postgres: 643 passed,
-1 skipped, 6 expected-fail. Say the numbers plainly rather than rounding up.
+output before you present. The paper's live run (2026-10-21, commit `57a1a8c`)
+shows **all eleven claims hold, 35 of 35 system-level tests passing, none skipped**;
+the full suite gave **1006 passed, 2 skipped (by design), 0 failed**. Say the numbers
+plainly rather than rounding up, and add that the mutation log for the newest tests
+is recorded only in prose.
 
 ## Rubric slides you own
 
@@ -459,10 +523,12 @@ Idea: log first, then key. Four measurable objectives; pull them from
 `PROJECT.md`. Scope and out-of-scope (no ML anomaly layer, no FHIR/HL7).
 
 **Test-case table (2 marks, testing).** The 11 claims C1 to C11, each with
-statement, module test, system test, status. Name the mutation check as the proof
-that the tests are not decorative.
+statement, system-level and module-level test counts, status (the paper's claims
+table has exactly this). Name the mutation check (18 mutations, C1 to C10) as the proof
+that the tests are not decorative, and its limit: not re-run per test after 3-of-4.
 
-**Bugs found and fixed (testing).** Three, from the stress test driver:
+**Bugs found and fixed (testing).** Three, from the early stress-test driver (plus a
+fourth, the cross-facility 500, from running services as separate containers):
 
 | # | Bug | Fix |
 |---|---|---|
@@ -470,11 +536,11 @@ that the tests are not decorative.
 | 2 | Store stayed "emergency-open" after expiry, blocking a second break-glass | Stale state reconciled when the timer holds no session |
 | 3 | Admin case-review page crashed on a break-glass with no portal case | Template fixed, tests added |
 
-Merged as PR #35, ADR-0044 (Proposed, awaiting ratification). Be precise: fix 2 is
-a state-label fix. Since ADR-0047 the timer mirrors its expiry state into the
-store after the audit append, but the re-keyed ciphertext is still not persisted
-(open work, ADR-0043). Also mention the six Phase 5 review findings behind the
-red claims (file 7).
+Merged as PR #35, ADR-0044. Be precise: fix 2 was later replaced by the proper
+compare-and-set expiry path, and expiry now persists its full rotation before
+signing the return to the prior state (ADR-0050, ADR-0069). Also mention the six
+Phase 5 review findings behind the formerly red claims (C3, C4, C6, C7, C9, C10),
+all closed (file 7).
 
 **Deck assembly and timekeeping (presentation, 1 mark).** You keep time for all
 four speakers: about 6 minutes each, then a 4-minute shared demo.
@@ -495,7 +561,7 @@ four speakers: about 6 minutes each, then a 4-minute shared demo.
 | State machine, legal arrows, signed events | Yes |
 | Revocation, rotation, forward secrecy | Yes |
 | Shamir, policy tree, consent as a gate | Yes |
-| 2-of-3 gate, emergency key | Yes |
+| Weighted 3-of-4 gate, emergency key | Yes |
 | Hash chain, PKI, PRE internals | Ojas |
 | AES-GCM, envelope, assertion, replay store | Avaneeth |
 | Search, expiry timer, wire analysis, benchmarks | Nandini |

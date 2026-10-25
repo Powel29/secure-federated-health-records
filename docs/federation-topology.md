@@ -27,7 +27,7 @@ flowchart TB
 
     subgraph AUTH["Attribute authorities"]
         med["authority-med :8010<br/>State Medical Board<br/>owns role:*"]
-        net["authority-net :8011<br/>Regional Health Network<br/>owns specialty:* facility:* owner:*<br/>patient home authority + break-glass Share 2"]
+        net["authority-net :8011<br/>Regional Health Network<br/>owns specialty:* facility:* owner:*<br/>patient home authority + break-glass share x=2"]
     end
 
     subgraph FAC["Facilities (hold no records)"]
@@ -35,8 +35,10 @@ flowchart TB
         fb["facility-b :8002<br/>out-of-network emergency entry"]
     end
 
-    store["store :8000<br/>ciphertext + wrapped keys + coded index<br/>semi-trusted, never plaintext"]
-    audit["audit :8020<br/>hash-chained log + break-glass Share 3"]
+    store["store (PostgreSQL)<br/>ciphertext + wrapped keys + coded index<br/>semi-trusted, never plaintext"]
+    audit["audit :8020<br/>hash-chained log + break-glass shares x=3,4<br/>trusted"]
+    cust["custodian :8030<br/>every persona's key agent + share x=1<br/>trusted (ADR-0043)"]
+    portal["portals :8000 (Django)<br/>patient / clinician / admin<br/>no subject keys, never decide access"]
 
     root -->|issues CA cert| fa
     root -->|issues CA cert| fb
@@ -47,13 +49,20 @@ flowchart TB
     fa -->|read/write ciphertext| store
     fb -->|discover + read ciphertext| store
     fa -->|append audit events| audit
-    fb -->|request break-glass share| audit
+    fb -->|request break-glass shares 3,4| audit
+    portal -->|by subject id, no keys| cust
+    cust -->|sealed shares to the gate| fb
+    net -->|share x=2, only if share 1 is lost| cust
+    audit -->|sealed shares 3,4 after commit| cust
 ```
 
 Trust boundaries (ARCHITECTURE §5): `store` is honest-but-curious and holds no
-keys; `audit` is trusted to commit-before-release one share but cannot open a
-record alone; facilities hold clinician certs and read ciphertext but **hold no
-records**.
+keys; `audit` is trusted to commit-before-release its two shares (x=3 and 4)
+but cannot open a record alone (two points of the three needed), and is itself
+trusted not to lie (no proofs of presence or extension); the `custodian` is one
+shared process acting as every persona's key agent; facilities hold clinician
+certs and read ciphertext but **hold no records**. The paper's Section III lists
+the four adversaries and the four trusted parties.
 
 ## 3. PKI and certificate architecture
 
@@ -91,9 +100,11 @@ Value spellings match ARCHITECTURE §3 (`role:physician`, `role:emergency-physic
 constraint.
 
 **`authority-net` is the patient home authority.** It issues each patient's
-`owner:<patient_id>` attribute *and* holds break-glass Share 2. See ADR-0019 for
-the trust-concentration consequence (a rogue `authority-net` could mint an owner
-key and contribute Share 2, but still cannot open a record alone — 2 of 3).
+`owner:<patient_id>` attribute *and* holds break-glass share x=2 (weighted 3-of-4,
+ADR-0089). See ADR-0019 for the trust-concentration consequence (a rogue
+`authority-net` could mint an owner key and hold share 2, but share 2 plus the
+custodian's share 1 is only two points of the three needed, so it still cannot open
+a record alone).
 
 Departments (cardiology ward, ER, ICU) are **portal metadata**, not crypto
 attributes — they never appear in a policy tree and never gate a key
@@ -123,7 +134,7 @@ OR
 ```
 `role:emergency-physician` satisfies the tree alone — the out-of-network
 break-glass path — but reconstructing the emergency *key* still requires the
-2-of-3 Shamir gate and a committed audit entry (ARCHITECTURE §5). Policy
+weighted 3-of-4 Shamir gate and a committed audit entry (ARCHITECTURE §5). Policy
 satisfaction and the threshold gate are separate checks; both run.
 
 **Patient self-access** — the `owner:pat-101` leaf alone satisfies every one of
@@ -143,7 +154,8 @@ Demo arc: Alice's record lives encrypted in `store` under the routine-cardiology
 policy (plus her `owner` leaf). Dr. Bob reads it normally at `facility-a`. Alice
 arrives unconscious at out-of-network `facility-b`; Dr. Carol has no routine
 access, declares an emergency, and break-glass across the federation reconstructs
-the emergency key from 2 of 3 shares only after `audit` commits its log entry.
+the emergency key from 3 of 4 shares, two of which `audit` releases only after it
+validates the assertion and commits its log entry.
 
 ## 7. Where this maps in the build
 

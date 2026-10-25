@@ -37,7 +37,7 @@
   <rect x="290" y="272" width="260" height="100" rx="10" fill="#e3f2fd" stroke="#1565c0" stroke-width="2.5"/>
   <text x="420" y="304" text-anchor="middle" font-size="16" font-weight="700" fill="#0d47a1">wrap_dek (AES-GCM)</text>
   <text x="420" y="326" text-anchor="middle" font-size="12.5">AAD = record_id</text>
-  <text x="420" y="344" text-anchor="middle" font-size="12.5">generation counter (+1 on re-wrap)</text>
+  <text x="420" y="344" text-anchor="middle" font-size="12.5">generation counter (+1 on rotation)</text>
   <text x="420" y="362" text-anchor="middle" font-size="12.5">wrong key or wrong record: refuse</text>
 
   <rect x="620" y="282" width="210" height="80" rx="10" fill="#fdecea" stroke="#c62828" stroke-width="3"/>
@@ -56,7 +56,7 @@
 
   <rect x="30" y="410" width="190" height="90" rx="10" fill="#fff4e0" stroke="#ef6c00" stroke-width="2.5"/>
   <text x="125" y="442" text-anchor="middle" font-size="15" font-weight="700">Emergency key</text>
-  <text x="125" y="464" text-anchor="middle" font-size="12">split 2-of-3 (Shamir)</text>
+  <text x="125" y="464" text-anchor="middle" font-size="12">split 3-of-4 (Shamir)</text>
   <text x="125" y="482" text-anchor="middle" font-size="12" fill="#546e7a">break-glass only</text>
   <path d="M220,455 C260,455 270,380 330,374" stroke="#37474f" stroke-width="2.4" fill="none" marker-end="url(#ar)"/>
   <text x="280" y="440" font-size="12" fill="#546e7a">a second wrapping</text>

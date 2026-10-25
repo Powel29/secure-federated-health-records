@@ -12,7 +12,7 @@
   </defs>
   <rect width="1000" height="640" fill="#ffffff"/>
   <text x="500" y="34" text-anchor="middle" font-size="22" font-weight="700" fill="#1a1a1a">Commit-then-release: no log entry, no key</text>
-  <text x="500" y="55" text-anchor="middle" font-size="13" fill="#546e7a">Audit service releases share 3 only after its log entry is committed</text>
+  <text x="500" y="55" text-anchor="middle" font-size="13" fill="#546e7a">Audit service validates the assertion, commits its log entry, and only then releases shares 3 and 4</text>
 
   <!-- participants -->
   <g stroke-width="2.5" text-anchor="middle" font-weight="700" font-size="15">
@@ -32,7 +32,7 @@
   <!-- messages -->
   <g font-size="13.5" fill="#1a1a1a">
     <path d="M145,170 H383" stroke="#37474f" stroke-width="2.4" fill="none" marker-end="url(#ar)"/>
-    <text x="155" y="162"><tspan font-weight="700">1</tspan> release share 3 (record id, assertion)</text>
+    <text x="155" y="162"><tspan font-weight="700">1</tspan> release 3 + 4 (assertion, validated)</text>
 
     <path d="M385,225 H623" stroke="#37474f" stroke-width="2.4" fill="none" marker-end="url(#ar)"/>
     <text x="395" y="217"><tspan font-weight="700">2</tspan> BEGIN, insert chained log entry</text>
@@ -42,17 +42,17 @@
     <text x="500" y="317" text-anchor="middle"><tspan font-weight="700">4</tspan> committed, new chain head</text>
 
     <path d="M383,385 H147" stroke="#2e7d32" stroke-width="2.6" fill="none" marker-end="url(#ag)"/>
-    <text x="265" y="377" text-anchor="middle" font-weight="700" fill="#2e7d32">5 only now: share 3 + sequence number</text>
+    <text x="265" y="377" text-anchor="middle" font-weight="700" fill="#2e7d32">5 only now: sealed 3 + 4 + entry</text>
 
     <path d="M145,450 H863" stroke="#37474f" stroke-width="2.4" fill="none" marker-end="url(#ar)"/>
-    <text x="505" y="442" text-anchor="middle"><tspan font-weight="700">6</tspan> assertion + shares 1 and 3</text>
-    <text x="865" y="480" text-anchor="middle" font-size="12.5">7 validate, rebuild key,</text>
+    <text x="505" y="442" text-anchor="middle"><tspan font-weight="700">6</tspan> assertion + sealed shares (1 or 2, plus 3 and 4)</text>
+    <text x="865" y="480" text-anchor="middle" font-size="12.5">7 validate, combine 3 shares,</text>
     <text x="865" y="498" text-anchor="middle" font-size="12.5">state &#8594; EMERGENCY_OPEN</text>
   </g>
 
   <!-- failure branch -->
   <rect x="40" y="520" width="920" height="80" rx="10" fill="#fdecea" stroke="#c62828" stroke-width="2"/>
   <text x="60" y="548" font-size="14.5" font-weight="700" fill="#c62828">Failure branch (fail closed)</text>
-  <text x="60" y="572" font-size="13.5" fill="#1a1a1a">If step 3 fails, no committed entry exists, so step 5 never happens: the audit service answers 503 and no share leaves.</text>
+  <text x="60" y="572" font-size="13.5" fill="#1a1a1a">If step 3 fails, no committed entry exists, so step 5 never happens: the audit service answers 503 and no share leaves. On the wire the COMMIT is seen 1.35 ms before the response.</text>
   <text x="60" y="591" font-size="13.5" fill="#1a1a1a">The log entry is the precondition of the key, not a promise to write it afterwards.</text>
 </svg>
