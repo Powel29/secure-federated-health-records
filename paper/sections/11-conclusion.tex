@@ -12,13 +12,14 @@ log entry. % src: facts-F4#10, facts-F2#50, facts-F8#2, facts-F8#3
 Log-gated decryption is prior art; our contribution is the
 combination, implemented and tested, in which revocation and expiry re-key
 the record and emergency search ends with the window. % src: facts-F8#2, facts-F8#3, facts-F1#47, facts-F3#54
-On the evaluated commit all 35 claim-tagged system tests pass, and in-process
+On the evaluated version of the code all 35 claim-tagged system tests pass, and in-process
 cryptographic operations take under a millisecond. % src: facts-live#12, facts-F7#26, facts-F7#27, facts-F7#28, facts-F7#29
 
 Future work, from Section~\ref{sec:limits}: a Merkle log whose
 presence and extension proofs the facility checks; a home authority that
 also logs, so break-glass works without the audit service; epoch-versioned
-attribute keys; real CP-ABE and a pairing-based unidirectional PRE;
+attribute keys; a collusion-resistant access structure and a pairing-based
+unidirectional PRE;
 client-side cryptography in personal key agents; keyed chain
 pseudonyms; home-authority revocation; production-size groups; and the
 cut scalability runs. % src: facts-F8#25, facts-F3#19, facts-F7#35

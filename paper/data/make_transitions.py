@@ -112,8 +112,8 @@ def main() -> int:
         " signers checked against facts-F1#46.",
         r"\begin{table}[t]",
         r"\centering",
-        r"\caption{Legal lifecycle transitions as shipped in \texttt{src/lifecycle/}."
-        r" Any other pair raises \texttt{IllegalTransitionError} before signing. Signer ``Timer'' is the timer-service key.}"
+        r"\caption{Legal lifecycle transitions as implemented."
+        r" Any other pair is rejected before signing. Signer ``Timer'' is the timer-service key.}"
         r"  % src: facts-F1#11, facts-F1#19, facts-F1#33, facts-F1#73",
         r"\label{tab:transitions}",
         r"\footnotesize",

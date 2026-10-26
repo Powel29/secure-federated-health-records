@@ -18,8 +18,8 @@ as a patient's home authority, holds share~2, which with the custodian's
 share~1 reconstructs nothing; it can, however, mint that patient's
 \texttt{owner} key, so protection is partial. % src: facts-F5#17, facts-F5#18, facts-F5#12
 \emph{(D) Colluding clinicians} who pool attribute keys are \emph{not}
-stopped: our Shamir-over-policy-tree structure is not collusion-resistant
-CP-ABE. % src: facts-F5#19
+stopped: our Shamir-over-policy-tree structure is not collusion-resistant.
+% src: facts-F5#19
 No adversary is an on-path network attacker; ``no plaintext on the wire'' is
 a goal of the TLS profile only (Section~\ref{sec:traffic}). % src: facts-F5#21, facts-F6#5, facts-F4#33
 
@@ -62,3 +62,10 @@ key. % src: facts-live#13
 In C1, re-wrap is a full rotation to a policy that excludes the revoked
 clinician; in C3, the audit service's two shares together are one short of
 the threshold. % src: facts-F1#37, facts-F5#58, facts-F2#36, facts-live#13
+
+\textbf{Confidentiality, integrity, availability.} In terms of the CIA triad,
+confidentiality is the aim of C1, C3, C4, C9, C10 and C11 and of the TLS-only
+wire goal; integrity is the aim of C5 (the log), C6 and C7 (transitions) and
+C8 (replay). Availability is deliberately subordinate: every control fails
+closed, so an unavailable audit service blocks break-glass
+(Section~\ref{sec:limits}, item~8). % src: facts-live#13, facts-F2#62, facts-F2#63

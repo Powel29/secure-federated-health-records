@@ -58,7 +58,7 @@ The federation is simulated: two mock facilities, two attribute authorities,
 an audit service, a Key Custodian, a PostgreSQL store and one Django process
 serving the patient, clinician and admin portals run on one machine, as local
 processes or as Docker Compose containers on one bridge, under one
-self-signed PKI root that cross-certifies the facilities
+self-signed PKI root that signs both facility CAs
 (Fig.~\ref{fig:components}). % src: facts-F4#1, facts-F4#5, facts-F4#27, facts-F4#43
 There is no HIE and no FHIR/HL7 interface, and all records are
 synthetic. % src: facts-F4#1, facts-F4#44, facts-F4#39
@@ -79,6 +79,31 @@ bootstrap. % src: facts-F4#16, facts-F4#15
 Shares travel sealed to the facility's gate; the audit service releases its
 shares only after validating the assertion and committing a log entry
 (Section~\ref{sec:breakglass}). % src: facts-F4#12
+
+\textbf{Identity and certificates.} One self-signed root signs every facility
+CA, attribute authority and service certificate; its key is held only at
+bootstrap and is a single point of trust. % src: facts-F4#27, facts-F4#31
+Certificates are X.509, with ECDSA P-256 and SHA-256: the facility CAs and
+authorities are root-signed, and a clinician's certificate is signed by
+their facility CA. % src: facts-F4#28, facts-F4#29
+Because both facility CAs chain to the same root, facility~B can validate a
+clinician enrolled at facility~A, which cross-facility break-glass needs;
+chain validation walks to a configured trusted root and fails closed on a
+bad signature, an expired window, a non-CA intermediate or an issuer
+mismatch. % src: facts-F4#27, facts-F4#30
+Each attribute authority issues signed credentials in its own namespace and
+releases an attribute key only against a valid, unrevoked, unexpired
+credential. % src: facts-F4#8, facts-F4#32
+
+\textbf{Discovery and identification.} Records live in one shared store, so
+discovery is a patient-indexed lookup that returns record identifiers only,
+not a search across facilities. % src: facts-F4#9
+To find the patient, the clinician portal looks up a name, optionally with a
+date of birth, in its own directory; ambiguous matches are listed and never
+auto-selected, a lookup that cannot be audited is not shown, and identifying
+a patient releases no key. % src: facts-F9#7, facts-F4#19
+The audit chain records the pseudonymous patient identifier, not the name or
+date of birth. % src: facts-F9#12
 
 \textbf{What portals and Postgres may not do.} They store data and identify
 users but never decide access. % src: facts-F4#19

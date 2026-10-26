@@ -108,6 +108,49 @@ above its stored mark; it compares sequence numbers only and verifies no
 entry signature.
 % src: facts-F2#79, facts-F2#81
 
+\subsection{Key Delivery and Proxy Re-Encryption}
+
+The key layer contains a hand-rolled ElGamal scheme over a 256-bit safe-prime
+group, a demonstration parameter rather than a production size.
+% src: facts-F3#18, facts-F3#19
+Used as proxy re-encryption (PRE), it moves a ciphertext from one key to
+another with a re-encryption key $rk = sk_a \cdot sk_b^{-1}$; but computing
+$rk$ needs both secret keys, the scheme is bidirectional, and it has no
+security proof.
+% src: facts-F3#42, facts-F3#43, facts-F3#50
+Break-glass does not use it: the deployed code never calls re-encryption.
+% src: facts-F3#44
+Instead the gate unwraps the DEK at the facility and delivers it with a key
+encapsulation mechanism (KEM) to the clinician's ElGamal key: it picks a
+random group element, ElGamal-encrypts it under the clinician's public key,
+derives a 32-byte key from it with HKDF, and encrypts the DEK under that key
+with AES-256-GCM, binding the record identifier as associated data.
+% src: facts-F3#45, facts-F3#46
+The delivery package has a fixed layout, only the recipient's private key
+opens it, and a package made for one record does not open as another.
+% src: facts-F3#46, facts-F3#47
+The same KEM seals shares in transit to the gate.
+% src: facts-F3#48
+The facility still sees the plaintext DEK during the unlock; hiding it from
+the facility would need a pairing-based unidirectional PRE, which we leave as
+future work.
+% src: facts-F3#46, facts-F3#50
+
+\subsection{Emergency-Scoped Search}
+
+The store keeps, for each record, an index of coded terms. % src: facts-F3#52
+A coded term is HKDF-SHA-256 over the record's emergency key, with a
+versioned salt and the normalized search term, so it is deterministic in the
+key and the term, and the store sees only opaque values and how many terms a
+record has. % src: facts-F3#51, facts-F3#55
+Search is an equality match on the coded term, and the emergency key comes
+from the expiry manager, which refuses it once the window ends, so search
+works only during a live emergency. % src: facts-F3#52, facts-F1#53, facts-F1#54
+Revocation and expiry replace the emergency key and re-derive the tokens, so
+old tokens match nothing (C4). % src: facts-F3#53, facts-F3#54
+Equal terms give equal tokens under one key, which leaks search and access
+patterns (Section~\ref{sec:traffic}); nothing here is proven. % src: facts-F3#55
+
 \subsection{Expiry by Full Rotation}
 
 The deployed window is 4\,h, which a caller may only shorten.

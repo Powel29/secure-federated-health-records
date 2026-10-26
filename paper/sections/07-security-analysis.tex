@@ -9,18 +9,15 @@ A claim holds only when every system-level test tagged with it passed; a skip
 makes it unverified, an expected failure ``fails today'', and module-level
 outcomes never change a status.
 % src: facts-F5#23, facts-F5#26
-In the run of 2026-10-21 all eleven claims hold, with 35 of 35 system-level
+In the live run all eleven claims hold, with 35 of 35 system-level
 tests passing and none skipped; these are outcomes of the tested cases, not
 proofs (Table~\ref{tab:secprops}).
 % src: facts-live#12
 
 \subsection{Per-Claim Arguments}
 
-Test names are abbreviated from the node ids printed by the run.
-% src: facts-live#13
 \emph{C1:} after revocation through the facility endpoint, on the in-memory
-store and on Postgres, the clinician cannot read
-(\texttt{c1\_revoked\_clinician\_*}).
+store and on Postgres, the clinician cannot read.
 % src: facts-live#13
 Revocation re-keys through the expiry rotation (new emergency key, shares and
 search index) and is forward-only.
@@ -30,7 +27,7 @@ names their attribute; it does not cover a revoked holder whose attribute
 the new policy still names, who still satisfies it with a kept key
 (Section~\ref{sec:limits}, item~9).
 % src: facts-F5#58, facts-F9#9
-\emph{C2:} \texttt{release\_share\_fails\_closed} makes the audit commit fail
+\emph{C2:} a test makes the audit commit fail
 and gets no share; the append runs in one transaction that raises before any
 share is returned.
 % src: facts-live#13, facts-F2#51
@@ -40,7 +37,7 @@ CA and a replayed one (the home authority, the first two), and that the
 facility opens nothing with one share, with the custodian and home authority
 together, or with the audit service's two shares.
 % src: facts-live#13, facts-F2#34
-The claim text was written on 2026-10-07, before the 3-of-4 split; that every
+The claim text predates the 3-of-4 split; that every
 qualifying set holds an audit share follows from share placement, not from a
 gate check.
 % src: facts-F5#57, facts-F2#36, facts-F2#37
@@ -50,10 +47,10 @@ still ends in a rotation, on both stores.
 % src: facts-live#13
 Tokens derive from the live emergency key, which expiry replaces.
 % src: facts-F3#53, facts-F3#54
-\emph{C5:} \texttt{c5\_tampered\_db\_row} alters a stored entry and chain
+\emph{C5:} a test alters a stored entry and chain
 verification, which checks signature, link, sequence and hash, fails.
 % src: facts-live#13, facts-F2#77
-\emph{C6, C7:} \texttt{c6\_api\_refuses\_revocation} requests a pair outside
+\emph{C6, C7:} the C6 test requests a pair outside
 the seven legal transitions; two C7 tests check that a break-glass event
 verifies against the clinician's certificate and that one the clinician did
 not sign opens nothing.
@@ -79,9 +76,9 @@ Eighteen mutations, each disabling one control by monkeypatching, cover
 C1--C10; a test passes only if a mutation of its claim turns it red, and C11
 relies on a positive control instead.
 % src: facts-F5#35, facts-F5#38, facts-F5#39, facts-F5#40, facts-F5#41, facts-F5#42, facts-F5#43, facts-F5#44, facts-F5#45
-The only per-test mutation log (2026-10-19, 43 rows, each red under some
-mutation) predates the 3-of-4 split and lacks seven of today's claim-tagged
-nodes; the post-split run of 2026-10-21 is recorded only in prose.
+The only per-test mutation log (43 rows, each red under some mutation)
+predates the 3-of-4 split and lacks seven of the current claim-tagged nodes;
+the later run is recorded only in prose.
 % src: facts-F5#46, facts-F5#49, facts-F5#50
 The runner also counts a test whose baseline is skipped as neither caught nor
 decorative.
@@ -97,7 +94,6 @@ Library primitives are assumed secure, not proven by us, and the hand-rolled
 Shamir sharing, policy tree and ElGamal PRE have no proof
 (Table~\ref{tab:secprops}).
 % src: facts-F3#1, facts-F3#3, facts-F3#50, facts-F5#5
-Unlike CP-ABE~\cite{bethencourt2007cpabe}, the tree is not
-collusion-resistant, and the PRE is bidirectional and unused, since
-break-glass uses only the KEM.
+The tree is not collusion-resistant, and the PRE is bidirectional and
+unused, since break-glass uses only the KEM.
 % src: facts-F3#41, facts-F3#43, facts-F3#44

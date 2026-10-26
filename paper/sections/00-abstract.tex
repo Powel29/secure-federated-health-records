@@ -10,12 +10,12 @@ Emergency search, derived from that key, ends at the expiry rotation.
 % src: facts-F3#51, facts-F3#53, facts-F3#54
 On a simulated federation with synthetic data, all 35 system tests tagged to eleven security claims pass in a live run (test outcomes, not proofs), and packet captures show the audit commit before the shares.
 % src: facts-F4#1, facts-F5#8, facts-live#12, facts-F6#43, facts-F6#49
-Limitations: revocation is forward-only, expiry is server-enforced, not cryptographic, and the access structure is not full ciphertext-policy attribute-based encryption (not collusion-resistant).
+Limitations: revocation is forward-only, expiry is server-enforced, not cryptographic, and the access structure is a hand-built substitute that is not collusion-resistant.
 % src: facts-F5#16, facts-F1#54, facts-F3#41
 The audit service is trusted (its log has no proofs of presence or extension) and is a single point of availability, as the home authority's share replaces only a lost custodian share; ``no plaintext on the wire'' holds only under Transport Layer Security (TLS).
 % src: facts-F2#59, facts-F5#11, facts-F2#62, facts-F2#63, facts-F6#6
 \end{abstract}
 
 \begin{IEEEkeywords}
-Electronic health records, break-glass access, transparent decryption, threshold secret sharing, key rotation
+Electronic health records, break-glass access, transparent decryption, threshold secret sharing, key rotation, emergency-scoped search, X.509 PKI
 \end{IEEEkeywords}

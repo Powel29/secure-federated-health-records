@@ -15,11 +15,11 @@ timer-signed, audited transitions. % src: facts-F9#2, facts-F5#6, facts-F1#33, f
 record.} This is claimed and tested (C3), not assumed; it rests on share
 placement, as the gate checks no holder, only that three distinct
 $x$ are present. % src: facts-F9#3, facts-live#3, facts-F2#37
-\textit{(4) The access structure is not full CP-ABE.} Shamir sharing over an
-AND/OR tree with symmetric attribute keys is \emph{not collusion-resistant}
-as pairing-based CP-ABE~\cite{bethencourt2007cpabe} is: two users could pool
-attribute keys to satisfy a policy neither satisfies alone, and it has no
-proof. % src: facts-F9#4, facts-F3#32, facts-F3#36, facts-F3#41, facts-F8#20
+\textit{(4) The access structure is not collusion-resistant.} Shamir sharing
+over an AND/OR tree with symmetric attribute keys, unlike pairing-based
+ciphertext-policy ABE~\cite{bethencourt2007cpabe}, is \emph{not
+collusion-resistant}: two users could pool attribute keys to satisfy a
+policy neither satisfies alone, and it has no proof. % src: facts-F9#4, facts-F3#32, facts-F3#36, facts-F3#41, facts-F8#20
 \textit{(5) One shared process is every user's key agent.} A single
 custodian holds every synthetic persona's signing key, PRE key and
 credentials, plus share~1 of every record, in memory, and signs for them

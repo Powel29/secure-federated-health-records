@@ -102,8 +102,7 @@ def main() -> None:
         r"\footnotesize",
         r"\setlength{\tabcolsep}{3pt}",
         (
-            r"\caption{Security claims C1--C11, live claims run "
-            f"{date} on repository commit \\textnormal{{\\texttt{{{RUN_SHA}}}}}. "
+            r"\caption{Security claims C1--C11, from a live claims run. "
             r"Status is computed from the system-level tests only; "
             r"Sys./Mod.\ count the system- and module-level tests tagged with the claim.}"
         ),

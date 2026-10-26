@@ -1,8 +1,8 @@
 \section{Key-Lifecycle State Machine}\label{sec:lifecycle}
 
 Every record carries one lifecycle state, and every committed change of it is
-a signed, replay-protected event checked by one state machine in
-\texttt{src/lifecycle/} (Fig.~\ref{fig:states}, Table~\ref{tab:transitions}).
+a signed, replay-protected event checked by one state machine
+(Fig.~\ref{fig:states}, Table~\ref{tab:transitions}).
 % src: facts-F1#1, facts-F1#3, facts-F1#11, facts-F1#21, facts-F1#46, facts-F1#75
 
 \subsection{States and Transitions}\label{sec:lifecycle-states}
@@ -62,19 +62,19 @@ from, so it cannot undo a revocation.
 
 \subsection{Signed Transitions}\label{sec:lifecycle-signing}
 
-A transition is a frozen \texttt{TransitionEvent} carrying an event id,
+A transition is a frozen event carrying an event id,
 record id, from- and to-state, actor id, optional reason code, issue time,
 nonce and signature; unknown fields are rejected and the nonce must be at
 least 16~bytes.
 % src: facts-F1#3, facts-F1#4, facts-F1#5
-The signed bytes are a domain tag (\texttt{ehr/transition-event/v1}) followed
+The signed bytes are a transition-event domain tag followed
 by every field but the signature, in a fixed order, each length-prefixed.
 % src: facts-F1#27, facts-F3#14
 The domain tag keeps a clinician's transition signature from verifying as
 their emergency assertion.
 % src: facts-F1#72
-Signatures are ECDSA on P-256 with SHA-256; the event id comes from
-\texttt{uuid4} and the nonce from \texttt{secrets}.
+Signatures are ECDSA on P-256 with SHA-256; the event id is a random
+UUID and the nonce comes from a cryptographically secure generator.
 % src: facts-F1#28, facts-F1#29
 
 Revocation is signed with the patient's key and break-glass open with the
@@ -90,16 +90,13 @@ clinician's or the audit service's key, though a patient may also revoke a
 record left in \textsc{Expired}; each facility process makes a fresh timer key.
 % src: facts-F1#33, facts-F1#34, facts-F1#73
 
-An illegal transition fails closed before anything is signed:
-\texttt{create\_\allowbreak transition\_\allowbreak event} first calls
-\texttt{validate\_\allowbreak transition},
-which raises \texttt{Illegal\-Transition\-Error} for any pair outside the legal
-set, so no event id, nonce or signature is produced.
+An illegal transition fails closed before anything is signed: event creation
+first checks the pair against the legal set and raises for any pair outside
+it, so no event id, nonce or signature is produced.
 % src: facts-F1#17, facts-F1#19
-On receipt, \texttt{apply\_\allowbreak transition} verifies the signature, then re-checks
+On receipt, the state machine verifies the signature, then re-checks
 legality, then requires the event's from-state to equal the current state,
-and finally consumes the event id, raising \texttt{Replayed\-Event\-Error} on
-reuse.
+and finally consumes the event id, rejecting reuse.
 % src: facts-F1#20, facts-F1#21, facts-F1#23
 Because the signature is checked first, a tampered to-state surfaces as an
 invalid signature, and a forged event cannot burn a legitimate id.
@@ -157,7 +154,7 @@ signed afresh but not logged again.
 
 \subsection{Access Structure: Shamir over a Policy Tree}\label{sec:lifecycle-access}
 
-In place of CP-ABE, a hand-rolled access structure guards each record's DEK.
+A hand-rolled access structure guards each record's DEK.
 % src: facts-F3#3, facts-F3#34
 A policy is a tree of \textsc{Leaf}, \textsc{And} and \textsc{Or} nodes,
 with no general $k$-of-$n$ gate.
@@ -172,7 +169,7 @@ the record id, policy id and generation, so a wrapping cannot be moved to
 another record or replayed as another generation.
 % src: facts-F3#29, facts-F3#34
 Attribute keys are symmetric 32-byte keys indexed by
-(authority, attribute name, value), so the same \texttt{name:value} from
+(authority, attribute name, value), so the same attribute name and value from
 another authority does not open a leaf.
 % src: facts-F3#36
 Leaf ciphertexts carry no associated data and are therefore not bound to
@@ -182,7 +179,7 @@ Every record's tree has the form
 $\textsc{Or}(\mathit{clinical\ policy}, \mathit{owner}{:}\mathit{patient})$,
 where the owner leaf belongs to the patient's home authority.
 % src: facts-F3#40
-Reconstruction runs bottom-up and raises \texttt{PolicyDeniedError} if the
+Reconstruction runs bottom-up and is refused if the
 root is unsatisfied; it never returns a partial or default secret.
 % src: facts-F3#38
 
@@ -200,11 +197,8 @@ service; Section~\ref{sec:breakglass} describes the gate
 that combines them.
 % src: facts-F1#41, facts-F3#49
 
-This construction is not full CP-ABE.
-% src: facts-F3#41
-It is not collusion-resistant: two clinicians can pool attribute keys to
-satisfy a policy that neither satisfies alone, which pairing-based CP-ABE
-prevents.
+This construction is not collusion-resistant: two clinicians can pool
+attribute keys to satisfy a policy that neither satisfies alone.
 % src: facts-F3#41
 It has no security proof (Section~\ref{sec:security}).
 % src: facts-F3#41

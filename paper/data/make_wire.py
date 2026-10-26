@@ -74,7 +74,7 @@ def main() -> None:
         r"\setlength{\tabcolsep}{3pt}",
         (
             r"\caption{PyShark wire checks on the plain and TLS captures "
-            r"of 2026-10-21 (provenance in Section~\ref{sec:eval}).}"
+            r"(provenance in Section~\ref{sec:eval}).}"
         ),
         "% src: " + ", ".join(f"facts-F6#{i}" for i in range(34, 54))
         + ", facts-F6#90, facts-F6#93",

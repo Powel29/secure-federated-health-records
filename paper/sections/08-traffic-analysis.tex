@@ -30,7 +30,7 @@ sealed; the DEK canary had no plain hit either.
 
 \emph{Commit before release.} The analyzer matches the audit service's
 Postgres INSERT and \texttt{COMMIT} acknowledgement to the
-\texttt{/breakglass/release} response, inside which the sealed audit shares
+share-release response, inside which the sealed audit shares
 must first appear (the analyzer keys on share~3; share~4 travels in the same
 response and is not timed separately); the \texttt{COMMIT} reaches the wire
 1.35\,ms before that response.
@@ -48,7 +48,7 @@ DEK: it learns that, where and when a break-glass happened, and its size.
 
 \emph{Search leakage.} The run of Table~\ref{tab:wire} measured one search.
 % src: facts-F6#53
-The figures below come from two runs dated 2026-10-19, before the 3-of-4
+The figures below come from two earlier runs, made before the 3-of-4
 change (the search module is unchanged), each with 16 searches on one record,
 one refused after expiry.
 % src: facts-F6#91, facts-F6#57, facts-F6#59
@@ -61,7 +61,7 @@ search-pattern leakage of deterministic searchable
 encryption~\cite{curtmola2006sse}, but the three terms searched across expiry
 got new tokens.
 % src: facts-F3#55, facts-F6#64, facts-F6#65
-Under TLS (2026-10-19) no URI, term or token is visible, yet response records
+Under TLS no URI, term or token is visible, yet response records
 still separate hit, miss and refusal (60, 51, 112\,B) and each request record
 is the term length plus 63\,B.
 % src: facts-F6#68, facts-F6#69, facts-F6#71, facts-F6#72
