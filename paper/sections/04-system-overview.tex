@@ -83,14 +83,12 @@ shares only after validating the assertion and committing a log entry
 \textbf{Identity and certificates.} One self-signed root signs every facility
 CA, attribute authority and service certificate; its key is held only at
 bootstrap and is a single point of trust. % src: facts-F4#27, facts-F4#31
-Certificates are X.509, with ECDSA P-256 and SHA-256: the facility CAs and
-authorities are root-signed, and a clinician's certificate is signed by
-their facility CA. % src: facts-F4#28, facts-F4#29
+Certificates are X.509 with ECDSA P-256; a clinician's is signed by their
+facility CA. % src: facts-F4#28, facts-F4#29
 Because both facility CAs chain to the same root, facility~B can validate a
 clinician enrolled at facility~A, which cross-facility break-glass needs;
-chain validation walks to a configured trusted root and fails closed on a
-bad signature, an expired window, a non-CA intermediate or an issuer
-mismatch. % src: facts-F4#27, facts-F4#30
+chain validation fails closed on a bad signature, an expired window, a
+non-CA intermediate or an issuer mismatch. % src: facts-F4#27, facts-F4#30
 Each attribute authority issues signed credentials in its own namespace and
 releases an attribute key only against a valid, unrevoked, unexpired
 credential. % src: facts-F4#8, facts-F4#32
@@ -102,8 +100,6 @@ To find the patient, the clinician portal looks up a name, optionally with a
 date of birth, in its own directory; ambiguous matches are listed and never
 auto-selected, a lookup that cannot be audited is not shown, and identifying
 a patient releases no key. % src: facts-F9#7, facts-F4#19
-The audit chain records the pseudonymous patient identifier, not the name or
-date of birth. % src: facts-F9#12
 
 \textbf{What portals and Postgres may not do.} They store data and identify
 users but never decide access. % src: facts-F4#19
@@ -111,10 +107,3 @@ The portal holds no subject key and sends every key-needing action to the
 custodian, so a portal account alone decrypts nothing; its database roles
 cannot write store tables, and its mirrored consent state is display data no
 read path consults. % src: facts-F4#20, facts-F4#21, facts-F4#22, facts-F4#23
-
-\textbf{Caveats.} Federation services connect to Postgres as the
-\texttt{postgres} superuser; only the portal is role-restricted. % src: facts-F4#26
-HTTP TLS certificates are self-signed and server-only, with no version or
-cipher suite pinned. % src: facts-F4#34
-Only the patient revokes in this build, so one who cannot sign has no
-revocation path. % src: facts-F4#41

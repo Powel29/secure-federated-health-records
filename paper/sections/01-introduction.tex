@@ -36,12 +36,10 @@ The audit service releases its two shares only after validating a signed, one-ti
 Search tokens derive from the emergency key, so search works only during a live emergency session, and old tokens stop matching after expiry rotation.
 % src: facts-F3#51, facts-F3#53, facts-F3#54
 \item \emph{Evidence.}
-Negative security tests back eleven claims, C1--C11; all 35 system tests tagged to them pass in a live run on the evaluated version of the code (Sections~\ref{sec:security} and~\ref{sec:eval}), as test outcomes, not proofs.
+Negative security tests back eleven claims, C1--C11; all 35 system tests tagged to them pass in a live run on the evaluated version of the code (Sections~\ref{sec:security} and~\ref{sec:eval}), as test outcomes, not proofs; the mutation evidence for them is partial (Section~\ref{sec:security}).
 % src: facts-live#12, facts-F5#22
 PyShark wire checks see the audit service's database commit before the release response that carries the shares (Section~\ref{sec:traffic}).
 % src: facts-F6#43, facts-F6#47, facts-F6#49
 \end{itemize}
 We are weaker than the transparent-decryption literature in two ways: our log is a plain hash chain held by a trusted audit service, with no proofs of presence or extension, and we give no formal model (Section~\ref{sec:limits}).
 % src: facts-F8#3, facts-F8#24, facts-F2#59
-
-Sections~\ref{sec:related}--\ref{sec:overview} give related work, the threat model and the system; Sections~\ref{sec:lifecycle}--\ref{sec:traffic} the lifecycle, break-glass, security and traffic analysis; Sections~\ref{sec:eval}--\ref{sec:conclusion} evaluation, limitations and conclusion.

@@ -83,28 +83,23 @@ The home authority's share~2 covers a lost share~1 only, which the custodian
 keeps in memory.
 % src: facts-F2#62
 It does not cover a custodian or audit outage, nor an audit restart, which
-loses shares 3 and 4 for every record; by code reading, not observed, a
-restarted audit service also has a new signing key and would fail its
-startup chain check.
+loses shares 3 and 4 for every record (Section~\ref{sec:limits}, item~8).
 % src: facts-F2#63, facts-F2#64
 
 \subsection{Hash Chain}
 
-Each entry holds \texttt{seq}, \texttt{prev\_\allowbreak hash} and \texttt{entry\_\allowbreak hash},
-the event type and metadata, the actor, a correlation identifier, a timestamp
-and an ECDSA signature, with
+Each entry holds a sequence number, the previous and own hash, the event, the
+actor, a correlation identifier, a timestamp and an ECDSA signature, with
 $h_i=\mathrm{SHA\text{-}256}(\mathrm{enc}(h_{i-1},\mathit{event},t,\mathit{actor}))$
 from a zero-hash genesis (Fig.~\ref{fig:chain}b), where enc is a
-domain-tagged, length-prefixed field encoding, \textit{event} encodes the
-event type and its metadata as canonical JSON, and $t$ is the UTC timestamp.
+domain-tagged, length-prefixed encoding.
 % src: facts-F2#71, facts-F2#72, facts-F2#74
 The audit service's signature covers \texttt{seq}, both hashes, the event,
 the actor, the correlation identifier and $t$.
 % src: facts-F2#73
 Verification checks signature, link, sequence and hash, and C5 holds.
 % src: facts-F2#77, facts-live#5
-Against truncation, a facility refuses an entry whose \texttt{seq} is not
-above its stored mark; it compares sequence numbers only and verifies no
+Against truncation, a facility compares sequence numbers only, verifying no
 entry signature.
 % src: facts-F2#79, facts-F2#81
 
@@ -121,14 +116,11 @@ security proof.
 Break-glass does not use it: the deployed code never calls re-encryption.
 % src: facts-F3#44
 Instead the gate unwraps the DEK at the facility and delivers it with a key
-encapsulation mechanism (KEM) to the clinician's ElGamal key: it picks a
-random group element, ElGamal-encrypts it under the clinician's public key,
-derives a 32-byte key from it with HKDF, and encrypts the DEK under that key
-with AES-256-GCM, binding the record identifier as associated data.
-% src: facts-F3#45, facts-F3#46
-The delivery package has a fixed layout, only the recipient's private key
-opens it, and a package made for one record does not open as another.
-% src: facts-F3#46, facts-F3#47
+encapsulation mechanism (KEM) to the clinician's ElGamal key: a random group
+element is ElGamal-encrypted to the clinician, an HKDF-derived key from it
+encrypts the DEK with AES-256-GCM, and the record identifier is bound as
+associated data, so a package for one record does not open as another.
+% src: facts-F3#45, facts-F3#46, facts-F3#47
 The same KEM seals shares in transit to the gate.
 % src: facts-F3#48
 The facility still sees the plaintext DEK during the unlock; hiding it from

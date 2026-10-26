@@ -25,9 +25,7 @@ custodian holds every synthetic persona's signing key, PRE key and
 credentials, plus share~1 of every record, in memory, and signs for them
 after portal login; in reality each agent would be the person's own device or
 enclave. % src: facts-F9#5, facts-F4#14
-The threshold is not weakened, as the custodian holds share~1 only and the
-audit service still commits before releasing shares 3 and
-4. % src: facts-F9#5, facts-F4#12
+The threshold is not weakened: the custodian holds share~1 only. % src: facts-F9#5, facts-F4#12
 \textit{(6) Expiry rotation is finished after a crash or restart, not
 before.} Sessions are stored without their key, so a facility that restarts
 mid-window or crashes mid-rotation closes them at startup with a fresh full
@@ -79,12 +77,7 @@ service. % src: facts-F9#13, facts-F2#49, facts-F5#9, facts-F8#2, facts-F8#3
 patients or facilities. % src: facts-F9#17, facts-F7#35, facts-F7#36
 The federation is simulated on one machine, with no real health-information
 exchange or FHIR/HL7; all data is synthetic. % src: facts-F9#14, facts-F9#15, facts-F4#1, facts-F5#8
-There is no formal model or proof. % src: facts-F8#3
 Federation services use the PostgreSQL superuser; only the portal is
 confined by database roles. % src: facts-F4#26, facts-F4#22
-The facility's truncation check compares sequence numbers, not
-signatures. % src: facts-F2#81
-The record payload is encrypted without associated data; only the DEK
-wrapping binds record, policy and generation. % src: facts-F3#27, facts-F3#29
-The PRE, KEM and share sealing use a 256-bit demonstration ElGamal
-group with no production security level, which a deployment must replace. % src: facts-F3#18, facts-F3#19
+The ElGamal group behind the PRE, KEM and share sealing is a 256-bit
+demonstration size that a deployment must replace. % src: facts-F3#18, facts-F3#19

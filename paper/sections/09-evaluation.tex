@@ -10,9 +10,8 @@ portals. % src: facts-F4#1, facts-F4#3, facts-F4#4, facts-F4#5
 The source comprises 97 Python files (16{,}450 non-blank
 lines). % src: facts-F7#38
 On the evaluated version of the code the full suite, run against
-PostgreSQL, gave 1006 passed, 2 skipped and 0 failed; both skips test the
-missing-\texttt{dumpcap} path and skip by design when the tool is
-present. % src: facts-live#14, facts-live#15, facts-live#16
+PostgreSQL, gave 1006 passed, 2 skipped and 0 failed; both skips are by design
+(a missing-\texttt{dumpcap} path). % src: facts-live#14, facts-live#15, facts-live#16
 In the claims run on that version all 35 system-level tests passed, so every
 claim in Table~\ref{tab:claims} holds. % src: facts-live#12
 
@@ -20,9 +19,8 @@ claim in Table~\ref{tab:claims} holds. % src: facts-live#12
 30 calls timed with a monotonic performance counter; we report the median and
 the interpolated p95, with no outlier removal or CPU
 pinning. % src: facts-F7#13, facts-F7#14, facts-F7#15, facts-F7#16, facts-F7#17
-The machine in Table~\ref{tab:bench} comes from the benchmark's environment record,
-which records no code or library versions; the result files are those
-of the evaluated version. % src: facts-F7#1, facts-F7#3, facts-F7#4, facts-F7#7, facts-F7#9
+The benchmark's environment record, which holds no code or library versions,
+supplies the machine in Table~\ref{tab:bench}. % src: facts-F7#1, facts-F7#3, facts-F7#4, facts-F7#7, facts-F7#9
 Although the run is labeled as local processes, the six services ran as uvicorn
 servers in threads of the benchmark's own Python process, shared with the
 client, with PostgreSQL~16 in Docker Desktop on Windows
@@ -67,9 +65,8 @@ cryptography. % src: facts-F7#30, facts-F7#31, facts-F7#23, facts-F7#25
 Payload ciphertext expansion (Fig.~\ref{fig:expansion}) is a constant
 16 bytes, the GCM tag: 25\% at 64\,B and under 0.1\% at
 16\,KiB. % src: facts-F7#33, facts-F7#34
-It excludes everything stored beside the payload: the 12-byte nonce, two
-48-byte DEK wrappings, the compiled policy, a 66-byte share per $x$ and
-the search index. % src: facts-F7#33, facts-F3#5, facts-F3#29, facts-F3#30, facts-F2#39
+It excludes what is stored beside the payload: the nonce, DEK wrappings,
+compiled policy, shares and search index. % src: facts-F7#33, facts-F3#5, facts-F3#29, facts-F3#30, facts-F2#39
 
 \textit{Provenance and availability.} The claims run, the full test suite
 and the benchmark result files all come from one version of the code.
@@ -79,5 +76,4 @@ version; no capture, analyzer or service code changed between the two.
 % src: facts-F6#93
 The multi-search leakage figures come from earlier runs that predate the
 3-of-4 split. % src: facts-F6#91
-The repository, with its tests, raw results and the evidence notes behind
-every statement here, is private at the time of writing. % src: facts-F7#42
+The repository is private at the time of writing. % src: facts-F7#42

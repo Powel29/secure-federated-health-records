@@ -90,20 +90,17 @@ clinician's or the audit service's key, though a patient may also revoke a
 record left in \textsc{Expired}; each facility process makes a fresh timer key.
 % src: facts-F1#33, facts-F1#34, facts-F1#73
 
-An illegal transition fails closed before anything is signed: event creation
-first checks the pair against the legal set and raises for any pair outside
-it, so no event id, nonce or signature is produced.
+An illegal pair is rejected at creation, before any id, nonce or signature
+exists.
 % src: facts-F1#17, facts-F1#19
 On receipt, the state machine verifies the signature, then re-checks
 legality, then requires the event's from-state to equal the current state,
 and finally consumes the event id, rejecting reuse.
 % src: facts-F1#20, facts-F1#21, facts-F1#23
-Because the signature is checked first, a tampered to-state surfaces as an
-invalid signature, and a forged event cannot burn a legitimate id.
+Because the signature is checked first, a forged event cannot burn a
+legitimate id.
 % src: facts-F1#20, facts-F1#22
-The deployed facility backs the consumed-id store durably, so ids survive a
-restart, and the record store adds its own compare-and-set on the stored
-state.
+Consumed ids are stored durably, so they survive a restart.
 % src: facts-F1#24, facts-F1#25
 
 \subsection{Expiry}\label{sec:lifecycle-expiry}
@@ -130,27 +127,20 @@ key, runs the full rotation, and only after the rotation is stored and the new
 shares are deposited signs the return to \textsc{Granted} or
 \textsc{Revoked}.
 % src: facts-F1#39, facts-F1#63
-Each timer transition is written to the audit log first, with identifiers but
-no key material, and then mirrored into the store by compare-and-set.
+Each timer transition is written to the audit log first, with no key
+material.
 % src: facts-F1#60, facts-F1#61
-A failed attempt is retried with backoff capped at 60\,s while access stays
-closed, reusing the already-signed events and the first rotation plan, so in-process
-it neither re-signs nor mints a second emergency key.
+A failed attempt is retried with backoff while access stays closed, reusing
+the signed events and the first rotation plan.
 % src: facts-F1#45, facts-F1#58, facts-F1#59
 
-For crash recovery this build chooses to persist, when a
-session opens, a row of identifiers that holds no key; if that write fails,
-the session is not registered.
+For crash recovery a session row holds identifiers but no key.
 % src: facts-F1#66
-At startup a facility reloads its own rows for records still in
+At startup a facility reloads rows for records still in
 \textsc{Emergency\_Open} or \textsc{Expired} as sessions with no emergency
-key and $\mathit{expires\_at} = \mathit{now}$, so nobody can join them and
-the next sweep expires them.
+key, so nobody can join them and the next sweep expires them
+(Section~\ref{sec:limits}, item~6).
 % src: facts-F1#67, facts-F1#68
-The rotator then recovers the DEK through the record's policy, the same path
-revocation uses; if the store already shows \textsc{Expired}, that event is
-signed afresh but not logged again.
-% src: facts-F1#69, facts-F1#70, facts-F1#76
 
 \subsection{Access Structure: Shamir over a Policy Tree}\label{sec:lifecycle-access}
 
@@ -172,8 +162,7 @@ Attribute keys are symmetric 32-byte keys indexed by
 (authority, attribute name, value), so the same attribute name and value from
 another authority does not open a leaf.
 % src: facts-F3#36
-Leaf ciphertexts carry no associated data and are therefore not bound to
-their record, position or attribute.
+Leaf ciphertexts carry no associated data.
 % src: facts-F3#35
 Every record's tree has the form
 $\textsc{Or}(\mathit{clinical\ policy}, \mathit{owner}{:}\mathit{patient})$,
@@ -183,10 +172,8 @@ Reconstruction runs bottom-up and is refused if the
 root is unsatisfied; it never returns a partial or default secret.
 % src: facts-F3#38
 
-Shamir sharing works over $\mathrm{GF}(p)$ with $p = 2^{256}+297$, a
-257-bit prime; the secret, prefixed with its 4-byte length and zero-padded,
-is cut into 32-byte blocks, each one field element with its own random
-polynomial and a 33-byte share element.
+Shamir sharing works over $\mathrm{GF}(p)$ with $p = 2^{256}+297$, cutting the
+secret into 32-byte blocks with one random polynomial each.
 % src: facts-F3#17, facts-F3#22
 Shares are not authenticated: a well-formed wrong share yields a wrong secret,
 which the AES-GCM unwrap downstream detects.

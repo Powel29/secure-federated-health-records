@@ -1,8 +1,10 @@
 % Abstract and keywords (W1). Every sentence ends with its source tag.
 \begin{abstract}
-Accountable and transparent decryption gate key use on a log, and break-glass schemes for health records exist; but in the works we compare, the log-gated schemes have no patient revocation lifecycle, and the health-record schemes are not described as gating key release on a committed log entry.
+Log-gated decryption and break-glass access for health records both exist, but in the works we compare, the log-gated schemes have no patient revocation lifecycle, and the health-record schemes are not described as gating key release on a committed log entry.
 % src: facts-F8#1, facts-F8#2, facts-F8#3, facts-F8#9, facts-F8#13, facts-F8#14, facts-F8#15, facts-F8#18, facts-F8#23
-We implement a federated electronic health record prototype in which patient revocation, break-glass and expiry are signed, logged transitions of one key-lifecycle state machine over per-record keys, while consent is a patient-signed grant checked at read time when one is presented, outside the lifecycle; revocation and expiry re-key the record, and opening break-glass does not.
+We combine them in a federated electronic health record prototype.
+Patient revocation, break-glass and expiry are signed, logged transitions of one key-lifecycle state machine over per-record keys; revocation and expiry re-key the record, and opening break-glass does not.
+Consent is a separate patient-signed grant checked at read time.
 % src: facts-F1#1, facts-F1#11, facts-F1#35, facts-F1#46, facts-F1#47, facts-F1#77, facts-F1#78
 Following transparent decryption, the audit service holds two of four shares of each record's emergency key and releases them only after validating a signed, one-time Emergency Assertion bound to the record and committing a hash-chained log entry.
 % src: facts-F8#3, facts-F2#34, facts-F2#36, facts-F2#45, facts-F2#50, facts-F2#51
