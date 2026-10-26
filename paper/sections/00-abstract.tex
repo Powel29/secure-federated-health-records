@@ -6,7 +6,7 @@ We combine them in a federated electronic health record prototype.
 Patient revocation, break-glass and expiry are signed, logged transitions of one key-lifecycle state machine over per-record keys; revocation and expiry re-key the record, and opening break-glass does not.
 Consent is a separate patient-signed grant checked at read time.
 % src: facts-F1#1, facts-F1#11, facts-F1#35, facts-F1#46, facts-F1#47, facts-F1#77, facts-F1#78
-Following transparent decryption, the audit service holds two of four shares of each record's emergency key and releases them only after validating a signed, one-time Emergency Assertion bound to the record and committing a hash-chained log entry.
+Following transparent decryption, the audit service holds two of four shares of each record's emergency key and releases them only after validating a signed, one-time emergency declaration (the Emergency Assertion) bound to the record and committing a hash-chained log entry.
 % src: facts-F8#3, facts-F2#34, facts-F2#36, facts-F2#45, facts-F2#50, facts-F2#51
 Emergency search, derived from that key, ends at the expiry rotation.
 % src: facts-F3#51, facts-F3#53, facts-F3#54
@@ -14,7 +14,7 @@ On a simulated federation with synthetic data, all 35 system tests tagged to ele
 % src: facts-F4#1, facts-F5#8, facts-live#12, facts-F6#43, facts-F6#49
 Limitations: revocation is forward-only, expiry is server-enforced, not cryptographic, and the access structure is a hand-built substitute that is not collusion-resistant.
 % src: facts-F5#16, facts-F1#54, facts-F3#41
-The audit service is trusted (its log has no proofs of presence or extension) and is a single point of availability, as the home authority's share replaces only a lost custodian share; ``no plaintext on the wire'' holds only under Transport Layer Security (TLS).
+The audit service is trusted (its log has no proofs of presence or extension) and is a single point of availability, as the patient's home authority can replace only a lost share of the clinician's key agent; ``no plaintext on the wire'' holds only under Transport Layer Security (TLS).
 % src: facts-F2#59, facts-F5#11, facts-F2#62, facts-F2#63, facts-F6#6
 \end{abstract}
 

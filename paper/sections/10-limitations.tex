@@ -52,9 +52,9 @@ attribute key per authority and value is shared by all holders and never
 rotated, and rotation re-seals under the same keys, so a revoked holder who
 kept a key still satisfies its leaves. % src: facts-F9#9, facts-F3#37
 \textit{(10) The PRE is bidirectional, and the gate decrypts.}
-$rk = sk_a \cdot sk_b^{-1}$ inverts to the reverse key, needs both secret
-keys and is unproven; break-glass skips re-encryption: the facility unwraps the DEK and
-sends it to the clinician by a KEM. % src: facts-F9#10, facts-F3#43, facts-F3#44, facts-F3#46, facts-F3#50
+The re-encryption key $rk = sk_a \cdot sk_b^{-1}$ inverts to the reverse key,
+needs both secret keys and is unproven; break-glass skips re-encryption: the
+facility unwraps the DEK and sends it to the clinician by a KEM. % src: facts-F9#10, facts-F3#43, facts-F3#44, facts-F3#46, facts-F3#50
 \textit{(11) ``No plaintext on the wire'' holds under TLS only.} On the
 plain profile, record plaintext and attribute keys cross in the clear, as
 the facility encrypts and decrypts server-side; our design caveat also lists
@@ -75,8 +75,7 @@ service. % src: facts-F9#13, facts-F2#49, facts-F5#9, facts-F8#2, facts-F8#3
 
 \textit{Further limits.} We cut the scaling runs over numbers of
 patients or facilities. % src: facts-F9#17, facts-F7#35, facts-F7#36
-The federation is simulated on one machine, with no real health-information
-exchange or FHIR/HL7; all data is synthetic. % src: facts-F9#14, facts-F9#15, facts-F4#1, facts-F5#8
+The federation is simulated on one machine; all data is synthetic. % src: facts-F9#14, facts-F9#15, facts-F4#1, facts-F5#8
 Federation services use the PostgreSQL superuser; only the portal is
 confined by database roles. % src: facts-F4#26, facts-F4#22
 The ElGamal group behind the PRE, KEM and share sealing is a 256-bit

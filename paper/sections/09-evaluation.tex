@@ -31,22 +31,19 @@ database. % src: facts-F7#21
 \emph{Shamir combine (3-of-4)} times the share-combination step alone; it is
 not break-glass latency, which also validates the assertion, commits the
 audit entry and unwraps and delivers the DEK. % src: facts-F7#26
-\emph{DEK re-wrap} covers one DEK, not a sweep over
-records. % src: facts-F7#27, facts-F7#36
+\emph{DEK re-wrap} covers one DEK. % src: facts-F7#27, facts-F7#36
 \emph{Revocation} times the revocation library call
 without persistence, audit or HTTP; the deployed facility instead revokes
 through the full expiry rotation, which no benchmark
 times. % src: facts-F7#28, facts-F3#58, facts-F7#21, facts-F7#22, facts-F7#24
-\emph{PRE re-encrypt} is a subgroup check and one exponentiation in the 256-bit demonstration
-group, so it does not predict a production-size group, and no deployed path
-calls it. % src: facts-F7#29, facts-F3#21, facts-F3#44
+\emph{PRE re-encrypt} uses the 256-bit demonstration group, so it does not
+predict production sizes, and no deployed path calls it. % src: facts-F7#29, facts-F3#21, facts-F3#44
 The two HTTP benchmarks send signed requests over plain HTTP on loopback,
 and each endpoint makes a nested signed call to the audit service, which
 writes to PostgreSQL, before replying, so their figures include transport, a
 second hop and a database write. % src: facts-F7#22, facts-F7#23
-They vary between runs (our task log, not re-run, records 405 then
-247\,ms on this machine), so we treat them as indicative
-only. % src: facts-F7#41, facts-F7#25
+They vary between runs (405 then 247\,ms in our task log), so they are
+indicative only. % src: facts-F7#41, facts-F7#25
 \emph{Audit chain verification} reads the whole chain from PostgreSQL and
 checks every signature and link; the chain length was not
 recorded. % src: facts-F7#24, facts-F7#32
@@ -58,10 +55,8 @@ recorded. % src: facts-F7#24, facts-F7#32
 \textit{Results.} All four in-process operations have medians below
 0.25\,ms and p95 values below 0.63\,ms
 (Table~\ref{tab:bench}, Fig.~\ref{fig:latency}). % src: facts-F7#26, facts-F7#27, facts-F7#28, facts-F7#29
-Discovery and emergency search take about 240--250\,ms at the median, a
-figure that, given the nested audit call and the spread above, describes
-this deployment's request path rather than the
-cryptography. % src: facts-F7#30, facts-F7#31, facts-F7#23, facts-F7#25
+Discovery and emergency search take about 240--250\,ms at the median, which
+describes this deployment's request path, not the cryptography. % src: facts-F7#30, facts-F7#31, facts-F7#23, facts-F7#25
 Payload ciphertext expansion (Fig.~\ref{fig:expansion}) is a constant
 16 bytes, the GCM tag: 25\% at 64\,B and under 0.1\% at
 16\,KiB. % src: facts-F7#33, facts-F7#34

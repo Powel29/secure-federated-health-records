@@ -1,6 +1,6 @@
 \section{Threat Model and Goals}\label{sec:threat}
 
-\textbf{Assets.} In priority order: PHI plaintext, per-record data-encryption
+\textbf{Assets.} In priority order: protected health information (PHI) in plaintext, per-record data-encryption
 keys (DEKs), each record's emergency key, attribute keys, audit-chain
 integrity, and metadata, which we do not claim to hide. % src: facts-F5#4
 
@@ -59,13 +59,12 @@ crypto or DB work (BOLA). % src: facts-live#13
 \textbf{C10}~An expired or revoked credential fails validation and releases no
 key. % src: facts-live#13
 \textbf{C11}~A patient login alone never releases a DEK. % src: facts-live#13
-In C1, re-wrap is a full rotation to a policy that excludes the revoked
+BOLA in C9 is broken object-level authorization. In C1, re-wrap is a full rotation to a policy that excludes the revoked
 clinician; in C3, whose text predates the 3-of-4 split, the audit service's two
 shares together are one short of the threshold. % src: facts-F1#37, facts-F5#58, facts-F2#36, facts-live#13
 
-\textbf{Confidentiality, integrity, availability.} In terms of the CIA triad,
-confidentiality is the aim of C1, C3, C4, C9, C10 and C11 and of the TLS-only
-wire goal; integrity is the aim of C5 (the log), C6 and C7 (transitions) and
-C8 (replay). Availability is deliberately subordinate: every control fails
+\textbf{Confidentiality, integrity, availability.} Confidentiality is the aim
+of C1, C3, C4, C9, C10 and C11 and of the TLS-only wire goal; integrity of
+C5--C8. Availability is deliberately subordinate: every control fails
 closed, so an unavailable audit service blocks break-glass
 (Section~\ref{sec:limits}, item~8). % src: facts-live#13, facts-F2#62, facts-F2#63

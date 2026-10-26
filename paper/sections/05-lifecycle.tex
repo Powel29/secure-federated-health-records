@@ -27,8 +27,7 @@ The legal set is a frozen set of seven $(\mathit{from},\mathit{to})$ pairs;
 self-transitions and \textsc{Granted}$\to$\textsc{Expired} are illegal, and
 there is no premature-termination edge out of \textsc{Emergency\_Open}.
 % src: facts-F1#11, facts-F1#13, facts-F1#15, facts-F1#16
-Six of the pairs come from the original design; \textsc{Expired}$\to$\textsc{Revoked}
-is a later addition and a design choice of this build.
+\textsc{Expired}$\to$\textsc{Revoked} is a design choice of this build.
 % src: facts-F1#12
 \textsc{Revoked}$\to$\textsc{Granted} is legal, but no code in the repository
 emits it.
@@ -67,14 +66,11 @@ record id, from- and to-state, actor id, optional reason code, issue time,
 nonce and signature; unknown fields are rejected and the nonce must be at
 least 16~bytes.
 % src: facts-F1#3, facts-F1#4, facts-F1#5
-The signed bytes are a transition-event domain tag followed
-by every field but the signature, in a fixed order, each length-prefixed.
+The signed bytes start with a domain tag, which keeps a clinician's
+transition signature from verifying as their emergency assertion.
 % src: facts-F1#27, facts-F3#14
-The domain tag keeps a clinician's transition signature from verifying as
-their emergency assertion.
 % src: facts-F1#72
-Signatures are ECDSA on P-256 with SHA-256; the event id is a random
-UUID and the nonce comes from a cryptographically secure generator.
+Signatures are ECDSA on P-256 with SHA-256.
 % src: facts-F1#28, facts-F1#29
 
 Revocation is signed with the patient's key and break-glass open with the
@@ -115,8 +111,7 @@ $\mathit{now} \ge \mathit{expires\_at}$, the expiry manager refuses to hand out
 the emergency key or admit a new join, even before the sweep runs
 (Section~\ref{sec:limits}).
 % src: facts-F1#53, facts-F1#54
-A background monitor checks for due sessions every 0.5\,s, so no
-administrator acts.
+A background monitor checks for due sessions, so no administrator acts.
 % src: facts-F1#55
 
 The sweep first claims the session, so concurrent expirers cannot rotate
@@ -146,8 +141,7 @@ key, so nobody can join them and the next sweep expires them
 
 A hand-rolled access structure guards each record's DEK.
 % src: facts-F3#3, facts-F3#34
-A policy is a tree of \textsc{Leaf}, \textsc{And} and \textsc{Or} nodes,
-with no general $k$-of-$n$ gate.
+A policy is a tree of leaf, \textsc{And} and \textsc{Or} nodes.
 % src: facts-F3#32
 It is compiled top-down from a fresh 32-byte root secret: an \textsc{And}
 node with $m$ children Shamir-splits its incoming secret $m$-of-$m$, an
@@ -158,9 +152,8 @@ The root secret is the DEK wrapping key; the wrapping's associated data binds
 the record id, policy id and generation, so a wrapping cannot be moved to
 another record or replayed as another generation.
 % src: facts-F3#29, facts-F3#34
-Attribute keys are symmetric 32-byte keys indexed by
-(authority, attribute name, value), so the same attribute name and value from
-another authority does not open a leaf.
+Attribute keys are symmetric keys indexed by (authority, attribute name,
+value), so another authority's key does not open a leaf.
 % src: facts-F3#36
 Leaf ciphertexts carry no associated data.
 % src: facts-F3#35
@@ -168,8 +161,7 @@ Every record's tree has the form
 $\textsc{Or}(\mathit{clinical\ policy}, \mathit{owner}{:}\mathit{patient})$,
 where the owner leaf belongs to the patient's home authority.
 % src: facts-F3#40
-Reconstruction runs bottom-up and is refused if the
-root is unsatisfied; it never returns a partial or default secret.
+Reconstruction is refused if the root is unsatisfied.
 % src: facts-F3#38
 
 Shamir sharing works over $\mathrm{GF}(p)$ with $p = 2^{256}+297$, cutting the

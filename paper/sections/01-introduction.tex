@@ -21,6 +21,12 @@ Break-glass reconstructs a per-record emergency key from three of four Shamir sh
 % src: facts-F2#33, facts-F2#34, facts-F2#36
 The federation is simulated: two facilities, two attribute authorities, an audit service and a key custodian on one machine, with synthetic data.
 % src: facts-F4#1, facts-F5#8
+
+Our running scenario is an unconscious patient who arrives at an out-of-network clinic (Facility~B), while the patient's records sit encrypted in a shared store and the patient's home facility is Facility~A.
+The clinician reads the patient's name and date of birth from an ID card, finds the patient in the clinician portal and declares an emergency with a signed Emergency Assertion.
+The audit service logs the request and only then releases its two shares; with a third share, from the clinician's key agent (the key custodian) or the patient's home authority, the facility rebuilds the record's emergency key and opens the record.
+The clinician reads and searches the patient's records across facilities, and when the time window ends the record is re-keyed with no administrator action.
+% src: facts-F4#1, facts-F9#7, facts-F2#33, facts-F2#34, facts-F2#36, facts-F2#50, facts-F1#47, facts-F1#55, facts-F3#51
 We claim the combination, implemented, and not any of its parts:
 % src: facts-F8#24
 \begin{itemize}

@@ -19,7 +19,7 @@ Transparent decryption is the primitive we instantiate, inside a revocation and 
 % src: facts-F8#1, facts-F8#3, facts-F2#34, facts-F2#36, facts-F2#45, facts-F1#47, facts-F2#59
 
 \textit{Break-glass.}
-Policy-level schemes check break-the-glass in software~\cite{ferreira2006break,brucker2009extending,marinovic2011rumpole}; cryptographic ones add it to ABE-based sharing~\cite{brucker2010abe,li2013phr}, healthcare IoT~\cite{yang2018libac}, accountable key generation~\cite{zhang2016password}, breakable-once encryption~\cite{scafuro2019breakglass}, or task- and team-scoped access with signed tokens~\cite{deoliveira2019redalert,deoliveira2020breakglass}.
+Policy-level schemes check break-the-glass in software~\cite{ferreira2006break,brucker2009extending,marinovic2011rumpole}; cryptographic ones add it to sharing under attribute-based encryption (ABE)~\cite{brucker2010abe,li2013phr}, healthcare IoT~\cite{yang2018libac}, accountable key generation~\cite{zhang2016password}, breakable-once encryption~\cite{scafuro2019breakglass}, or task- and team-scoped access with signed tokens~\cite{deoliveira2019redalert,deoliveira2020breakglass}.
 % src: facts-F8#6, facts-F8#7, facts-F8#8, facts-F8#9, facts-F8#15, facts-F8#14, facts-F8#10, facts-F8#11, facts-F8#12, facts-F8#13
 None is described as gating key release on a committed log entry (Scafuro's break is detectable, not log-gated); ours does, keys and the threshold gate rather than software policy decide access, and our expiry re-keys the record instead of trusting a provider to block access.
 Several of them, however, have formal analyses we lack.

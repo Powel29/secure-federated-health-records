@@ -31,11 +31,10 @@ the new policy still names, who still satisfies it with a kept key
 and gets no share; the append runs in one transaction that raises before any
 share is returned.
 % src: facts-live#13, facts-F2#51
-\emph{C3:} ten tests check that the audit service refuses an assertion for
-another record, one not signed by the certificate key, one from an untrusted
-CA and a replayed one (the home authority, the first two), and that the
-facility opens nothing with one share, with the custodian and home authority
-together, or with the audit service's two shares.
+\emph{C3:} ten tests check that the audit service refuses a bad assertion
+(wrong record, wrong key, untrusted CA, replay) and that the facility opens
+nothing with one share, with the custodian and home authority together, or
+with the audit service's two shares.
 % src: facts-live#13, facts-F2#34
 The claim text predates the 3-of-4 split; that every
 qualifying set holds an audit share follows from share placement, not from a
@@ -50,10 +49,9 @@ Tokens derive from the live emergency key, which expiry replaces.
 \emph{C5:} a test alters a stored entry and chain
 verification, which checks signature, link, sequence and hash, fails.
 % src: facts-live#13, facts-F2#77
-\emph{C6, C7:} the C6 test requests a pair outside
-the seven legal transitions; two C7 tests check that a break-glass event
-verifies against the clinician's certificate and that one the clinician did
-not sign opens nothing.
+\emph{C6, C7:} the C6 test requests a pair outside the seven legal
+transitions; the C7 tests check that a break-glass event not signed by the
+clinician opens nothing.
 % src: facts-live#13, facts-F1#11
 \emph{C8:} a replayed assertion is refused at the home authority, at the
 facility, after a facility restart and across processes on Postgres; each
@@ -76,9 +74,8 @@ Eighteen mutations, each disabling one control by monkeypatching, cover
 C1--C10; a test passes only if a mutation of its claim turns it red, and C11
 relies on a positive control instead.
 % src: facts-F5#35, facts-F5#38, facts-F5#39, facts-F5#40, facts-F5#41, facts-F5#42, facts-F5#43, facts-F5#44, facts-F5#45
-The only per-test mutation log (43 rows, each red under some mutation)
-predates the 3-of-4 split and lacks seven of the current claim-tagged nodes;
-the later run is recorded only in prose.
+The only per-test mutation log predates the 3-of-4 split and lacks seven of
+the current claim-tagged tests; the later run is recorded only in prose.
 % src: facts-F5#46, facts-F5#49, facts-F5#50
 We therefore do not claim that every current claim test is shown to go red.
 % src: facts-F5#49, facts-F5#50
