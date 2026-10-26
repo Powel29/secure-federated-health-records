@@ -2,8 +2,8 @@
 
 \input{tables/claims}
 
-Table~\ref{tab:claims} gives claims C1--C11 from a live run of the claim
-registry.
+Claims C1--C11 come from a live run of the claim registry
+(Table~\ref{tab:claims}).
 % src: facts-live#13
 A claim holds only when every system-level test tagged with it passed; a skip
 makes it unverified, an expected failure ``fails today'', and module-level
@@ -88,6 +88,4 @@ Library primitives are assumed secure, not proven by us, and the hand-rolled
 Shamir sharing, policy tree and ElGamal PRE have no proof
 (Table~\ref{tab:secprops}).
 % src: facts-F3#1, facts-F3#3, facts-F3#50, facts-F5#5
-The tree is not collusion-resistant, and the PRE is bidirectional and
-unused, since break-glass uses only the KEM.
 % src: facts-F3#41, facts-F3#43, facts-F3#44

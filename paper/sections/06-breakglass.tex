@@ -25,8 +25,7 @@ identifier (at the holders, only federation membership); not expired; lifetime $
 most 30\,s in the future; then consumption of \texttt{assertion\_\allowbreak id}.
 % src: facts-F2#7, facts-F2#18, facts-F2#46
 Consumption runs last, so an invalid assertion cannot burn a legitimate
-identifier, and the consumed store is a required argument that cannot be
-omitted.
+identifier.
 % src: facts-F2#9, facts-F2#10
 The facility, the audit service and the home authority each validate $A$
 against their own trust anchors and consume its identifier in their own
@@ -72,8 +71,7 @@ The custodian checks the entry's signature, correlation identifier and
 rising sequence number, and the facility logs the re-wrap before delivering
 the DEK.
 % src: facts-F2#55, facts-F2#57
-The guarantee holds against everyone except the audit service, which is
-trusted (Section~\ref{sec:limits}).
+The audit service itself is trusted (Section~\ref{sec:limits}, item~13).
 % src: facts-F2#59
 
 The gate then unwraps the DEK and delivers it by a KEM to the clinician's

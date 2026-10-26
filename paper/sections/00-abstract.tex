@@ -1,6 +1,6 @@
 % Abstract and keywords (W1). Every sentence ends with its source tag.
 \begin{abstract}
-Log-gated decryption and break-glass access for health records both exist, but in the works we compare, the log-gated schemes have no patient revocation lifecycle, and the health-record schemes are not described as gating key release on a committed log entry.
+Log-gated decryption and break-glass access for health records both exist, but the works we compare either lack a patient revocation lifecycle or do not gate key release on a committed log entry.
 % src: facts-F8#1, facts-F8#2, facts-F8#3, facts-F8#9, facts-F8#13, facts-F8#14, facts-F8#15, facts-F8#18, facts-F8#23
 We combine them in a federated electronic health record prototype.
 Patient revocation, break-glass and expiry are signed, logged transitions of one key-lifecycle state machine over per-record keys; revocation and expiry re-key the record, and opening break-glass does not.

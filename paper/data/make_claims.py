@@ -110,7 +110,7 @@ def main() -> None:
         r"\label{tab:claims}",
         r"\begin{tabular}{@{}l p{0.64\columnwidth} l r r@{}}",
         r"\toprule",
-        r"ID & Statement (as printed by the run) & Status & Sys. & Mod. \\",
+        r"ID & Statement & Status & Sys. & Mod. \\",
         r"\midrule",
     ]
     for r in rows:

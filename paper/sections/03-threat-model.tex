@@ -29,8 +29,7 @@ Four parties are trusted, not modeled as adversaries. % src: facts-F5#21, facts-
 \emph{The audit service} holds its own plain hash chain: tampering with stored
 entries is detected, but a compromised audit service could release its shares
 without a durable entry or show different chains to different parties, so
-``no log entry, no key'' holds against everyone except the audit service
-itself. % src: facts-F5#9, facts-F2#59
+the log gate holds against everyone except the audit service itself. % src: facts-F5#9, facts-F2#59
 \emph{The Key Custodian} is one shared process acting as every subject's key
 agent: it holds every synthetic persona's signing key, PRE key, credentials
 and share~1, and signs on their behalf, so its compromise lets an attacker
@@ -43,9 +42,8 @@ prevented. % src: facts-F5#6, facts-F1#34, facts-F2#83
 trust. % src: facts-F4#31
 Rate limiting, MFA and session threats are out of scope. % src: facts-F5#8
 
-\textbf{Goals.} The goals are eleven claims, quoted as the claim registry
-prints them; system-level tests decide each claim's status, reported in
-Section~\ref{sec:security}. % src: facts-F5#22, facts-F5#26, facts-live#13
+\textbf{Goals.} The goals are eleven claims; system-level tests decide each
+claim's status (Section~\ref{sec:security}). % src: facts-F5#22, facts-F5#26, facts-live#13
 \textbf{C1}~A revoked user cannot decrypt after re-wrap. % src: facts-live#13
 \textbf{C2}~Break-glass fails closed when the audit service cannot commit. % src: facts-live#13
 \textbf{C3}~A single share, including the audit service's, cannot open a record. % src: facts-live#13

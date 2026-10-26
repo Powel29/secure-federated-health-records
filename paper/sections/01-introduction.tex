@@ -8,9 +8,9 @@ Hospital systems add a break-the-glass override and record its use for later rev
 
 Log-gated decryption is established: in accountable and transparent decryption a key, or a share of one, is used only once the request is in a log~\cite{ryan2017accountable,kroll2018accountable,cheval2023transparency}, and Kroll et al.\ name hospital emergencies as an application~\cite{kroll2018accountable}.
 % src: facts-F8#1, facts-F8#2, facts-F8#3
-Break-glass for health records is established too, at the policy layer, where consent gets a lifecycle but is enforced in software~\cite{muslim2026consent}, and with keys~\cite{brucker2010abe,deoliveira2020breakglass,yang2018libac,romel2025patient}, but none of those we examined is described as gating key release on a log entry.
+Break-glass for health records is established too, at the policy layer, where consent gets a lifecycle but is enforced in software~\cite{muslim2026consent}, and with keys~\cite{brucker2010abe,deoliveira2020breakglass,yang2018libac,romel2025patient}.
 % src: facts-F8#17, facts-F8#9, facts-F8#13, facts-F8#14, facts-F8#18
-In the works we compare (Table~\ref{tab:related}), the log-gated schemes have no patient revocation lifecycle, so none joins log-gated release to consent and revocation.
+In the works we compare (Table~\ref{tab:related}), none joins log-gated release to consent and revocation: the log-gated schemes have no patient revocation lifecycle, and the break-glass schemes are not described as gating key release on a log entry.
 % src: facts-F8#23
 
 This paper builds that combination and tests it.
@@ -22,12 +22,12 @@ Break-glass reconstructs a per-record emergency key from three of four Shamir sh
 The federation is simulated: two facilities, two attribute authorities, an audit service and a key custodian on one machine, with synthetic data.
 % src: facts-F4#1, facts-F5#8
 
-Our running scenario is an unconscious patient who arrives at an out-of-network clinic (Facility~B), while the patient's records sit encrypted in a shared store and the patient's home facility is Facility~A.
+Our scenario is an unconscious patient who arrives at an out-of-network clinic (Facility~B), while the patient's records sit encrypted in a shared store and the patient's home facility is Facility~A.
 The clinician reads the patient's name and date of birth from an ID card, finds the patient in the clinician portal and declares an emergency with a signed Emergency Assertion.
 The audit service logs the request and only then releases its two shares; with a third share, from the clinician's key agent (the key custodian) or the patient's home authority, the facility rebuilds the record's emergency key and opens the record.
 The clinician reads and searches the patient's records across facilities, and when the time window ends the record is re-keyed with no administrator action.
 % src: facts-F4#1, facts-F9#7, facts-F2#33, facts-F2#34, facts-F2#36, facts-F2#50, facts-F1#47, facts-F1#55, facts-F3#51
-We claim the combination, implemented, and not any of its parts:
+Our claim is the combination, implemented:
 % src: facts-F8#24
 \begin{itemize}
 \item \emph{One signed, logged key lifecycle.}
@@ -42,7 +42,7 @@ The audit service releases its two shares only after validating a signed, one-ti
 Search tokens derive from the emergency key, so search works only during a live emergency session, and old tokens stop matching after expiry rotation.
 % src: facts-F3#51, facts-F3#53, facts-F3#54
 \item \emph{Evidence.}
-Negative security tests back eleven claims, C1--C11; all 35 system tests tagged to them pass in a live run on the evaluated version of the code (Sections~\ref{sec:security} and~\ref{sec:eval}), as test outcomes, not proofs; the mutation evidence for them is partial (Section~\ref{sec:security}).
+Negative security tests back eleven claims, C1--C11; all 35 system tests tagged to them pass in a live run on the evaluated version of the code (Sections~\ref{sec:security} and~\ref{sec:eval}), though the mutation evidence for them is partial.
 % src: facts-live#12, facts-F5#22
 PyShark wire checks see the audit service's database commit before the release response that carries the shares (Section~\ref{sec:traffic}).
 % src: facts-F6#43, facts-F6#47, facts-F6#49

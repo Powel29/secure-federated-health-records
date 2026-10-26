@@ -3,9 +3,6 @@
 % Table tab:related comes from facts-live/F1/F2/F3 (see paper/data/make_related.py).
 \section{Related Work}\label{sec:related}
 
-Table~\ref{tab:related} compares the closest work with ours.
-% src: facts-F8#23
-
 \input{tables/related}
 
 \textit{Accountable and transparent decryption.}
@@ -21,7 +18,7 @@ Transparent decryption is the primitive we instantiate, inside a revocation and 
 \textit{Break-glass.}
 Policy-level schemes check break-the-glass in software~\cite{ferreira2006break,brucker2009extending,marinovic2011rumpole}; cryptographic ones add it to sharing under attribute-based encryption (ABE)~\cite{brucker2010abe,li2013phr}, healthcare IoT~\cite{yang2018libac}, accountable key generation~\cite{zhang2016password}, breakable-once encryption~\cite{scafuro2019breakglass}, or task- and team-scoped access with signed tokens~\cite{deoliveira2019redalert,deoliveira2020breakglass}.
 % src: facts-F8#6, facts-F8#7, facts-F8#8, facts-F8#9, facts-F8#15, facts-F8#14, facts-F8#10, facts-F8#11, facts-F8#12, facts-F8#13
-None is described as gating key release on a committed log entry (Scafuro's break is detectable, not log-gated); ours does, keys and the threshold gate rather than software policy decide access, and our expiry re-keys the record instead of trusting a provider to block access.
+None of these papers describes gating key release on a committed log entry (Scafuro's break is detectable, not log-gated). Ours does: keys and the threshold gate decide access, and expiry re-keys the record, so no provider has to block it.
 Several of them, however, have formal analyses we lack.
 % src: facts-F8#9, facts-F8#10, facts-F8#11, facts-F8#12, facts-F8#13, facts-F8#14, facts-F4#19, facts-F2#51, facts-F1#39
 
