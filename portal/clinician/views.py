@@ -772,8 +772,8 @@ def _show_record(case: BreakglassCase, ctx: dict[str, Any]) -> int:
     """Put the decrypted record on the page while the window is open (ADR-0062).
 
     Every page load joins the open session (ADR-0057): a fresh one-time
-    assertion, the same threshold, the audit entry committed before share 3
-    is released, no new transition and no extension of the window. The case's
+    assertion, the same threshold, the audit entry committed before shares 3 and 4
+    are released, no new transition and no extension of the window. The case's
     correlation id is reused so every view lands in this case's chain
     segment. Nothing is stored; the payload lives in this response only.
     """

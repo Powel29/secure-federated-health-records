@@ -63,7 +63,7 @@
           <p><strong>Identify the patient first.</strong> An emergency assertion is bound to one identified <span class="mono">patient_id</span>.</p>
           <a class="btn btn-secondary btn-block" href="{% url 'clinician:identify' %}">Identify patient</a>
         {% else %}
-          <p>Opens each chosen record for <strong>{{ duration }} s</strong>. {% if directory %}{{ directory.given_name }} {{ directory.family_name }}{% else %}The patient{% endif %} is notified. The audit service writes the chain entry before it releases share 3.</p>
+          <p>Opens each chosen record for <strong>{{ duration }} s</strong>. {% if directory %}{{ directory.given_name }} {{ directory.family_name }}{% else %}The patient{% endif %} is notified. The audit service writes the chain entry before it releases its shares.</p>
           <p class="tiny text-muted">One assertion per record · valid {{ assertion_ttl }} s · one-time id · ECDSA · bound to the facility that holds the record</p>
         {% endif %}
         <button class="btn btn-emergency btn-block" name="action" value="declare" {% if not discovered %}disabled aria-describedby="declare-why"{% endif %}>Declare emergency</button>
@@ -98,7 +98,7 @@
         <div class="hint" id="just-hint">Required, at least 20 characters. A digest is committed to the audit chain before access; the reviewer checks this text against it.</div>
       </div>
       <div class="field"><label for="sensitive-just">Restricted-record necessity (if applicable)</label><textarea class="input" id="sensitive-just" name="sensitive_justification" placeholder="Explain why this restricted information is essential to the immediate emergency (at least 20 characters)"></textarea><p>Restricted records require a separate necessity statement and are subject to case review.</p></div>
-      <p class="basis">Your key agent signs the assertion, asks the audit service for share 3 (committed to the chain first, released second), presents it with the clinician-custody share to the threshold gate, and opens the PRE delivery package. The gate decides, not this button.</p>
+      <p class="basis">Your key agent signs the assertion, asks the audit service for its shares 3 and 4 (committed to the chain first, released second), presents them with the clinician-custody share to the threshold gate, and opens the PRE delivery package. The gate decides, not this button.</p>
     </section>
   </div>
 </form>

@@ -434,7 +434,7 @@ class RedeclareLoopTests(TestCase):
 
     The case page used to be the response to the declare POST, and its expiry
     refresh called ``location.reload()`` -- which re-sends that POST, so every
-    window opened a new break-glass, re-released share 3 and re-notified the
+    window opened a new break-glass, re-released shares 3 and 4 and re-notified the
     patient.
     """
 
