@@ -1,19 +1,19 @@
 \section{Traffic Analysis}\label{sec:traffic}
 
-The required course module is Traffic Analysis, delivered as PyShark analyser
+The required course module is Traffic Analysis, delivered as PyShark analyzer
 code that exits non-zero when a wire property fails, not as screenshots.
 % src: facts-F6#1, facts-F6#2, facts-F6#3, facts-F6#32
-Capture runs only on allowlisted loopback or Docker-bridge interfaces (any
-other is refused) and is filtered to the six federation ports and Postgres.
+Capture runs only on allowlisted loopback or Docker-bridge interfaces.
 % src: facts-F6#9, facts-F6#10, facts-F6#12, facts-F6#13
 One scenario is captured over plain HTTP and again under TLS, the Postgres
 link included.
 % src: facts-F6#18, facts-F6#20
-The analyser reassembles TCP streams and searches 13 canaries (record
-plaintext, DEK, emergency key, shares, attribute keys, a signing key) as raw
-bytes, hex, base64 and PEM; a lost segment fails the check.
+The analyzer reassembles TCP streams and searches 13 canaries (record
+plaintext, keys, shares) as raw bytes, hex, base64 and PEM; a lost segment
+fails the check.
 % src: facts-F6#24, facts-F6#25, facts-F6#27, facts-F6#28
-Table~\ref{tab:wire} gives the results.
+The captures come from a slightly earlier version of the code than the
+tests (Section~\ref{sec:eval}, Table~\ref{tab:wire}).
 % src: facts-F6#34, facts-F6#35, facts-F6#36, facts-F6#37, facts-F6#38, facts-F6#39, facts-F6#40, facts-F6#41, facts-F6#42, facts-F6#43, facts-F6#44, facts-F6#45, facts-F6#46, facts-F6#47, facts-F6#48, facts-F6#49, facts-F6#50, facts-F6#51, facts-F6#52, facts-F6#53, facts-F6#90
 
 \input{tables/wire}
@@ -24,14 +24,13 @@ No canary appears under TLS; the plain capture is the positive control,
 exposing record plaintext, the emergency key and four attribute keys, and a
 clean TLS result is not trusted unless that control fires.
 % src: facts-F6#35, facts-F6#36, facts-F6#37
-Even on the plain wire no share or signing key appears, since shares travel
-sealed; the DEK canary had no plain hit either.
+Even on the plain wire no share, signing key or DEK appears.
 % src: facts-F6#6, facts-F6#37
 
-\emph{Commit before release.} The analyser matches the audit service's
+\emph{Commit before release.} The analyzer matches the audit service's
 Postgres INSERT and \texttt{COMMIT} acknowledgement to the
-\texttt{/breakglass/release} response, inside which the sealed audit shares
-must first appear (the analyser keys on share~3; share~4 travels in the same
+share-release response, inside which the sealed audit shares
+must first appear (the analyzer keys on share~3; share~4 travels in the same
 response and is not timed separately); the \texttt{COMMIT} reaches the wire
 1.35\,ms before that response.
 % src: facts-F6#43, facts-F6#45, facts-F6#46, facts-F6#49, facts-F6#50
@@ -42,30 +41,28 @@ only.
 \emph{Break-glass is metadata only.} A size-only observer picks the largest
 burst to the facility as the unlock, a rule validated on the plain capture.
 % src: facts-F6#39
-Under TLS it sees a 4356-byte unlock burst and no share, emergency key or
-DEK: it learns that, where and when a break-glass happened, and its size.
+Under TLS it sees a 4356-byte unlock burst and no key or share: it learns
+that, where and when a break-glass happened, and its size.
 % src: facts-F6#40, facts-F6#41
 
 \emph{Search leakage.} The run of Table~\ref{tab:wire} measured one search.
 % src: facts-F6#53
-The figures below come from two runs dated 2026-10-19, before the 3-of-4
+The figures below come from two earlier runs, made before the 3-of-4
 change (the search module is unchanged), each with 16 searches on one record,
 one refused after expiry.
 % src: facts-F6#91, facts-F6#57, facts-F6#59
 On the plain wire all terms are visible, response size separates hit, miss
 and refusal (43, 34, 95\,B), and the database link shows 15 lookups over 9
-distinct tokens with row counts.
+distinct tokens.
 % src: facts-F6#60, facts-F6#61, facts-F6#62
-Deterministic tokens link repeated searches within a session, the
-search-pattern leakage of deterministic searchable
-encryption~\cite{curtmola2006sse}, but the three terms searched across expiry
-got new tokens.
+Deterministic tokens link repeated searches within a session, the leakage of
+deterministic searchable encryption~\cite{curtmola2006sse}, but terms searched
+across expiry got new tokens.
 % src: facts-F3#55, facts-F6#64, facts-F6#65
-Under TLS (2026-10-19) no URI, term or token is visible, yet response records
-still separate hit, miss and refusal (60, 51, 112\,B) and each request record
-is the term length plus 63\,B.
+Under TLS no term or token is visible, yet response size still separates hit,
+miss and refusal (60, 51, 112\,B) and request size is the term length plus
+63\,B.
 % src: facts-F6#68, facts-F6#69, facts-F6#71, facts-F6#72
-Timing showed no hit/miss signal at this sample size (medians 66.1\,ms
-over 11 hits and 66.7\,ms over 4 misses, on a 16-core AMD host, not that of
-Table~\ref{tab:bench}); there is no padding.
+A small sample on a different host showed no hit/miss timing difference
+(66.1 vs 66.7\,ms median); there is no padding.
 % src: facts-F6#74, facts-F6#75, facts-F6#77, facts-F6#92

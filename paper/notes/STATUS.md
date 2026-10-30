@@ -118,3 +118,10 @@ PROJECT.md §5 has **13** caveats (counted 2026-10-21). Note: PROJECT.md §1 lin
   truncation check "not signatures", payload AAD, ElGamal group), 11 conclusion (Assertion/commit clause, "prior art",
   "C1--C11 all hold", "under a millisecond", future-work list).
 - Build: 10 pages, references end on p10; 0 errors/undefined/overfull; 5 underfull.
+
+## External review response (2026-10-25)
+
+- Review `reviews/ieee-paper-review.md` (30 issues) answered in `reviews/ieee-paper-review-response.md`: 15 fixed, 7 partly fixed, 8 not required (reasons there).
+- New facts: F1#79 (read decision rule), F7#42 (repository private). New script `paper/data/add_doi_notes.py` renders 17 DOIs.
+- Build: 0 errors/undefined/overfull; abstract 250 words; body ends p10, references continue onto p11 (11 pages total) because of the DOIs. All `% src:` tags resolve.
+- Open for the team: AI-use / funding / conflict statements; whether to publish the repository.

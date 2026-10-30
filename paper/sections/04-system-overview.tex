@@ -58,14 +58,23 @@ The federation is simulated: two mock facilities, two attribute authorities,
 an audit service, a Key Custodian, a PostgreSQL store and one Django process
 serving the patient, clinician and admin portals run on one machine, as local
 processes or as Docker Compose containers on one bridge, under one
-self-signed PKI root that cross-certifies the facilities
+self-signed PKI root that signs both facility CAs
 (Fig.~\ref{fig:components}). % src: facts-F4#1, facts-F4#5, facts-F4#27, facts-F4#43
-There is no HIE and no FHIR/HL7 interface, and all records are
+There is no health-information exchange and no FHIR/HL7 interface, and all records are
 synthetic. % src: facts-F4#1, facts-F4#44, facts-F4#39
+The emergency scenario assumes the patient can be identified
+(Section~\ref{sec:limits}, item~7). % src: facts-F9#7
 
-\textbf{Components.} Facilities hold no records: they read ciphertext from the
-shared store and run the policy engine and threshold gate. % src: facts-F4#7
-This build chooses a weighted 3-of-4 split of each emergency key: $x{=}1$ to the custodian, $x{=}2$ to the patient's home authority
+\textbf{Components.} Facility~A is the patient's home facility and Facility~B
+the out-of-network one where the emergency happens; neither holds records, and
+both read ciphertext from the shared store and run the policy engine and
+threshold gate. % src: facts-F4#7
+An \emph{attribute authority} issues credentials and attribute keys, and the
+patient's \emph{home authority} is the one that issued the patient's
+\texttt{owner} credential. % src: facts-F4#8, facts-F5#12
+The \emph{Key Custodian} is the key agent of clinicians and patients.
+% src: facts-F4#14
+This build chooses a weighted 3-of-4 split of each emergency key: $x{=}1$ to the custodian, $x{=}2$ to the home authority
 (always \texttt{authority-net} here), $x{=}3,4$ to
 the audit service, so every set of three shares includes an audit
 share. % src: facts-F4#10, facts-F4#11, facts-F2#36
@@ -78,16 +87,28 @@ Shares travel sealed to the facility's gate; the audit service releases its
 shares only after validating the assertion and committing a log entry
 (Section~\ref{sec:breakglass}). % src: facts-F4#12
 
+\textbf{Identity and certificates.} One self-signed root signs every facility
+CA, attribute authority and service certificate; its key is held only at
+bootstrap and is a single point of trust. % src: facts-F4#27, facts-F4#31
+Certificates are X.509 with ECDSA P-256; a clinician's is signed by their
+facility CA. % src: facts-F4#28, facts-F4#29
+Because both facility CAs chain to the same root, Facility~B can validate a
+clinician enrolled at Facility~A, which cross-facility break-glass needs;
+chain validation fails closed on any bad link. % src: facts-F4#27, facts-F4#30
+Each attribute authority issues signed credentials in its own namespace and
+releases an attribute key only against a valid, unrevoked, unexpired
+credential. % src: facts-F4#8, facts-F4#32
+
+\textbf{Discovery and identification.} Records live in one shared store, so
+discovery is a patient-indexed lookup that returns record identifiers only,
+not a search across facilities. % src: facts-F4#9
+To find the patient, the clinician portal looks up a name, optionally with a
+date of birth, in its own directory; ambiguous matches are listed and never
+auto-selected, a lookup that cannot be audited is not shown, and identifying
+a patient releases no key. % src: facts-F9#7, facts-F4#19
+
 \textbf{What portals and Postgres may not do.} They store data and identify
 users but never decide access. % src: facts-F4#19
 The portal holds no subject key and sends every key-needing action to the
 custodian, so a portal account alone decrypts nothing; its database roles
-cannot write store tables, and its mirrored consent state is display data no
-read path consults. % src: facts-F4#20, facts-F4#21, facts-F4#22, facts-F4#23
-
-\textbf{Caveats.} Federation services connect to Postgres as the
-\texttt{postgres} superuser; only the portal is role-restricted. % src: facts-F4#26
-HTTP TLS certificates are self-signed and server-only, with no version or
-cipher suite pinned. % src: facts-F4#34
-Only the patient revokes in this build, so one who cannot sign has no
-revocation path. % src: facts-F4#41
+cannot write store tables, and its consent state is display data only. % src: facts-F4#20, facts-F4#21, facts-F4#22, facts-F4#23

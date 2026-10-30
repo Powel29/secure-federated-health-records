@@ -5,12 +5,12 @@
 \centering
 \footnotesize
 \setlength{\tabcolsep}{3pt}
-\caption{Security claims C1--C11, live claims run 2026-10-21 on repository commit \textnormal{\texttt{57a1a8c}}. Status is computed from the system-level tests only; Sys./Mod.\ count the system- and module-level tests tagged with the claim.}
+\caption{Security claims C1--C11, from a live claims run. Status is computed from the system-level tests only; Sys./Mod.\ count the system- and module-level tests tagged with the claim.}
 % src: facts-live#1, facts-live#2, facts-live#3, facts-live#4, facts-live#5, facts-live#6, facts-live#7, facts-live#8, facts-live#9, facts-live#10, facts-live#11, facts-live#12, facts-live#13
 \label{tab:claims}
 \begin{tabular}{@{}l p{0.64\columnwidth} l r r@{}}
 \toprule
-ID & Statement (as printed by the run) & Status & Sys. & Mod. \\
+ID & Statement & Status & Sys. & Mod. \\
 \midrule
 C1 & A revoked user cannot decrypt after re-wrap & holds & 2 & 2 \\
 C2 & Break-glass fails closed when the audit service cannot commit & holds & 1 & 1 \\

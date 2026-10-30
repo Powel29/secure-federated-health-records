@@ -74,9 +74,7 @@ def main() -> None:
         r"\setlength{\tabcolsep}{3pt}",
         (
             r"\caption{PyShark wire checks on the plain and TLS captures "
-            r"(captured 2026-10-21 at repository commit "
-            r"\textnormal{\texttt{99092d1}}; the capture, analyser and service "
-            r"code is unchanged in the evaluated commit \textnormal{\texttt{57a1a8c}}).}"
+            r"(taken on a slightly earlier version of the code; see Section~\ref{sec:eval}).}"
         ),
         "% src: " + ", ".join(f"facts-F6#{i}" for i in range(34, 54))
         + ", facts-F6#90, facts-F6#93",
@@ -91,14 +89,17 @@ def main() -> None:
     for c in checks:
         num = c["claim"].split("-", 1)[0]
         plain, tls = cells(c)
-        result = ("pass" if c["passed"] else "FAIL") + (
-            "$^\\ast$" if c["strength"] == "measurement" else ""
-        )
+        # A measurement has no pass criterion beyond "traffic was captured",
+        # so it is reported as measured, not as a pass.
+        if c["strength"] == "measurement":
+            result = ("measured" if c["passed"] else "not captured") + "$^\\ast$"
+        else:
+            result = "pass" if c["passed"] else "FAIL"
         out.append(f"{num} & {PROPERTY[c['claim']]} & {plain} & {tls} & {result} \\\\")
     out += [
         r"\bottomrule",
-        r"\multicolumn{5}{@{}p{\columnwidth}@{}}{$^\ast$A measurement: it fails only "
-        r"if no search traffic is captured.}\\",
+        r"\multicolumn{5}{@{}p{\columnwidth}@{}}{$^\ast$Leakage is measured, not "
+        r"asserted; the check only confirms search traffic was captured.}\\",
         r"\end{tabular}",
         r"\end{table}",
         "",

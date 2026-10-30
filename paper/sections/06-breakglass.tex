@@ -20,13 +20,12 @@ fields by the clinician's key, which never leaves the custodian.
 % src: facts-F2#1, facts-F2#2, facts-F2#4, facts-F2#5, facts-F2#6, facts-F2#45, facts-F2#91
 Validation fails closed at the first failing check, in order: signature;
 certificate chain via a facility CA to the trusted root; clinician
-identifier against the certificate CN; certificate not revoked; facility
+identifier against the certificate's common name; certificate not revoked; facility
 identifier (at the holders, only federation membership); not expired; lifetime $\le 15$\,min and \texttt{issued\_\allowbreak at} at
 most 30\,s in the future; then consumption of \texttt{assertion\_\allowbreak id}.
 % src: facts-F2#7, facts-F2#18, facts-F2#46
 Consumption runs last, so an invalid assertion cannot burn a legitimate
-identifier, and the consumed store is a required argument that cannot be
-omitted.
+identifier.
 % src: facts-F2#9, facts-F2#10
 The facility, the audit service and the home authority each validate $A$
 against their own trust anchors and consume its identifier in their own
@@ -65,15 +64,14 @@ hash-chained entry inside one transaction, and only then seals shares 3
 and 4 and returns them with the signed entry.
 % src: facts-F2#50, facts-F2#51, facts-F2#53
 A failed commit raises before the return and yields HTTP~503 with no share,
-so there is no log entry, no key: C2 holds, and the wire shows the COMMIT
+so, with an honest audit service, there is no log entry, no key: C2 holds, and the wire shows the COMMIT
 1.35\,ms before the response (Section~\ref{sec:traffic}).
 % src: facts-F2#51, facts-F2#54, facts-live#2, facts-F6#49
 The custodian checks the entry's signature, correlation identifier and
 rising sequence number, and the facility logs the re-wrap before delivering
 the DEK.
 % src: facts-F2#55, facts-F2#57
-The guarantee holds against everyone except the audit service, which is
-trusted (Section~\ref{sec:limits}).
+The audit service itself is trusted (Section~\ref{sec:limits}, item~13).
 % src: facts-F2#59
 
 The gate then unwraps the DEK and delivers it by a KEM to the clinician's
@@ -83,25 +81,62 @@ The home authority's share~2 covers a lost share~1 only, which the custodian
 keeps in memory.
 % src: facts-F2#62
 It does not cover a custodian or audit outage, nor an audit restart, which
-loses shares 3 and 4 for every record; by code reading, not observed, a
-restarted audit service also has a new signing key and would fail its
-startup chain check.
+loses shares 3 and 4 for every record (Section~\ref{sec:limits}, item~8).
 % src: facts-F2#63, facts-F2#64
 
 \subsection{Hash Chain}
 
-Each entry holds \texttt{seq}, \texttt{prev\_\allowbreak hash} and \texttt{entry\_\allowbreak hash},
-the event type and metadata, the actor, a correlation identifier, a timestamp
-and an ECDSA signature, with
+Each entry holds a sequence number, the previous and own hash, the event, the
+actor, a correlation identifier, a timestamp and an ECDSA signature, with
 $h_i=\mathrm{SHA\text{-}256}(\mathrm{enc}(h_{i-1},\mathit{event},t,\mathit{actor}))$
-from a zero-hash genesis (Fig.~\ref{fig:chain}b).
-% src: facts-F2#71, facts-F2#72, facts-F2#73, facts-F2#74
+from a zero-hash genesis (Fig.~\ref{fig:chain}b), where enc is a
+domain-tagged, length-prefixed encoding.
+% src: facts-F2#71, facts-F2#72, facts-F2#74
+The audit service's signature covers \texttt{seq}, both hashes, the event,
+the actor, the correlation identifier and $t$.
+% src: facts-F2#73
 Verification checks signature, link, sequence and hash, and C5 holds.
 % src: facts-F2#77, facts-live#5
-Against truncation, a facility refuses an entry whose \texttt{seq} is not
-above its stored mark; it compares sequence numbers only and verifies no
+Against truncation, a facility compares sequence numbers only, verifying no
 entry signature.
 % src: facts-F2#79, facts-F2#81
+
+\subsection{Key Delivery and Proxy Re-Encryption}
+
+The key layer contains a hand-rolled ElGamal scheme over a 256-bit safe-prime
+group, a demonstration parameter rather than a production size.
+% src: facts-F3#18, facts-F3#19
+Used as proxy re-encryption (PRE) it is bidirectional, needs both secret keys
+to compute the re-encryption key, and has no security proof
+(Section~\ref{sec:limits}, item~10).
+% src: facts-F3#42, facts-F3#43, facts-F3#50
+Break-glass does not use it: the deployed code never calls re-encryption.
+% src: facts-F3#44
+Instead the gate unwraps the DEK at the facility and delivers it with a key
+encapsulation mechanism (KEM) to the clinician's ElGamal key: a random group
+element is ElGamal-encrypted to the clinician, an HKDF-derived key from it
+encrypts the DEK with AES-256-GCM, and the record identifier is bound as
+associated data, so a package for one record does not open as another.
+% src: facts-F3#45, facts-F3#46, facts-F3#47
+The same KEM seals shares in transit to the gate.
+% src: facts-F3#48
+Hiding the DEK from the facility would need a pairing-based unidirectional
+PRE, which we leave as future work.
+% src: facts-F3#46, facts-F3#50
+
+\subsection{Emergency-Scoped Search}
+
+The store keeps, for each record, an index of coded terms. % src: facts-F3#52
+A coded term is HKDF-SHA-256 over the record's emergency key and the
+normalized search term, so the store sees only opaque values and how many
+terms a record has. % src: facts-F3#51, facts-F3#55
+Search is an equality match on the coded term, and the emergency key comes
+from the expiry manager, which refuses it once the window ends, so search
+works only during a live emergency. % src: facts-F3#52, facts-F1#53, facts-F1#54
+Revocation and expiry replace the emergency key and re-derive the tokens, so
+old tokens match nothing (C4). % src: facts-F3#53, facts-F3#54
+Equal terms give equal tokens under one key, which leaks search and access
+patterns (Section~\ref{sec:traffic}); nothing here is proven. % src: facts-F3#55
 
 \subsection{Expiry by Full Rotation}
 

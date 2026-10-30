@@ -11,7 +11,7 @@ checks (Table~\ref{tab:wire}) that exercise it.}
 \label{tab:secprops}
 \begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.205\textwidth} >{\raggedright\arraybackslash}p{0.285\textwidth} >{\raggedright\arraybackslash}p{0.26\textwidth} >{\raggedright\arraybackslash}p{0.08\textwidth} >{\raggedright\arraybackslash}p{0.11\textwidth}@{}}
 \toprule
-Primitive / construction & Property claimed & Security model & Tested & Proven \\
+Primitive / construction & Property claimed & Security model & Tested & Proof status \\
 \midrule
 AES-256-GCM (payload, DEK wrapping, leaves) & Confidentiality and integrity; wrapping bound to record, policy, generation; payload has no AAD & Standard AEAD notion, assumed (pyca) & C1, C11 & Assumed \\ % src: facts-F3#1, facts-F3#4, facts-F3#5, facts-F3#6, facts-F3#25, facts-F3#26, facts-F3#27, facts-F3#28, facts-F3#29, facts-F5#5
 HKDF-SHA-256 & Derived keys and search tokens indistinguishable from random & Standard KDF notion, assumed (pyca) & C4 & Assumed \\ % src: facts-F3#8, facts-F3#9, facts-F3#45, facts-F3#51, facts-F5#5

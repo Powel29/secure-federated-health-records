@@ -1,8 +1,5 @@
 \section{Limitations}\label{sec:limits}
 
-Items (1)--(13) are our design's honesty caveats, in order; further limits
-follow.
-
 \textit{(1) Revocation is forward-only.} Rotation denies future reads but
 cannot retract plaintext already decrypted and kept, and only the patient
 can revoke: home-authority revocation is not
@@ -15,19 +12,17 @@ timer-signed, audited transitions. % src: facts-F9#2, facts-F5#6, facts-F1#33, f
 record.} This is claimed and tested (C3), not assumed; it rests on share
 placement, as the gate checks no holder, only that three distinct
 $x$ are present. % src: facts-F9#3, facts-live#3, facts-F2#37
-\textit{(4) The access structure is not full CP-ABE.} Shamir sharing over an
-AND/OR tree with symmetric attribute keys is \emph{not collusion-resistant}
-as pairing-based CP-ABE~\cite{bethencourt2007cpabe} is: two users could pool
-attribute keys to satisfy a policy neither satisfies alone, and it has no
-proof. % src: facts-F9#4, facts-F3#32, facts-F3#36, facts-F3#41, facts-F8#20
+\textit{(4) The access structure is not collusion-resistant.} Shamir sharing
+over an AND/OR tree with symmetric attribute keys, unlike pairing-based
+ciphertext-policy ABE~\cite{bethencourt2007cpabe}, is \emph{not
+collusion-resistant}: two users could pool attribute keys to satisfy a
+policy neither satisfies alone, and it has no proof. % src: facts-F9#4, facts-F3#32, facts-F3#36, facts-F3#41, facts-F8#20
 \textit{(5) One shared process is every user's key agent.} A single
 custodian holds every synthetic persona's signing key, PRE key and
 credentials, plus share~1 of every record, in memory, and signs for them
 after portal login; in reality each agent would be the person's own device or
 enclave. % src: facts-F9#5, facts-F4#14
-The threshold is not weakened, as the custodian holds share~1 only and the
-audit service still commits before releasing shares 3 and
-4. % src: facts-F9#5, facts-F4#12
+The threshold is not weakened: the custodian holds share~1 only. % src: facts-F9#5, facts-F4#12
 \textit{(6) Expiry rotation is finished after a crash or restart, not
 before.} Sessions are stored without their key, so a facility that restarts
 mid-window or crashes mid-rotation closes them at startup with a fresh full
@@ -54,9 +49,9 @@ attribute key per authority and value is shared by all holders and never
 rotated, and rotation re-seals under the same keys, so a revoked holder who
 kept a key still satisfies its leaves. % src: facts-F9#9, facts-F3#37
 \textit{(10) The PRE is bidirectional, and the gate decrypts.}
-$rk = sk_a \cdot sk_b^{-1}$ inverts to the reverse key, needs both secret
-keys and is unproven; break-glass skips re-encryption: the facility unwraps the DEK and
-sends it to the clinician by a KEM. % src: facts-F9#10, facts-F3#43, facts-F3#44, facts-F3#46, facts-F3#50
+The re-encryption key $rk = sk_a \cdot sk_b^{-1}$ inverts to the reverse key,
+needs both secret keys and is unproven; break-glass skips re-encryption: the
+facility unwraps the DEK and sends it to the clinician by a KEM. % src: facts-F9#10, facts-F3#43, facts-F3#44, facts-F3#46, facts-F3#50
 \textit{(11) ``No plaintext on the wire'' holds under TLS only.} On the
 plain profile, record plaintext and attribute keys cross in the clear, as
 the facility encrypts and decrypts server-side; our design caveat also lists
@@ -77,14 +72,8 @@ service. % src: facts-F9#13, facts-F2#49, facts-F5#9, facts-F8#2, facts-F8#3
 
 \textit{Further limits.} We cut the scaling runs over numbers of
 patients or facilities. % src: facts-F9#17, facts-F7#35, facts-F7#36
-The federation is simulated on one machine, with no real health-information
-exchange or FHIR/HL7; all data is synthetic. % src: facts-F9#14, facts-F9#15, facts-F4#1, facts-F5#8
-There is no formal model or proof. % src: facts-F8#3
+The federation is simulated on one machine; all data is synthetic. % src: facts-F9#14, facts-F9#15, facts-F4#1, facts-F5#8
 Federation services use the PostgreSQL superuser; only the portal is
 confined by database roles. % src: facts-F4#26, facts-F4#22
-The facility's truncation check compares sequence numbers, not
-signatures. % src: facts-F2#81
-The record payload is encrypted without associated data; only the DEK
-wrapping binds record, policy and generation. % src: facts-F3#27, facts-F3#29
-The PRE, KEM and share sealing use a 256-bit demonstration ElGamal
-group. % src: facts-F3#18, facts-F3#19
+The ElGamal group behind the PRE, KEM and share sealing is a 256-bit
+demonstration size that a deployment must replace. % src: facts-F3#18, facts-F3#19

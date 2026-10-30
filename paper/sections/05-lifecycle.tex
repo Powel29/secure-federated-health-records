@@ -1,8 +1,8 @@
 \section{Key-Lifecycle State Machine}\label{sec:lifecycle}
 
 Every record carries one lifecycle state, and every committed change of it is
-a signed, replay-protected event checked by one state machine in
-\texttt{src/lifecycle/} (Fig.~\ref{fig:states}, Table~\ref{tab:transitions}).
+a signed, replay-protected event checked by one state machine
+(Fig.~\ref{fig:states}, Table~\ref{tab:transitions}).
 % src: facts-F1#1, facts-F1#3, facts-F1#11, facts-F1#21, facts-F1#46, facts-F1#75
 
 \subsection{States and Transitions}\label{sec:lifecycle-states}
@@ -17,12 +17,17 @@ emergency wrapping of the data-encryption key (DEK) at generation~0.
 grants do not move lifecycle state, and the consent module does not wrap or
 re-wrap records.
 % src: facts-F1#35
+On a normal read, a presented grant must carry the patient's valid
+signature, status \textsc{Granted}, a current window, the reader as grantee
+and the record in scope, or the read is refused; with no grant, the reader's
+attribute keys must satisfy the record's policy; emergency reads use
+break-glass (Section~\ref{sec:breakglass}).
+% src: facts-F1#79
 The legal set is a frozen set of seven $(\mathit{from},\mathit{to})$ pairs;
 self-transitions and \textsc{Granted}$\to$\textsc{Expired} are illegal, and
 there is no premature-termination edge out of \textsc{Emergency\_Open}.
 % src: facts-F1#11, facts-F1#13, facts-F1#15, facts-F1#16
-Six of the pairs come from the original design; \textsc{Expired}$\to$\textsc{Revoked}
-is a later addition and a design choice of this build.
+\textsc{Expired}$\to$\textsc{Revoked} is a design choice of this build.
 % src: facts-F1#12
 \textsc{Revoked}$\to$\textsc{Granted} is legal, but no code in the repository
 emits it.
@@ -56,19 +61,16 @@ from, so it cannot undo a revocation.
 
 \subsection{Signed Transitions}\label{sec:lifecycle-signing}
 
-A transition is a frozen \texttt{TransitionEvent} carrying an event id,
+A transition is a frozen event carrying an event id,
 record id, from- and to-state, actor id, optional reason code, issue time,
 nonce and signature; unknown fields are rejected and the nonce must be at
 least 16~bytes.
 % src: facts-F1#3, facts-F1#4, facts-F1#5
-The signed bytes are a domain tag (\texttt{ehr/transition-event/v1}) followed
-by every field but the signature, in a fixed order, each length-prefixed.
+The signed bytes start with a domain tag, which keeps a clinician's
+transition signature from verifying as their emergency assertion.
 % src: facts-F1#27, facts-F3#14
-The domain tag keeps a clinician's transition signature from verifying as
-their emergency assertion.
 % src: facts-F1#72
-Signatures are ECDSA on P-256 with SHA-256; the event id comes from
-\texttt{uuid4} and the nonce from \texttt{secrets}.
+Signatures are ECDSA on P-256 with SHA-256.
 % src: facts-F1#28, facts-F1#29
 
 Revocation is signed with the patient's key and break-glass open with the
@@ -84,23 +86,17 @@ clinician's or the audit service's key, though a patient may also revoke a
 record left in \textsc{Expired}; each facility process makes a fresh timer key.
 % src: facts-F1#33, facts-F1#34, facts-F1#73
 
-An illegal transition fails closed before anything is signed:
-\texttt{create\_\allowbreak transition\_\allowbreak event} first calls
-\texttt{validate\_\allowbreak transition},
-which raises \texttt{Illegal\-Transition\-Error} for any pair outside the legal
-set, so no event id, nonce or signature is produced.
+An illegal pair is rejected at creation, before any id, nonce or signature
+exists.
 % src: facts-F1#17, facts-F1#19
-On receipt, \texttt{apply\_\allowbreak transition} verifies the signature, then re-checks
+On receipt, the state machine verifies the signature, then re-checks
 legality, then requires the event's from-state to equal the current state,
-and finally consumes the event id, raising \texttt{Replayed\-Event\-Error} on
-reuse.
+and finally consumes the event id, rejecting reuse.
 % src: facts-F1#20, facts-F1#21, facts-F1#23
-Because the signature is checked first, a tampered to-state surfaces as an
-invalid signature, and a forged event cannot burn a legitimate id.
+Because the signature is checked first, a forged event cannot burn a
+legitimate id.
 % src: facts-F1#20, facts-F1#22
-The deployed facility backs the consumed-id store durably, so ids survive a
-restart, and the record store adds its own compare-and-set on the stored
-state.
+Consumed ids are stored durably, so they survive a restart.
 % src: facts-F1#24, facts-F1#25
 
 \subsection{Expiry}\label{sec:lifecycle-expiry}
@@ -115,8 +111,7 @@ $\mathit{now} \ge \mathit{expires\_at}$, the expiry manager refuses to hand out
 the emergency key or admit a new join, even before the sweep runs
 (Section~\ref{sec:limits}).
 % src: facts-F1#53, facts-F1#54
-A background monitor checks for due sessions every 0.5\,s, so no
-administrator acts.
+A background monitor checks for due sessions, so no administrator acts.
 % src: facts-F1#55
 
 The sweep first claims the session, so concurrent expirers cannot rotate
@@ -127,34 +122,26 @@ key, runs the full rotation, and only after the rotation is stored and the new
 shares are deposited signs the return to \textsc{Granted} or
 \textsc{Revoked}.
 % src: facts-F1#39, facts-F1#63
-Each timer transition is written to the audit log first, with identifiers but
-no key material, and then mirrored into the store by compare-and-set.
+Each timer transition is written to the audit log first, with no key
+material.
 % src: facts-F1#60, facts-F1#61
-A failed attempt is retried with backoff capped at 60\,s while access stays
-closed, reusing the already-signed events and the first rotation plan, so in-process
-it neither re-signs nor mints a second emergency key.
+A failed attempt is retried with backoff while access stays closed, reusing
+the signed events and the first rotation plan.
 % src: facts-F1#45, facts-F1#58, facts-F1#59
 
-For crash recovery this build chooses to persist, when a
-session opens, a row of identifiers that holds no key; if that write fails,
-the session is not registered.
+For crash recovery a session row holds identifiers but no key.
 % src: facts-F1#66
-At startup a facility reloads its own rows for records still in
+At startup a facility reloads rows for records still in
 \textsc{Emergency\_Open} or \textsc{Expired} as sessions with no emergency
-key and $\mathit{expires\_at} = \mathit{now}$, so nobody can join them and
-the next sweep expires them.
+key, so nobody can join them and the next sweep expires them
+(Section~\ref{sec:limits}, item~6).
 % src: facts-F1#67, facts-F1#68
-The rotator then recovers the DEK through the record's policy, the same path
-revocation uses; if the store already shows \textsc{Expired}, that event is
-signed afresh but not logged again.
-% src: facts-F1#69, facts-F1#70, facts-F1#76
 
 \subsection{Access Structure: Shamir over a Policy Tree}\label{sec:lifecycle-access}
 
-In place of CP-ABE, a hand-rolled access structure guards each record's DEK.
+A hand-rolled access structure guards each record's DEK.
 % src: facts-F3#3, facts-F3#34
-A policy is a tree of \textsc{Leaf}, \textsc{And} and \textsc{Or} nodes,
-with no general $k$-of-$n$ gate.
+A policy is a tree of leaf, \textsc{And} and \textsc{Or} nodes.
 % src: facts-F3#32
 It is compiled top-down from a fresh 32-byte root secret: an \textsc{And}
 node with $m$ children Shamir-splits its incoming secret $m$-of-$m$, an
@@ -165,25 +152,20 @@ The root secret is the DEK wrapping key; the wrapping's associated data binds
 the record id, policy id and generation, so a wrapping cannot be moved to
 another record or replayed as another generation.
 % src: facts-F3#29, facts-F3#34
-Attribute keys are symmetric 32-byte keys indexed by
-(authority, attribute name, value), so the same \texttt{name:value} from
-another authority does not open a leaf.
+Attribute keys are symmetric keys indexed by (authority, attribute name,
+value), so another authority's key does not open a leaf.
 % src: facts-F3#36
-Leaf ciphertexts carry no associated data and are therefore not bound to
-their record, position or attribute.
+Leaf ciphertexts carry no associated data.
 % src: facts-F3#35
 Every record's tree has the form
 $\textsc{Or}(\mathit{clinical\ policy}, \mathit{owner}{:}\mathit{patient})$,
 where the owner leaf belongs to the patient's home authority.
 % src: facts-F3#40
-Reconstruction runs bottom-up and raises \texttt{PolicyDeniedError} if the
-root is unsatisfied; it never returns a partial or default secret.
+Reconstruction is refused if the root is unsatisfied.
 % src: facts-F3#38
 
-Shamir sharing works over $\mathrm{GF}(p)$ with $p = 2^{256}+297$, a
-257-bit prime; the secret, prefixed with its 4-byte length and zero-padded,
-is cut into 32-byte blocks, each one field element with its own random
-polynomial and a 33-byte share element.
+Shamir sharing works over $\mathrm{GF}(p)$ with $p = 2^{256}+297$, cutting the
+secret into 32-byte blocks with one random polynomial each.
 % src: facts-F3#17, facts-F3#22
 Shares are not authenticated: a well-formed wrong share yields a wrong secret,
 which the AES-GCM unwrap downstream detects.
@@ -194,11 +176,8 @@ service; Section~\ref{sec:breakglass} describes the gate
 that combines them.
 % src: facts-F1#41, facts-F3#49
 
-This construction is not full CP-ABE.
-% src: facts-F3#41
-It is not collusion-resistant: two clinicians can pool attribute keys to
-satisfy a policy that neither satisfies alone, which pairing-based CP-ABE
-prevents.
+This construction is not collusion-resistant: two clinicians can pool
+attribute keys to satisfy a policy that neither satisfies alone.
 % src: facts-F3#41
 It has no security proof (Section~\ref{sec:security}).
 % src: facts-F3#41

@@ -102,8 +102,7 @@ def main() -> None:
         r"\footnotesize",
         r"\setlength{\tabcolsep}{3pt}",
         (
-            r"\caption{Security claims C1--C11, live claims run "
-            f"{date} on repository commit \\textnormal{{\\texttt{{{RUN_SHA}}}}}. "
+            r"\caption{Security claims C1--C11, from a live claims run. "
             r"Status is computed from the system-level tests only; "
             r"Sys./Mod.\ count the system- and module-level tests tagged with the claim.}"
         ),
@@ -111,7 +110,7 @@ def main() -> None:
         r"\label{tab:claims}",
         r"\begin{tabular}{@{}l p{0.64\columnwidth} l r r@{}}",
         r"\toprule",
-        r"ID & Statement (as printed by the run) & Status & Sys. & Mod. \\",
+        r"ID & Statement & Status & Sys. & Mod. \\",
         r"\midrule",
     ]
     for r in rows:
