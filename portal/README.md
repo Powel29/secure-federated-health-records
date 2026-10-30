@@ -10,7 +10,7 @@ commit-before-release and the facility's grant-signature check still decide.
 
 | Portal | Path | What it does |
 |---|---|---|
-| Patient | `/patient/` | alerts (break-glass, revocation, incoming requests); approve / deny / revoke consent (signed by the custodian as the patient, verified by the facility); access history straight from the hash chain; own records decrypted through the `owner:<patient_id>` leaf for one request only; **upload** a record of their own (sealed by the facility under a chosen clinical policy + the owner leaf, emergency key split 2-of-3) |
+| Patient | `/patient/` | alerts (break-glass, revocation, incoming requests); approve / deny / revoke consent (signed by the custodian as the patient, verified by the facility); access history straight from the hash chain; own records decrypted through the `owner:<patient_id>` leaf for one request only; **upload** a record of their own (sealed by the facility under a chosen clinical policy + the owner leaf, emergency key split 3-of-4) |
 | Clinician | `/clinician/` | identify a patient by name + DOB (ADR-0033; every lookup logged first); request consent; read under a grant; federated discovery; declare break-glass (assertion bound to the identified id); live countdown, three-share panel, chain segment, emergency search |
 | Admin & audit | `/oversight/` | trace any flow by correlation id with link checks and genesis verification; break-glass case review; federation process health, store contents, trust topology; registrations (read-only; issuance stays the authority's) |
 
@@ -63,8 +63,8 @@ from.
 **The examiner walk-through.** Log in as `house` → *Identify patient* (Vance,
 1982-04-15) → pick `pat-101` → *Run federated discovery* → choose `rec-001`,
 a reason code → *Sign assertion and request shares*. The session page shows
-shares 1 + 3, the chain seq the audit service committed **before** releasing
-share 3, the decrypted record (once), a live countdown and the chain segment;
+shares 1, 3 and 4, the chain seq the audit service committed **before**
+releasing shares 3 and 4, the decrypted record (once), a live countdown and the chain segment;
 search while the token lives, then again after expiry. Log in as `alice` to
 see the alert, the history, to open her own record via the owner leaf, and to
 *Upload a record* (any PDF/image/JSON/text) that then behaves exactly like a

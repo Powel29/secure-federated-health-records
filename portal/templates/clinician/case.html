@@ -9,9 +9,9 @@
 <div><a class="btn btn-ghost btn-sm" href="{% url 'clinician:cases' %}">{% include "_icon.html" with name="back" %}All emergency sessions</a></div>
 
 {% if just_opened and unlock.joined %}
-<div class="notice notice-success" role="status">{% include "_icon.html" with name="check" %}<div>Joined the emergency session already open on this record. Two of three shares reconstructed the emergency key and the audit entry was written first; the window is the existing one, not extended. The patient has been notified.</div></div>
+<div class="notice notice-success" role="status">{% include "_icon.html" with name="check" %}<div>Joined the emergency session already open on this record. Three of four shares reconstructed the emergency key and the audit entry was written first; the window is the existing one, not extended. The patient has been notified.</div></div>
 {% elif just_opened %}
-<div class="notice notice-success" role="status">{% include "_icon.html" with name="check" %}<div>Break-glass opened. Two of three shares reconstructed the emergency key; the record key reached your key agent through the PRE delivery package; the record's lifecycle moved to <span class="mono">emergency_open</span>. The patient has been notified.</div></div>
+<div class="notice notice-success" role="status">{% include "_icon.html" with name="check" %}<div>Break-glass opened. Three of four shares reconstructed the emergency key; the record key reached your key agent through the PRE delivery package; the record's lifecycle moved to <span class="mono">emergency_open</span>. The patient has been notified.</div></div>
 {% endif %}
 {% if view_error %}<div class="notice notice-error" role="alert">{% include "_icon.html" with name="x" %}<div>{{ view_error }}</div></div>{% endif %}
 <div class="notice notice-emergency" id="expiry-banner" role="status" hidden>{% include "_icon.html" with name="clock" %}<div><strong>Window closed.</strong> The key was rotated back to baseline and the search token is dead. This page reloads in 5 seconds.</div></div>
@@ -26,7 +26,7 @@
       {% if case.status == "open" %}<div class="verdict open">Threshold met · emergency key reconstructed · record EMERGENCY-OPEN</div>
       {% elif case.status == "expired" %}<div class="verdict">Window closed · forced rotation back to baseline · search tokens dead</div>
       {% else %}<div class="verdict bad">Failed closed · {{ case.failure_reason }}</div>{% endif %}
-      {% if case.audit_entry_seq %}<span class="tag {% if case.status == 'open' %}tag-emergency{% else %}tag-quiet{% endif %}">Audit entry written before share 3 · seq {{ case.audit_entry_seq }}</span>{% endif %}
+      {% if case.audit_entry_seq %}<span class="tag {% if case.status == 'open' %}tag-emergency{% else %}tag-quiet{% endif %}">Audit entry written before shares 3 and 4 · seq {{ case.audit_entry_seq }}</span>{% endif %}
     </div>
   </section>
 

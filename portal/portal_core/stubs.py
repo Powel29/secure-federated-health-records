@@ -1,4 +1,4 @@
-"""Explicit boundaries for backends that do not exist yet (ADR-0021).
+"""Explicit boundaries for backends the portal must never implement itself (ADR-0021).
 
 Anywhere the portal would need a crypto/backend action that has not been built,
 it calls one of these. They raise loudly rather than faking success, so no page
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 
 class NotWiredYet(Exception):
-    """Raised when a portal action needs a backend that is not built yet."""
+    """Raised when a portal action needs a backend action that belongs to another service."""
 
 
 def issue_credential(request_id: int) -> None:
@@ -24,7 +24,7 @@ def issue_credential(request_id: int) -> None:
     portal's. A doctor self-registers a *request*; only an authority *issues*.
     """
     raise NotWiredYet(
-        "credential issuance lands with `authority` (P2-2); the portal only "
+        "credential issuance belongs to `authority` (P2-2); the portal only "
         "records the request -- it never issues an attribute itself"
     )
 
@@ -38,9 +38,9 @@ def request_access(clinician_id: str, patient_id: str) -> None:
 
 
 def declare_breakglass(clinician_id: str, patient_id: str, reason: str) -> None:
-    """Declare an emergency. The 2-of-3 threshold gate lands with breakglass (P3-5)."""
+    """Declare an emergency. The 3-of-4 threshold gate belongs to breakglass (P3-5)."""
     raise NotWiredYet(
-        "break-glass needs the Emergency Assertion + 2-of-3 threshold gate "
+        "break-glass needs the Emergency Assertion + 3-of-4 threshold gate "
         "(breakglass, P3-5); the portal cannot open a record itself"
     )
 
@@ -53,6 +53,6 @@ def ingest_upload(patient_id: str, filename: str, data: bytes) -> None:
     not encrypt and it does not write the store.
     """
     raise NotWiredYet(
-        "record ingest lands with the `records` path (P3-14); the portal never "
+        "record ingest belongs to the `records` path (P3-14); the portal never "
         "encrypts or writes the store itself"
     )

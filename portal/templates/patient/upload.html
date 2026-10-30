@@ -6,7 +6,7 @@
 <div class="grid-2">
   <section class="card card-frame" aria-labelledby="up-h">
     <h2 class="card-title" id="up-h">Upload a record of your own</h2>
-    <p class="small text-muted mb-0">The file goes to your key agent. The facility encrypts it with a fresh key, adds your <span class="mono">owner:{{ subject_id }}</span> key to the access policy you choose, splits a 2-of-3 emergency key and indexes the search terms. The portal keeps nothing.</p>
+    <p class="small text-muted mb-0">The file goes to your key agent. The facility encrypts it with a fresh key, adds your <span class="mono">owner:{{ subject_id }}</span> key to the access policy you choose, splits a 3-of-4 emergency key and indexes the search terms. The portal keeps nothing.</p>
     <form method="post" enctype="multipart/form-data" class="stack">
       {% csrf_token %}
       <label>Clinical title<input class="input" name="title" maxlength="200" required></label>
@@ -37,7 +37,7 @@
     <dl class="facts">
       <div><dt>Store</dt><dd>Ciphertext, nonce, wrapped key, coded search tokens. Never the file.</dd></div>
       <div><dt>Policy</dt><dd>OR(your chosen clinical branch, <span class="mono">owner:{{ subject_id }}</span>)</dd></div>
-      <div><dt>Break-glass</dt><dd>Emergency key split 2-of-3: clinician custody and the audit service, which logs before it releases</dd></div>
+      <div><dt>Break-glass</dt><dd>Emergency key split 3-of-4: clinician custody, the home authority and the audit service (two shares), which logs before it releases</dd></div>
       <div><dt>This portal</dt><dd>Nothing. The bytes pass through this one request.</dd></div>
     </dl>
     <p class="basis">Routine clinician access requires both your signed grant and the selected clinical policy. The treating-physician preset supports ED and other physicians regardless of specialty. Emergency access requires a logged, time-boxed break-glass. The source is always labelled patient upload, not hospital-authored.</p>

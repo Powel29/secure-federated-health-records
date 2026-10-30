@@ -655,7 +655,7 @@ def upload(request: Any) -> HttpResponse:
     messages.success(
         request,
         f"Sealed {result['record_id']} at {facility_id}: policy {result['policy_id'][:8]}…, "
-        f"{result['search_terms_indexed']} search term(s) indexed, share 3 in audit custody. "
+        f"{result['search_terms_indexed']} search term(s) indexed, shares 3 and 4 in audit custody. "
         f"Your owner leaf is present — open it under Encrypted health records.",
     )
     return redirect("patient:records")

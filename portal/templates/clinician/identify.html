@@ -54,7 +54,7 @@
     <ol class="small" style="padding-left:20px;line-height:1.7;margin:0">
       <li>Select one candidate. The selection is logged as a second <span class="mono">patient.lookup</span> entry under the same correlation id.</li>
       <li>The resolved <span class="mono">patient_id</span> is carried into {% if next == "consent" %}a signed <span class="mono">ConsentRequest</span>{% else %}the signed <span class="mono">EmergencyAssertion</span>{% endif %}. You cannot retype it.</li>
-      <li>{% if next == "consent" %}The patient signs a decision; only a <span class="mono">GRANTED</span> grant plus a satisfied policy tree releases a key.{% else %}Federated discovery finds the sealed records; the 2-of-3 threshold gate, not this page, decides whether they open.{% endif %}</li>
+      <li>{% if next == "consent" %}The patient signs a decision; only a <span class="mono">GRANTED</span> grant plus a satisfied policy tree releases a key.{% else %}Federated discovery finds the sealed records; the 3-of-4 threshold gate, not this page, decides whether they open.{% endif %}</li>
     </ol>
     <p class="basis">Name and date of birth live only in this portal's database; the encrypted store holds opaque identifiers <span class="ref">ADR-0011</span>.</p>
   </section>

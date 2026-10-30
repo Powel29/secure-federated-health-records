@@ -38,7 +38,7 @@
         <div class="chain-row {% if e.is_commit %}hl{% endif %}" tabindex="0"><span class="seq">{{ e.seq }}</span><span class="head">{{ e.entry_hash_hex|slice:":6" }}</span><span class="ev">{{ e.event_type }} — {{ e.summary }} <span class="sub">{{ e.actor_id }} · {{ e.recorded_at|date:"H:i:s" }}</span></span><span class="full">entry hash {{ e.entry_hash_hex }}</span></div>
       {% empty %}<div class="chain-row"><span class="ev">No entries for this correlation id.</span></div>{% endfor %}
     </div>
-    <p class="basis">Rows marked "Break-glass" belong to the emergency flow: the audit service commits its entry before it releases share 3, then the re-wrap and lifecycle transitions follow. Seq numbers skip entries that belong to other flows; integrity is checked link by link (<span class="mono">prev_hash</span> equals the previous entry's hash), and full-chain verification runs at the audit service. Focus a row for its full hash.</p>
+    <p class="basis">Rows marked "Break-glass" belong to the emergency flow: the audit service commits its entry before it releases shares 3 and 4, then the re-wrap and lifecycle transitions follow. Seq numbers skip entries that belong to other flows; integrity is checked link by link (<span class="mono">prev_hash</span> equals the previous entry's hash), and full-chain verification runs at the audit service. Focus a row for its full hash.</p>
   </section>
 
   <div class="stack gap-6">

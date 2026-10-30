@@ -29,7 +29,7 @@ _PROCESS_HOLDS = {
     "facility-b": "Clinician certificates only",
     "authority-med": "Attribute keys · role",
     "authority-net": "Attribute keys · specialty, facility, owner",
-    "audit": "Hash chain, break-glass share 3",
+    "audit": "Hash chain, break-glass shares 3 and 4",
     "custodian": "Subject key agent: signing keys, credentials, share 1",
 }
 
@@ -73,7 +73,7 @@ def _summary(e: dict[str, Any]) -> str:
     if et == "federation.discovery":
         return f"{d.get('record_count', 0)} records, patient hashed"
     if et in ("breakglass_share_released", "breakglass_share_release"):
-        return f"share 3 committed BEFORE release · assertion {str(d.get('assertion_id', ''))[:8]}"
+        return f"chain entry committed BEFORE shares 3 and 4 were released · assertion {str(d.get('assertion_id', ''))[:8]}"
     if et == "federation.rewrap":
         return f"{d.get('record_id')} re-wrapped by PRE for {d.get('target_actor_id')}"
     if et in store_reader.LIFECYCLE_EVENT_TYPES:
